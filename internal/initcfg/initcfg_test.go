@@ -95,6 +95,15 @@ func TestValidate(t *testing.T) {
 		{name: "allowlist zero proxy gid", wantErr: true, mutate: func(c *Config) {
 			c.ProxyGID = 0
 		}},
+		{name: "root home", wantErr: true, mutate: func(c *Config) {
+			c.User.Home = "/"
+		}},
+		{name: "root home unclean", wantErr: true, mutate: func(c *Config) {
+			c.User.Home = "/a/.."
+		}},
+		{name: "proxy port too large", wantErr: true, mutate: func(c *Config) {
+			c.Network.ProxyPort = 65536
+		}},
 		{name: "empty seed file", wantErr: true, mutate: func(c *Config) {
 			c.Claude.SeedFiles = []string{""}
 		}},

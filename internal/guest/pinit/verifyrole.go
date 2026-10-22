@@ -33,18 +33,7 @@ func verifyMain(args []string) int {
 		fmt.Fprintln(os.Stderr, "paddock-init: verify:", err)
 		return ExitInit
 	}
-	var checks []verify.Check
-	switch p.Policy {
-	case "allowlist":
-		checks = verify.NetworkChecks(verify.NetworkOptions{
-			AllowedHost: p.AllowedHost,
-			DeniedHost:  p.DeniedHost,
-			DenyLog:     p.DenyLog,
-			ProxyPID:    p.ProxyPID,
-		})
-	case "none":
-		checks = verify.ClosedNetworkChecks(verify.NetworkOptions{})
-	}
+	checks := networkChecks(p)
 	checks = append(checks, verify.LocalChecks(verify.LocalOptions{
 		UID:      p.UID,
 		ReadOnly: p.ReadOnly,
@@ -54,4 +43,28 @@ func verifyMain(args []string) int {
 		return 1
 	}
 	return 0
+}
+
+// networkChecks returns the network checks for p's policy. The host policy
+// has no guest network rules to probe, and an unknown policy fails.
+func networkChecks(p verifyPlan) []verify.Check {
+	switch p.Policy {
+	case "allowlist":
+		return verify.NetworkChecks(verify.NetworkOptions{
+			AllowedHost: p.AllowedHost,
+			DeniedHost:  p.DeniedHost,
+			DenyLog:     p.DenyLog,
+			ProxyPID:    p.ProxyPID,
+		})
+	case "none":
+		return verify.ClosedNetworkChecks(verify.NetworkOptions{})
+	case "host":
+		return []verify.Check{{Name: "network", Run: func(context.Context) (string, error) {
+			return "policy host, no network checks apply", nil
+		}}}
+	default:
+		return []verify.Check{{Name: "network", Run: func(context.Context) (string, error) {
+			return "", fmt.Errorf("unknown network policy %q", p.Policy)
+		}}}
+	}
 }

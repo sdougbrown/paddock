@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -210,6 +211,8 @@ func TestPrepareHome(t *testing.T) {
 	}
 	want := []string{home, home + "/.claude", home + "/.claude/projects", home + "/.claude/remote-settings.json",
 		home + "/.claude.json", home + "/.claude/skills"}
+	slices.Sort(chowned)
+	slices.Sort(want)
 	if !reflect.DeepEqual(chowned, want) {
 		t.Errorf("chowned %q\nwant    %q", chowned, want)
 	}
@@ -284,5 +287,18 @@ func TestPrepareHomeLeavesFileMountAlone(t *testing.T) {
 	}
 	if !h.isMount(settings) {
 		t.Error("file mount not recognised")
+	}
+}
+
+func TestPrepareHomeRefusesRoot(t *testing.T) {
+	root := t.TempDir()
+	cfg := &initcfg.Config{User: initcfg.User{Name: "doug", UID: 501, GID: 20, Home: "/"}}
+	h := newHomeFS(root, cfg)
+	h.chown = func(p string, _, _ int) error {
+		t.Errorf("chown %s", p)
+		return nil
+	}
+	if err := prepareHome(h, cfg); err == nil || !strings.Contains(err.Error(), "filesystem root") {
+		t.Errorf("prepareHome with HOME=/: err = %v", err)
 	}
 }

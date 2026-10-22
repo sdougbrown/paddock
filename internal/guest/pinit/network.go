@@ -2,7 +2,6 @@ package pinit
 
 import (
 	"context"
-	"fmt"
 	"net"
 	"os"
 	"os/exec"
@@ -40,12 +39,6 @@ func commitNetwork(ctx context.Context, cfg *initcfg.Config) (*network, error) {
 		return n, nil
 	}
 	nc := cfg.Network
-	if nc.ProxyPort > 65535 {
-		return nil, fmt.Errorf("invalid proxy port %d", nc.ProxyPort)
-	}
-	if cfg.ProxyGID <= 0 {
-		return nil, fmt.Errorf("invalid proxy gid %d", cfg.ProxyGID)
-	}
 	var err error
 	if n.allowed, n.denied, err = lifelineHosts(nc.Hosts); err != nil {
 		return nil, err
@@ -65,7 +58,7 @@ func commitNetwork(ctx context.Context, cfg *initcfg.Config) (*network, error) {
 	}
 	errPath := nc.ErrorLog
 	if errPath == "" {
-		errPath = filepath.Join(filepath.Dir(nc.DenyLog), "proxy.log")
+		errPath = filepath.Join(filepath.Dir(nc.DenyLog), initcfg.ErrorLogName)
 	}
 	denyLog, err := openLog(nc.DenyLog)
 	if err != nil {

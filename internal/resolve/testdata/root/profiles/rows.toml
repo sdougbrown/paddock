@@ -2,7 +2,7 @@ engine = "apple-container"
 default_spec = "afresh"
 
 [workspace]
-mode = "ro"
+mode = "rw"
 readonly = ["repo"]
 
 [network]

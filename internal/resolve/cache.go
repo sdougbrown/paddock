@@ -10,6 +10,7 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 
 	"github.com/sdougbrown/paddock/internal/plan"
@@ -64,25 +65,48 @@ func guestOverlap(a, b string) bool {
 // cache. It sits beside the cache directory, outside the guest mount.
 func completionMarker(s *plan.SetupPlan) string { return s.CacheHost + ".complete" }
 
-// PrepareSetupCache creates the host cache directory, reports whether an
-// earlier setup run completed in it, and removes the completion marker so
-// only a run that finishes from here on can set it. A plan without a cache
-// is a miss.
-func PrepareSetupCache(s *plan.SetupPlan) (hit bool, err error) {
+// lockFile is the host file whose exclusive flock serializes setup runs for
+// one cache. It sits beside the cache directory, outside the guest mount.
+func lockFile(s *plan.SetupPlan) string { return s.CacheHost + ".lock" }
+
+// PrepareSetupCache takes an exclusive lock on the cache, so setups for the
+// same cache run one at a time, then creates the host cache directory,
+// reports whether an earlier setup run completed in it, and removes the
+// completion marker so only a run that finishes from here on can set it. The
+// lock is held until the returned release func is called; release is safe to
+// call more than once and is never nil. A plan without a cache is a miss and
+// takes no lock.
+func PrepareSetupCache(s *plan.SetupPlan) (hit bool, release func(), err error) {
+	release = func() {}
 	if s.CacheHost == "" {
-		return false, nil
+		return false, release, nil
 	}
+	if err := os.MkdirAll(filepath.Dir(s.CacheHost), 0o755); err != nil {
+		return false, release, err
+	}
+	lf, err := os.OpenFile(lockFile(s), os.O_RDWR|os.O_CREATE|syscall.O_NOFOLLOW, 0o600)
+	if err != nil {
+		return false, release, fmt.Errorf("lock setup cache: %w", err)
+	}
+	if err := syscall.Flock(int(lf.Fd()), syscall.LOCK_EX); err != nil {
+		lf.Close()
+		return false, release, fmt.Errorf("lock setup cache: %w", err)
+	}
+	var once sync.Once
+	release = func() { once.Do(func() { lf.Close() }) }
 	marker := completionMarker(s)
 	if st, err := os.Lstat(marker); err == nil && st.Mode().IsRegular() {
 		hit = true
 	}
 	if err := os.MkdirAll(s.CacheHost, 0o755); err != nil {
-		return false, err
+		release()
+		return false, func() {}, err
 	}
 	if err := os.Remove(marker); err != nil && !errors.Is(err, fs.ErrNotExist) {
-		return false, err
+		release()
+		return false, func() {}, err
 	}
-	return hit, nil
+	return hit, release, nil
 }
 
 // CompleteSetupCache records that setup finished successfully. It creates the

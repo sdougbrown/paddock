@@ -25,6 +25,12 @@ const (
 	ManagedSettingsPath = "/etc/claude-code/managed-settings.json"
 )
 
+// File names inside LogDir.
+const (
+	DenyLogName  = "deny.jsonl" // proxy denial records
+	ErrorLogName = "proxy.log"  // proxy stderr
+)
+
 // Config is the full init configuration for one guest run.
 type Config struct {
 	Version  int        `json:"version"`
@@ -88,6 +94,9 @@ func (c *Config) Validate() error {
 	if !path.IsAbs(c.User.Home) {
 		return fmt.Errorf("initcfg: user home %q is not absolute", c.User.Home)
 	}
+	if path.Clean(c.User.Home) == "/" {
+		return fmt.Errorf("initcfg: user home must not be the filesystem root")
+	}
 	if !path.IsAbs(c.Workdir) {
 		return fmt.Errorf("initcfg: workdir %q is not absolute", c.Workdir)
 	}
@@ -104,7 +113,7 @@ func (c *Config) Validate() error {
 		if len(c.Network.Hosts) == 0 {
 			return fmt.Errorf("initcfg: allowlist policy has no hosts")
 		}
-		if c.Network.ProxyPort <= 0 {
+		if c.Network.ProxyPort <= 0 || c.Network.ProxyPort > 65535 {
 			return fmt.Errorf("initcfg: allowlist policy has invalid proxy port %d", c.Network.ProxyPort)
 		}
 		if c.Network.DenyLog == "" {

@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/sdougbrown/paddock/internal/envname"
 	"github.com/sdougbrown/paddock/internal/initcfg"
 )
 
@@ -43,7 +44,7 @@ func parseSecrets(data []byte) ([]string, error) {
 			continue
 		}
 		name, value, ok := strings.Cut(line, "=")
-		if !ok || !validName(name) {
+		if !ok || !envname.Valid(name) {
 			return nil, fmt.Errorf("secrets line %d: not NAME=VALUE", i+1)
 		}
 		if strings.ContainsRune(value, 0) {
@@ -56,18 +57,6 @@ func parseSecrets(data []byte) ([]string, error) {
 		out = append(out, name+"="+value)
 	}
 	return out, nil
-}
-
-func validName(s string) bool {
-	if s == "" || s[0] >= '0' && s[0] <= '9' {
-		return false
-	}
-	for _, c := range s {
-		if !(c == '_' || c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9') {
-			return false
-		}
-	}
-	return true
 }
 
 // agentEnv is the agent's environment. It starts from inherited (the init
@@ -100,7 +89,7 @@ func agentEnv(inherited []string, u initcfg.User, extra, secrets []string) ([]st
 	set("SHELL=" + agentShell)
 	for _, kv := range append(append([]string(nil), extra...), secrets...) {
 		name, _, ok := strings.Cut(kv, "=")
-		if !ok || !validName(name) {
+		if !ok || !envname.Valid(name) {
 			return nil, fmt.Errorf("env entry %q is not NAME=VALUE", name)
 		}
 		set(kv)

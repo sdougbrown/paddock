@@ -16,6 +16,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/sdougbrown/paddock/internal/config"
 	"github.com/sdougbrown/paddock/internal/engine"
 	"github.com/sdougbrown/paddock/internal/initcfg"
 	"github.com/sdougbrown/paddock/internal/plan"
@@ -101,8 +102,11 @@ func (e *Engine) Run(ctx context.Context, p *plan.Plan, o engine.Options) (int, 
 	if err := e.defaults(); err != nil {
 		return 1, err
 	}
-	if p.Engine != "" && p.Engine != "apple-container" {
-		return 1, fmt.Errorf("plan engine %q is not apple-container", p.Engine)
+	if p.Engine != "" && p.Engine != config.EngineAppleContainer {
+		return 1, fmt.Errorf("plan engine %q is not %s", p.Engine, config.EngineAppleContainer)
+	}
+	if p.Workdir == "" {
+		return 1, errors.New("plan has no workdir")
 	}
 	secrets, err := resolveSecrets(p.Env, e.lookup)
 	if err != nil {
@@ -154,7 +158,7 @@ func (e *Engine) Run(ctx context.Context, p *plan.Plan, o engine.Options) (int, 
 		return 1, err
 	}
 
-	tdir := transcriptDir(e.Home, workdir(p))
+	tdir := transcriptDir(e.Home, p.Workdir)
 	if err := os.MkdirAll(tdir, 0o755); err != nil {
 		return 1, err
 	}
@@ -203,7 +207,7 @@ func (e *Engine) Run(ctx context.Context, p *plan.Plan, o engine.Options) (int, 
 		CPUs:       p.Limits.CPUs,
 		Memory:     p.Limits.Memory,
 		Mounts:     mounts,
-		Workdir:    workdir(p),
+		Workdir:    p.Workdir,
 		Env:        termEnv,
 		Entrypoint: entry,
 		Image:      image,
@@ -427,7 +431,7 @@ func (e *Engine) startWatchdog(name string, d runDirs) (*watchdog, error) {
 		w.Close()
 		return nil, err
 	}
-	cmd := exec.Command(exe, WatchdogCommand, e.bin(), name, d.State, d.Secrets, d.Settings)
+	cmd := exec.Command(exe, append([]string{WatchdogCommand, e.bin(), name}, d.removable()...)...)
 	cmd.ExtraFiles = []*os.File{r, readyW}
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	err = cmd.Start()

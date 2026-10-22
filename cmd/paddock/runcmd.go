@@ -54,7 +54,7 @@ func runCmd(args []string, stderr io.Writer) (int, error) {
 
 func newEngine(name string) (engine.Engine, error) {
 	switch name {
-	case "apple-container":
+	case config.EngineAppleContainer:
 		return &applecontainer.Engine{Debug: os.Getenv("PADDOCK_DEBUG") == "1"}, nil
 	}
 	return nil, fmt.Errorf("unsupported engine %q", name)

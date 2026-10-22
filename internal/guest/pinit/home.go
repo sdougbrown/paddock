@@ -8,7 +8,6 @@ import (
 	"os"
 	"path"
 	"path/filepath"
-	"strings"
 	"syscall"
 
 	"github.com/sdougbrown/paddock/internal/initcfg"
@@ -52,9 +51,13 @@ func (h homeFS) isMount(guest string) bool {
 	return ok1 && ok2 && a.Dev != b.Dev
 }
 
-// agentDir makes guest exist as a directory owned by the agent. An existing
-// mount point is left alone. Missing parents are created root-owned 0755.
+// agentDir makes guest exist as a directory owned by the agent, and refuses
+// the filesystem root. An existing mount point is left alone. Missing
+// parents are created root-owned 0755.
 func (h homeFS) agentDir(guest string, mode os.FileMode, uid, gid int) error {
+	if path.Clean(guest) == "/" {
+		return errors.New("refusing to take ownership of the filesystem root")
+	}
 	if h.isMount(guest) {
 		return nil
 	}
@@ -94,9 +97,6 @@ func prepareHome(h homeFS, cfg *initcfg.Config) error {
 		}
 	}
 	for _, name := range c.SeedFiles {
-		if name == "" || name == "." || name == ".." || strings.Contains(name, "/") {
-			return fmt.Errorf("seed file %q is not a base name", name)
-		}
 		src, err := os.ReadFile(h.p(initcfg.SeedDir + "/" + name))
 		if err != nil {
 			return fmt.Errorf("seed file: %w", err)

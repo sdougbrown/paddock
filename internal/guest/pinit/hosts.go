@@ -7,6 +7,8 @@ import (
 	"net/netip"
 	"os"
 	"strings"
+
+	"github.com/sdougbrown/paddock/internal/egresshost"
 )
 
 // hostsPath is the guest's hosts file.
@@ -23,7 +25,7 @@ func writeHosts(path string, hosts []string, addr netip.Addr) error {
 	}
 	listed := map[string]bool{}
 	for _, h := range hosts {
-		listed[hostsKey(h)] = true
+		listed[egresshost.Normalize(h)] = true
 	}
 	var b strings.Builder
 	for _, line := range strings.Split(strings.TrimRight(string(old), "\n"), "\n") {
@@ -40,7 +42,7 @@ func writeHosts(path string, hosts []string, addr netip.Addr) error {
 		}
 		var names []string
 		for _, n := range f[1:] {
-			if !listed[hostsKey(n)] {
+			if !listed[egresshost.Normalize(n)] {
 				names = append(names, n)
 			}
 		}
@@ -58,8 +60,4 @@ func writeHosts(path string, hosts []string, addr netip.Addr) error {
 		return fmt.Errorf("hosts: %w", err)
 	}
 	return nil
-}
-
-func hostsKey(name string) string {
-	return strings.TrimSuffix(strings.ToLower(name), ".")
 }

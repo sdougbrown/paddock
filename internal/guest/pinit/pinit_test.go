@@ -1,6 +1,7 @@
 package pinit
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"os/exec"
@@ -8,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/sdougbrown/paddock/internal/guest/verify"
 	"github.com/sdougbrown/paddock/internal/initcfg"
 )
 
@@ -93,6 +95,30 @@ func TestVerifyArgv(t *testing.T) {
 			if p.ProxyPID != tt.wantPID || p.AllowedHost != tt.wantAllowed || p.DeniedHost != tt.wantDenied {
 				t.Errorf("proxy fields: pid %d allowed %q denied %q; want %d %q %q",
 					p.ProxyPID, p.AllowedHost, p.DeniedHost, tt.wantPID, tt.wantAllowed, tt.wantDenied)
+			}
+		})
+	}
+}
+
+func TestNetworkChecksHostAndUnknown(t *testing.T) {
+	tests := []struct {
+		policy   string
+		wantPass bool
+		wantSub  string
+	}{
+		{"host", true, "policy host, no network checks apply"},
+		{"bogus", false, `unknown network policy "bogus"`},
+		{"", false, "unknown network policy"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.policy, func(t *testing.T) {
+			var buf strings.Builder
+			results := verify.Run(context.Background(), networkChecks(verifyPlan{Policy: tt.policy}))
+			if ok := verify.Write(&buf, results); ok != tt.wantPass {
+				t.Errorf("pass = %v, want %v; output %q", ok, tt.wantPass, buf.String())
+			}
+			if len(results) != 1 || !strings.Contains(buf.String(), tt.wantSub) {
+				t.Errorf("results %d, output %q; want one line containing %q", len(results), buf.String(), tt.wantSub)
 			}
 		})
 	}

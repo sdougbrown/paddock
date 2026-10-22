@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"regexp"
 	"sort"
+
+	"github.com/sdougbrown/paddock/internal/envname"
 )
 
 // Profile is a role profile: what a command may access.
@@ -76,7 +78,7 @@ func (p *Profile) validate() error {
 	}
 	sort.Strings(names)
 	for _, n := range names {
-		if !validEnvName(n) {
+		if !envname.Valid(n) {
 			return fmt.Errorf("env.%s: invalid variable name", n)
 		}
 	}

@@ -105,8 +105,8 @@ func LoadChain(src SpecSource, ref string) ([]LoadedSpec, error) {
 }
 
 // checkSpec applies the rules that hold for a spec on its own: no env
-// credentials, and repository specs define no egress and extend an operator
-// parent.
+// credentials, and repository specs define no egress or managed settings and
+// extend an operator parent.
 func checkSpec(ls LoadedSpec, parent *LoadedSpec) error {
 	for _, name := range sortedKeys(ls.Spec.Env) {
 		kind, _, err := ParseSource(ls.Spec.Env[name])
@@ -114,12 +114,19 @@ func checkSpec(ls LoadedSpec, parent *LoadedSpec) error {
 			return fmt.Errorf("spec %q: env.%s: %w", ls.Ref, name, err)
 		}
 		if kind != "literal" {
-			return fmt.Errorf("spec %q: env.%s: specs may only set literal env values, not %s: sources", ls.Ref, name, kind)
+			article := "a"
+			if kind == "env" {
+				article = "an"
+			}
+			return fmt.Errorf("spec %q: env.%s: specs may only set literal env values, not %s %s source", ls.Ref, name, article, kind)
 		}
 	}
 	if ls.Trust == TrustRepository {
 		if len(ls.Spec.Egress) > 0 {
 			return fmt.Errorf("spec %q: [egress]: repository-trust specs may not define egress sets", ls.Ref)
+		}
+		if ls.Spec.Claude.ManagedSettings != "" {
+			return fmt.Errorf("spec %q: claude.managed_settings: repository-trust specs may not set managed settings", ls.Ref)
 		}
 		if parent == nil || parent.Trust != TrustOperator {
 			return fmt.Errorf("spec %q: repository-trust specs must extend an operator-trust spec", ls.Ref)
@@ -238,10 +245,18 @@ func mergeSetup(dst *Setup, s config.SpecSetup, ref string) error {
 	return nil
 }
 
-// SpecExists reports whether a spec ref loads without a not-found error.
-func SpecExists(src SpecSource, ref string) bool {
+// SpecExists reports whether ref names a spec. A spec that is missing is
+// not found; one that exists but fails to load or validate is an error.
+func SpecExists(src SpecSource, ref string) (bool, error) {
 	_, _, err := src.LoadSpec(ref)
-	return !errors.Is(err, fs.ErrNotExist)
+	switch {
+	case err == nil:
+		return true, nil
+	case errors.Is(err, fs.ErrNotExist):
+		return false, nil
+	default:
+		return false, fmt.Errorf("spec %q: %w", ref, err)
+	}
 }
 
 func sortedKeys[V any](m map[string]V) []string {

@@ -8,6 +8,8 @@ import (
 	"net/netip"
 	"os"
 	"strings"
+
+	"github.com/sdougbrown/paddock/internal/guest/sniproxy"
 )
 
 // ResolvConfPath is the guest's resolver configuration.
@@ -39,7 +41,7 @@ func ParseResolvConf(r io.Reader) ([]netip.Addr, error) {
 			continue
 		}
 		a = a.Unmap()
-		if !a.Is4() || a.IsUnspecified() || seen[a] {
+		if !sniproxy.UsableResolver(a) || seen[a] {
 			continue
 		}
 		seen[a] = true

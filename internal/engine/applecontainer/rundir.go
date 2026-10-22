@@ -51,11 +51,16 @@ func createRunDirs(stateRoot, name string) (runDirs, error) {
 	return d, nil
 }
 
-// remove deletes the directories that hold per-run secrets and config.
+// removable lists the directories that hold per-run secrets and config.
+func (d runDirs) removable() []string {
+	return []string{d.State, d.Secrets, d.Settings}
+}
+
+// remove deletes the removable directories.
 func (d runDirs) remove() {
-	os.RemoveAll(d.State)
-	os.RemoveAll(d.Secrets)
-	os.RemoveAll(d.Settings)
+	for _, dir := range d.removable() {
+		os.RemoveAll(dir)
+	}
 }
 
 // copySeedFiles copies the plan's seed files into <state>/seed.
@@ -90,10 +95,8 @@ func copySeedFiles(state string, files []string) error {
 // include a value.
 func resolveSecrets(env []plan.EnvVar, lookup func(string) (string, bool)) ([]byte, error) {
 	var b strings.Builder
-	for _, e := range env {
-		if e.Source == plan.SourceLiteral {
-			continue
-		}
+	_, refs := splitEnv(env)
+	for _, e := range refs {
 		v, err := resolve.ResolveValue(e, lookup)
 		if err != nil {
 			return nil, err
@@ -109,7 +112,7 @@ func resolveSecrets(env []plan.EnvVar, lookup func(string) (string, bool)) ([]by
 	return []byte(b.String()), nil
 }
 
-const secretsFile = "secrets.env"
+var secretsFile = filepath.Base(initcfg.SecretsPath)
 
 func writeSecrets(dir string, data []byte) error {
 	return os.WriteFile(filepath.Join(dir, secretsFile), data, 0o600)

@@ -12,6 +12,7 @@ import (
 
 	"github.com/sdougbrown/paddock/internal/config"
 	"github.com/sdougbrown/paddock/internal/engine/applecontainer"
+	"github.com/sdougbrown/paddock/internal/guest/pinit"
 	"github.com/sdougbrown/paddock/internal/resolve"
 )
 
@@ -19,8 +20,7 @@ const version = "0.1.0-dev"
 
 func main() {
 	if filepath.Base(os.Args[0]) == "paddock-init" {
-		fmt.Fprintln(os.Stderr, "paddock-init: not implemented")
-		os.Exit(2)
+		os.Exit(pinit.Main(os.Args[1:]))
 	}
 	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
 }

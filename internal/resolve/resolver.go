@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -55,6 +56,9 @@ func (r *Resolver) Resolve(o Options) (*plan.Plan, error) {
 	if err != nil {
 		return nil, fmt.Errorf("profile %q: %w", o.Profile, err)
 	}
+	if phase == PhaseSetup && prof.Workspace.Mode != "rw" {
+		return nil, fmt.Errorf("phase setup: setup needs a read-write workspace; profile %q workspace.mode is %s", o.Profile, modeName(prof.Workspace.Mode))
+	}
 	ws, err := r.workspace(o.Workspace)
 	if err != nil {
 		return nil, err
@@ -98,7 +102,7 @@ func (r *Resolver) Resolve(o Options) (*plan.Plan, error) {
 		}
 	}
 	if len(merged.Setup.Command) > 0 {
-		if p.Setup, err = setupPlan(merged.Setup); err != nil {
+		if p.Setup, err = setupPlan(ref, merged.Setup); err != nil {
 			return nil, err
 		}
 	}
@@ -107,11 +111,11 @@ func (r *Resolver) Resolve(o Options) (*plan.Plan, error) {
 		if p.Setup == nil {
 			return nil, fmt.Errorf("phase setup: spec %q defines no [setup] command", ref)
 		}
-		if err := r.setupCache(p); err != nil {
-			return nil, err
-		}
 		if len(o.Argv) > 0 {
 			return nil, errors.New("phase setup: the setup command comes from the spec; do not pass a command")
+		}
+		if err := r.setupCache(p); err != nil {
+			return nil, err
 		}
 		p.Argv = append([]string{}, p.Setup.Command...)
 	default:
@@ -173,14 +177,18 @@ func (r *Resolver) selectSpec(o Options, prof *config.Profile, ws string) (strin
 		tried = append(tried, "no git origin in "+ws)
 	default:
 		ref, ok := ParseOrigin(url)
-		switch {
-		case !ok:
+		if !ok {
 			tried = append(tried, fmt.Sprintf("origin %q is not owner/repo", redactOrigin(url)))
-		case SpecExists(r.Source, ref):
-			return ref, nil
-		default:
-			tried = append(tried, fmt.Sprintf("no spec %q for origin %q", ref, redactOrigin(url)))
+			break
 		}
+		found, err := SpecExists(r.Source, ref)
+		if err != nil {
+			return "", err
+		}
+		if found {
+			return ref, nil
+		}
+		tried = append(tried, fmt.Sprintf("no spec %q for origin %q", ref, redactOrigin(url)))
 	}
 	if prof.DefaultSpec != "" {
 		return prof.DefaultSpec, nil
@@ -189,10 +197,18 @@ func (r *Resolver) selectSpec(o Options, prof *config.Profile, ws string) (strin
 	return "", fmt.Errorf("no spec selected: %s", strings.Join(tried, "; "))
 }
 
-// mounts lists the plan's bind mounts. The setup phase forces the workspace
-// read-write; the profile's readonly subpaths stay read-only.
+// modeName renders a workspace mode for error messages; an unset mode is ro.
+func modeName(m string) string {
+	if m == "" {
+		return "ro"
+	}
+	return m
+}
+
+// mounts lists the plan's bind mounts. The workspace mount follows the
+// profile's mode in both phases; its readonly subpaths stay read-only.
 func (r *Resolver) mounts(prof *config.Profile, m *Merged, ws, phase string) ([]plan.Mount, error) {
-	mounts := []plan.Mount{{Host: ws, Guest: ws, ReadOnly: prof.Workspace.Mode != "rw" && phase != PhaseSetup}}
+	mounts := []plan.Mount{{Host: ws, Guest: ws, ReadOnly: prof.Workspace.Mode != "rw"}}
 	for _, sub := range prof.Workspace.Readonly {
 		clean := filepath.Clean(sub)
 		if filepath.IsAbs(sub) || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
@@ -380,15 +396,19 @@ func underReadonlyMount(mounts []plan.Mount, p string) bool {
 	return false
 }
 
-func setupPlan(s Setup) (*plan.SetupPlan, error) {
+// guestCacheRoot is the guest directory every setup.cache_dir must lie under,
+// so a spec cannot place its read-write cache mount over other guest paths.
+const guestCacheRoot = "/var/cache/paddock/"
+
+func setupPlan(ref string, s Setup) (*plan.SetupPlan, error) {
 	sp := &plan.SetupPlan{Command: s.Command, CacheKeyFile: s.CacheKey, CacheDir: s.CacheDir}
-	if s.CacheDir != "" && !filepath.IsAbs(s.CacheDir) {
-		return nil, fmt.Errorf("setup.cache_dir: %q must be an absolute guest path", s.CacheDir)
+	if d := s.CacheDir; d != "" && (!path.IsAbs(d) || path.Clean(d) != d || !strings.HasPrefix(d, guestCacheRoot) || d == guestCacheRoot) {
+		return nil, fmt.Errorf("spec %q: setup.cache_dir: %q must be a clean absolute path strictly under %s", ref, d, guestCacheRoot)
 	}
 	if s.CacheKey != "" {
 		clean := filepath.Clean(s.CacheKey)
 		if filepath.IsAbs(s.CacheKey) || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
-			return nil, fmt.Errorf("setup.cache_key: %q must be a relative path inside the workspace", s.CacheKey)
+			return nil, fmt.Errorf("spec %q: setup.cache_key: %q must be a relative path inside the workspace", ref, s.CacheKey)
 		}
 	}
 	return sp, nil

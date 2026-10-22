@@ -1,0 +1,3 @@
+engine = "apple-container"
+[network]
+policy = "none"

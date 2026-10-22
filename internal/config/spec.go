@@ -3,8 +3,10 @@ package config
 import (
 	"fmt"
 	"sort"
+	"strings"
 
 	"github.com/sdougbrown/paddock/internal/egresshost"
+	"github.com/sdougbrown/paddock/internal/envname"
 )
 
 // Spec is a project spec layer: what a command's environment contains.
@@ -72,8 +74,11 @@ func (s *Spec) validate() error {
 	}
 	sort.Strings(envNames)
 	for _, n := range envNames {
-		if !validEnvName(n) {
+		if !envname.Valid(n) {
 			return fmt.Errorf("env.%s: invalid variable name", n)
+		}
+		if v := s.Env[n]; strings.HasPrefix(v, "file:") || strings.HasPrefix(v, "env:") {
+			return fmt.Errorf("env.%s: specs may only set literal env values, not a file: or env: source", n)
 		}
 	}
 	return nil

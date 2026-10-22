@@ -43,6 +43,13 @@ type ChildConfig struct {
 	Resolvers []netip.Addr `json:"resolvers"`
 }
 
+// UsableResolver reports whether a can be queried as a DNS server: an IPv4
+// address (possibly v4-mapped) that is not the unspecified address.
+func UsableResolver(a netip.Addr) bool {
+	a = a.Unmap()
+	return a.Is4() && !a.IsUnspecified()
+}
+
 // resolver returns the child's DNSResolver.
 func (c ChildConfig) resolver() (*DNSResolver, error) {
 	if len(c.Resolvers) == 0 {
@@ -50,7 +57,7 @@ func (c ChildConfig) resolver() (*DNSResolver, error) {
 	}
 	r := &DNSResolver{}
 	for _, a := range c.Resolvers {
-		if !a.Unmap().Is4() || a.IsUnspecified() {
+		if !UsableResolver(a) {
 			return nil, fmt.Errorf("sniproxy: resolver address %q is not a usable IPv4 address", a)
 		}
 		r.Servers = append(r.Servers, netip.AddrPortFrom(a.Unmap(), 53))

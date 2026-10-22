@@ -38,16 +38,26 @@ func startDNS(t *testing.T, answer func(dnsmessage.Question, bool) (dnsmessage.H
 // the server goroutines.
 func serveDNS(t *testing.T, s *dnsServer) *dnsServer {
 	t.Helper()
-	pc, err := net.ListenPacket("udp4", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
+	// The UDP and TCP sockets share a port; another process may hold the
+	// TCP side of the UDP port picked, so try again.
+	var pc net.PacketConn
+	var ln net.Listener
+	for range 20 {
+		var err error
+		if pc, err = net.ListenPacket("udp4", "127.0.0.1:0"); err != nil {
+			t.Fatal(err)
+		}
+		s.addr = pc.LocalAddr().(*net.UDPAddr).AddrPort()
+		if ln, err = net.Listen("tcp4", s.addr.String()); err == nil {
+			break
+		}
+		pc.Close()
+		pc = nil
+	}
+	if pc == nil {
+		t.Fatal("no port free for both UDP and TCP")
 	}
 	t.Cleanup(func() { pc.Close() })
-	s.addr = pc.LocalAddr().(*net.UDPAddr).AddrPort()
-	ln, err := net.Listen("tcp4", s.addr.String())
-	if err != nil {
-		t.Fatal(err)
-	}
 	t.Cleanup(func() { ln.Close() })
 	go func() {
 		buf := make([]byte, 1500)
@@ -110,10 +120,14 @@ func (s *dnsServer) respond(t *testing.T, query []byte, tcp bool) []byte {
 	return b
 }
 
+// queries returns the questions asked, sorted: the resolver asks the record
+// types concurrently, so arrival order is not defined.
 func (s *dnsServer) queries() []string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return slices.Clone(s.asked)
+	out := slices.Clone(s.asked)
+	slices.Sort(out)
+	return out
 }
 
 func rr(name string, body dnsmessage.ResourceBody) dnsmessage.Resource {
@@ -289,9 +303,73 @@ func TestDNSResolverRejectsMismatchedResponse(t *testing.T) {
 	}
 }
 
+// silentUDP listens on loopback and never replies.
+func silentUDP(t *testing.T) netip.AddrPort {
+	t.Helper()
+	pc, err := net.ListenPacket("udp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { pc.Close() })
+	go func() {
+		buf := make([]byte, 1500)
+		for {
+			if _, _, err := pc.ReadFrom(buf); err != nil {
+				return
+			}
+		}
+	}()
+	return pc.LocalAddr().(*net.UDPAddr).AddrPort()
+}
+
+func TestDNSResolverHungServerFallsThrough(t *testing.T) {
+	hung := silentUDP(t)
+	good := startDNS(t, func(q dnsmessage.Question, _ bool) (dnsmessage.Header, []dnsmessage.Resource) {
+		if q.Type == dnsmessage.TypeAAAA {
+			return dnsmessage.Header{}, []dnsmessage.Resource{rr(q.Name.String(), a6("2001:db8::7"))}
+		}
+		return dnsmessage.Header{}, []dnsmessage.Resource{rr(q.Name.String(), a4("203.0.113.7"))}
+	})
+	r := &DNSResolver{Servers: []netip.AddrPort{hung, good.addr}, Timeout: 200 * time.Millisecond}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	got, err := r.LookupNetIP(ctx, "ip", "x.test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []netip.Addr{netip.MustParseAddr("203.0.113.7"), netip.MustParseAddr("2001:db8::7")}
+	if !slices.Equal(got, want) {
+		t.Errorf("got %v, want %v (A first, then AAAA)", got, want)
+	}
+}
+
+func TestDNSResolverSingleHungServerFailsBeforeContextDeadline(t *testing.T) {
+	hung := silentUDP(t)
+	r := &DNSResolver{Servers: []netip.AddrPort{hung}, Timeout: 200 * time.Millisecond}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	start := time.Now()
+	_, err := r.LookupNetIP(ctx, "ip", "x.test")
+	if err == nil {
+		t.Fatal("no error from a server that never replies")
+	}
+	if ctx.Err() != nil {
+		t.Errorf("parent context ended (%v) before the lookup failed: %v", ctx.Err(), err)
+	}
+	if d := time.Since(start); d > 2*time.Second {
+		t.Errorf("lookup took %v; the per-query timeout is 200ms and the types run concurrently", d)
+	}
+}
+
 func TestChildConfigResolver(t *testing.T) {
 	if _, err := (ChildConfig{Allow: []string{"a.test"}}).resolver(); err == nil {
 		t.Error("no resolvers: no error")
+	}
+	if _, err := (ChildConfig{Resolvers: []netip.Addr{netip.MustParseAddr("::ffff:0.0.0.0")}}).resolver(); err == nil {
+		t.Error("mapped unspecified resolver: no error")
+	}
+	if _, err := (ChildConfig{Resolvers: []netip.Addr{netip.MustParseAddr("0.0.0.0")}}).resolver(); err == nil {
+		t.Error("unspecified resolver: no error")
 	}
 	if _, err := (ChildConfig{Resolvers: []netip.Addr{netip.MustParseAddr("fd00::1")}}).resolver(); err == nil {
 		t.Error("IPv6 resolver: no error")

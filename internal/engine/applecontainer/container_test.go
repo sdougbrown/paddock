@@ -48,6 +48,7 @@ func helperMain() int {
 	p := &plan.Plan{
 		Engine:    "apple-container",
 		Workspace: ws,
+		Workdir:   ws,
 		Mounts:    []plan.Mount{{Host: ws, Guest: ws}},
 		Env:       []plan.EnvVar{{Name: "TOKEN", Source: plan.SourceEnv, Ref: "HELPER_TOKEN"}},
 		Network:   plan.Network{Policy: "none"},
@@ -228,10 +229,14 @@ func TestContainerWatchdogStopsAfterSIGKILL(t *testing.T) {
 }
 
 func TestContainerSecretsRemovedWhileRunning(t *testing.T) {
-	script := "cat /run/paddock-secrets/secrets.env > /run/paddock-log/seen; exec sleep 300"
+	script := "cat /run/paddock-secrets/secrets.env > /run/paddock-log/seen && touch /run/paddock-log/read; exec sleep 300"
 	h := startHelper(t, script)
 	name := waitRunning(t, h)
 	file := filepath.Join(h.runDir(), "secrets", "secrets.env")
+	eventually(t, 10*time.Second, "guest to read secrets.env", func() bool {
+		_, err := os.Stat(filepath.Join(h.runDir(), "log", "read"))
+		return err == nil
+	})
 	eventually(t, 10*time.Second, "secrets.env to be removed", func() bool {
 		_, err := os.Stat(file)
 		return os.IsNotExist(err)

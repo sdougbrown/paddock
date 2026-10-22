@@ -42,10 +42,11 @@ func setupCmd(args []string, stderr io.Writer) (int, error) {
 	if err != nil {
 		return 1, err
 	}
-	hit, err := resolve.PrepareSetupCache(p.Setup)
+	hit, release, err := resolve.PrepareSetupCache(p.Setup)
 	if err != nil {
 		return 1, err
 	}
+	defer release()
 	eng, err := newEngine(p.Engine)
 	if err != nil {
 		return 1, err

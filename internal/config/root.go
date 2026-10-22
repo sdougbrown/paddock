@@ -33,7 +33,6 @@ func ResolveRoot(getenv func(string) string, home string) (Root, error) {
 
 var (
 	nameRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
-	envRe  = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 )
 
 // ValidRef reports whether ref is a spec reference: "<owner>" or "<owner>/<repo>".
@@ -50,7 +49,7 @@ func ValidRef(ref string) bool {
 	return true
 }
 
-// Path joins a root-relative path onto the root, rejecting absolute paths and
+// Path joins a root-relative path onto the absolute root, rejecting absolute paths and
 // paths that escape the root.
 func (r Root) Path(rel string) (string, error) {
 	if rel == "" || filepath.IsAbs(rel) {
@@ -60,7 +59,11 @@ func (r Root) Path(rel string) (string, error) {
 	if clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
 		return "", fmt.Errorf("path %q escapes the config root", rel)
 	}
-	return filepath.Join(r.Dir, clean), nil
+	dir, err := filepath.Abs(r.Dir)
+	if err != nil {
+		return "", fmt.Errorf("config root %q: %w", r.Dir, err)
+	}
+	return filepath.Join(dir, clean), nil
 }
 
 // LoadProfile reads and validates profiles/<name>.toml.
@@ -140,5 +143,3 @@ func locate(path string, de *toml.DecodeError, msg string) string {
 	}
 	return out + msg
 }
-
-func validEnvName(n string) bool { return envRe.MatchString(n) }

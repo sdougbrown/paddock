@@ -86,7 +86,7 @@ func TestRunArgvOmitsUnsetLimits(t *testing.T) {
 func TestSecretsStayOutOfArgvAndInitConfig(t *testing.T) {
 	const secret = "s3cr3t-token-value"
 	p := &plan.Plan{
-		Workspace: "/w", Argv: []string{"claude"},
+		Workspace: "/w", Workdir: "/w", Argv: []string{"claude"},
 		Env: []plan.EnvVar{
 			{Name: "TOKEN", Source: plan.SourceEnv, Ref: "HOST_TOKEN"},
 			{Name: "LIT", Source: plan.SourceLiteral, Value: "1"},
@@ -212,7 +212,8 @@ func TestImageHashFollowsSymlinkedContext(t *testing.T) {
 
 // fakeContainer writes a `container` stand-in that logs each invocation's
 // arguments (unit-separator joined, one per line), lists the tags in a file
-// for `image ls`, and appends the -t tag of each `build` to that file.
+// for `image ls`, and appends the -t tag of each `build` to that file. The
+// command exits 1 for any subcommand named by failOn.
 func fakeContainer(t *testing.T, existing ...string) (bin string, calls func() [][]string) {
 	t.Helper()
 	dir := t.TempDir()
@@ -221,6 +222,7 @@ func fakeContainer(t *testing.T, existing ...string) (bin string, calls func() [
 		t.Fatal(err)
 	}
 	script := "#!/bin/sh\nprintf '%s\\037' \"$@\" >> " + log + "\necho >> " + log + "\n" +
+		"[ -e " + dir + "/fail-$1 ] && exit 1\n" +
 		"case \"$1\" in\n image) cat " + tags + " ;;\n build) while [ $# -gt 0 ]; do [ \"$1\" = -t ] && echo \"$2\" >> " + tags + "; shift; done ;;\nesac\n"
 	bin = filepath.Join(dir, "container")
 	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
@@ -235,6 +237,13 @@ func fakeContainer(t *testing.T, existing ...string) (bin string, calls func() [
 			}
 		}
 		return out
+	}
+}
+
+func failOn(t *testing.T, bin, sub string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(filepath.Dir(bin), "fail-"+sub), nil, 0o644); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -313,6 +322,7 @@ var testUser = initcfg.User{Name: "u", UID: 501, GID: 20, Home: "/Users/u"}
 func TestBuildInitConfig(t *testing.T) {
 	p := &plan.Plan{
 		Workspace: "/w",
+		Workdir:   "/w",
 		Argv:      []string{"claude", "-p"},
 		Mounts:    []plan.Mount{{Host: "/w", Guest: "/w"}, {Host: "/s", Guest: "/s", ReadOnly: true}},
 		Env: []plan.EnvVar{
@@ -366,7 +376,7 @@ func TestBuildInitConfig(t *testing.T) {
 func TestInitMountsMatchRunArgv(t *testing.T) {
 	for _, bin := range []string{"", "/cache/bin/h"} {
 		p := &plan.Plan{
-			Workspace: "/w", Argv: []string{"x"}, Network: plan.Network{Policy: "none"},
+			Workspace: "/w", Workdir: "/w", Argv: []string{"x"}, Network: plan.Network{Policy: "none"},
 			Mounts: []plan.Mount{{Host: "/w", Guest: "/w"}, {Host: "/s", Guest: "/s", ReadOnly: true}},
 		}
 		mounts := guestMounts(p, mountLayout{
@@ -396,7 +406,7 @@ func TestInitMountsMatchRunArgv(t *testing.T) {
 
 func TestBuildInitConfigNoSecretsWhenAllLiteral(t *testing.T) {
 	p := &plan.Plan{
-		Workspace: "/w", Argv: []string{"x"}, Network: plan.Network{Policy: "none"},
+		Workspace: "/w", Workdir: "/w", Argv: []string{"x"}, Network: plan.Network{Policy: "none"},
 		Env: []plan.EnvVar{{Name: "A", Source: plan.SourceLiteral, Value: "1"}},
 	}
 	cfg, err := buildInitConfig(p, initInput{User: testUser, TranscriptDir: "/t"})
@@ -442,7 +452,7 @@ func TestCreateRunDirsAreOwnerOnly(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, p := range []string{d.Root, d.State, d.Secrets, d.Log} {
+	for _, p := range []string{d.Root, d.State, d.Secrets, d.Log, d.Settings} {
 		if st, err := os.Stat(p); err != nil || st.Mode().Perm() != 0o700 {
 			t.Errorf("%s: %v %v", p, st, err)
 		}
@@ -461,7 +471,7 @@ func TestWorkdirDrivesArgvTranscriptAndTrust(t *testing.T) {
 		Workspace: "/run/x", Workdir: "/run/x/review", Argv: []string{"claude"},
 		Network: plan.Network{Policy: "none"},
 	}
-	tdir := transcriptDir("/Users/u", workdir(p))
+	tdir := transcriptDir("/Users/u", p.Workdir)
 	if want := "/Users/u/.claude/projects/-run-x-review"; tdir != want {
 		t.Errorf("transcript dir = %q, want %q", tdir, want)
 	}
@@ -484,15 +494,145 @@ func TestWorkdirDrivesArgvTranscriptAndTrust(t *testing.T) {
 		t.Errorf("projects = %+v", cj.Projects)
 	}
 	s := testSpec()
-	s.Workdir = workdir(p)
+	s.Workdir = p.Workdir
 	a := runArgv(s)
 	if i := slices.Index(a, "-w"); i < 0 || a[i+1] != "/run/x/review" {
 		t.Errorf("argv lacks -w /run/x/review: %v", a)
 	}
 }
 
-func TestWorkdirDefaultsToWorkspace(t *testing.T) {
-	if got := workdir(&plan.Plan{Workspace: "/w"}); got != "/w" {
-		t.Errorf("workdir = %q", got)
+func TestBuildInitConfigRequiresWorkdir(t *testing.T) {
+	p := &plan.Plan{Workspace: "/w", Argv: []string{"x"}, Network: plan.Network{Policy: "none"}}
+	if _, err := buildInitConfig(p, initInput{User: testUser, TranscriptDir: "/t"}); err == nil {
+		t.Fatal("want an error for an empty workdir")
+	}
+}
+
+func TestBuildInitConfigPlanEnvBeatsPassthrough(t *testing.T) {
+	p := &plan.Plan{
+		Workspace: "/w", Workdir: "/w", Argv: []string{"x"}, Network: plan.Network{Policy: "none"},
+		Env: []plan.EnvVar{{Name: "TERM", Source: plan.SourceLiteral, Value: "dumb"}},
+	}
+	cfg, err := buildInitConfig(p, initInput{
+		User: testUser, TranscriptDir: "/t",
+		Passthrough: []string{"TERM=xterm", "COLORTERM=truecolor", "LANG=C"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"TERM=dumb", "COLORTERM=truecolor", "LANG=C"}; !slices.Equal(cfg.Env, want) {
+		t.Errorf("Env = %v, want %v", cfg.Env, want)
+	}
+}
+
+func TestSplitEnvKeepsNonLiteralsOutOfInitConfig(t *testing.T) {
+	env := []plan.EnvVar{
+		{Name: "LIT", Source: plan.SourceLiteral, Value: "1"},
+		{Name: "F", Source: plan.SourceFile, Ref: "/x"},
+		{Name: "E", Source: plan.SourceEnv, Ref: "HOST_E"},
+	}
+	lits, refs := splitEnv(env)
+	if len(lits) != 1 || lits[0].Name != "LIT" || len(refs) != 2 || refs[0].Name != "F" || refs[1].Name != "E" {
+		t.Fatalf("splitEnv = %v, %v", lits, refs)
+	}
+	p := &plan.Plan{Workspace: "/w", Workdir: "/w", Argv: []string{"x"}, Env: env, Network: plan.Network{Policy: "none"}}
+	cfg, err := buildInitConfig(p, initInput{User: testUser, TranscriptDir: "/t"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"LIT=1"}; !slices.Equal(cfg.Env, want) {
+		t.Errorf("Env = %v, want %v", cfg.Env, want)
+	}
+}
+
+func TestEnsureImagesFailures(t *testing.T) {
+	d := writeTree(t, map[string]string{"Dockerfile": "FROM x\n"})
+	p := &plan.Plan{Image: plan.ImagePlan{Layers: []plan.ImageLayer{{Spec: "a", Dockerfile: filepath.Join(d, "Dockerfile")}}}}
+
+	bin, calls := fakeContainer(t)
+	failOn(t, bin, "build")
+	e := &Engine{Bin: bin, Stderr: io.Discard}
+	if _, err := e.ensureImages(p); err == nil {
+		t.Fatal("want an error when build fails")
+	}
+	if b := buildCalls(calls()); len(b) != 1 {
+		t.Errorf("builds after a failed base build = %q, want only the base attempt", b)
+	}
+
+	bin, calls = fakeContainer(t)
+	failOn(t, bin, "image")
+	e = &Engine{Bin: bin, Stderr: io.Discard}
+	if _, err := e.ensureImages(p); err == nil {
+		t.Fatal("want an error when image ls fails")
+	}
+	if b := buildCalls(calls()); len(b) != 0 {
+		t.Errorf("builds after a failed image ls = %q", b)
+	}
+}
+
+func TestImageHashHashesSymlinksByTarget(t *testing.T) {
+	ctx := writeTree(t, map[string]string{"keep": "k"})
+	outside := writeTree(t, map[string]string{"one": "1", "two": "2"})
+	link := filepath.Join(ctx, "link")
+	if err := os.Symlink(filepath.Join(outside, "one"), link); err != nil {
+		t.Fatal(err)
+	}
+	hash := func() string {
+		t.Helper()
+		h, err := imageHash([]byte("FROM x"), ctx, "p")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return h
+	}
+	base := hash()
+	if err := os.WriteFile(filepath.Join(outside, "one"), []byte("changed"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if hash() != base {
+		t.Error("editing a link target's content changed the hash")
+	}
+	if err := os.Remove(link); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(outside, "two"), link); err != nil {
+		t.Fatal(err)
+	}
+	if hash() == base {
+		t.Error("retargeting a symlink did not change the hash")
+	}
+}
+
+func TestCopySeedFiles(t *testing.T) {
+	src := writeTree(t, map[string]string{"remote-settings.json": `{"a":1}`})
+	state := t.TempDir()
+	if err := copySeedFiles(state, []string{filepath.Join(src, "remote-settings.json")}); err != nil {
+		t.Fatal(err)
+	}
+	dst := filepath.Join(state, filepath.Base(initcfg.SeedDir), "remote-settings.json")
+	st, err := os.Stat(dst)
+	if err != nil || st.Mode().Perm() != 0o600 {
+		t.Fatalf("seed file: %v, %v", st, err)
+	}
+	if got, _ := os.ReadFile(dst); string(got) != `{"a":1}` {
+		t.Errorf("content = %q", got)
+	}
+	if st, err := os.Stat(filepath.Dir(dst)); err != nil || !st.IsDir() {
+		t.Errorf("seed dir: %v, %v", st, err)
+	}
+}
+
+func TestWriteSecrets(t *testing.T) {
+	dir := t.TempDir()
+	if err := writeSecrets(dir, []byte("A=b\n")); err != nil {
+		t.Fatal(err)
+	}
+	p := filepath.Join(dir, filepath.Base(initcfg.SecretsPath))
+	st, err := os.Stat(p)
+	if err != nil || st.Mode().Perm() != 0o600 {
+		t.Fatalf("secrets file: %v, %v", st, err)
+	}
+	if got, _ := os.ReadFile(p); string(got) != "A=b\n" {
+		t.Errorf("content = %q", got)
 	}
 }

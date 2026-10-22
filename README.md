@@ -31,4 +31,8 @@ whose tag already exists are not rebuilt.
 `~/.cache/paddock/<lowercased spec ref>/<hash of the setup.cache_key file>`, so the cache is shared
 per spec and lockfile across workspaces; Yarn verifies package checksums against the lockfile. The
 completion marker is `<cache dir>.complete`, beside the mounted directory, and is cleared before each
-setup run. `setup.cache_dir` may not equal, contain, or lie under another plan mount.
+setup run. `setup.cache_dir` must be a clean absolute guest path strictly under
+`/var/cache/paddock/` and may not equal, contain, or lie under another plan mount. Setups for the
+same cache serialize on an exclusive flock of `<cache dir>.lock`, held until the setup run ends.
+The setup phase uses the profile's `workspace.mode`; a profile whose workspace is `ro` cannot run
+setup.

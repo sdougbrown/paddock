@@ -118,6 +118,96 @@ func TestNetworkChecksEnforced(t *testing.T) {
 	}
 }
 
+func TestParentDomain(t *testing.T) {
+	for host, want := range map[string]string{
+		"":                "",
+		"example.com":     "example.com",
+		"api.example.com": "example.com",
+		"a.b.example.com": "b.example.com",
+	} {
+		if got := parentDomain(host); got != want {
+			t.Errorf("parentDomain(%q) = %q; want %q", host, got, want)
+		}
+	}
+}
+
+// closedDialer models a guest with no proxy: the firewall rejects every
+// connection, including the tcp/443 the allowlist ruleset would redirect.
+type closedDialer struct{ open *guesttest.Net }
+
+func (d closedDialer) DialContext(ctx context.Context, network, addr string) (net.Conn, error) {
+	if d.open != nil {
+		return d.open.DialContext(ctx, network, addr)
+	}
+	return nil, &net.OpError{Op: "dial", Net: network, Err: syscall.ECONNREFUSED}
+}
+
+// closedResults runs the closed-network checks that need no real kernel or
+// guest files against a simulated guest.
+func closedResults(t *testing.T, open bool) (names []string, results map[string]Result) {
+	t.Helper()
+	g := guesttest.StartGuest(t, "allowed.test", testResolver())
+	g.Net.Open = open
+	o := NetworkOptions{
+		IPv6Target:  "[2001:db8::1]:443",
+		ExternalDNS: "198.51.100.53:53",
+		Resolvers:   []netip.Addr{netip.MustParseAddr("198.51.100.54")},
+		RawIPTarget: "198.51.100.10",
+		Timeout:     3 * time.Second,
+		Dialer:      closedDialer{},
+		Resolver:    dnsView{hosts: g.Resolver, open: open},
+	}
+	if open {
+		o.Dialer = closedDialer{open: g.Net}
+	}
+	var checks []Check
+	for _, c := range ClosedNetworkChecks(o) {
+		names = append(names, c.Name)
+		if c.Name != "nft-flush-refused" && !strings.HasPrefix(c.Name, "write-refused ") {
+			checks = append(checks, c)
+		}
+	}
+	results = map[string]Result{}
+	for _, r := range Run(context.Background(), checks) {
+		results[r.Name] = r
+	}
+	return names, results
+}
+
+var closedProbeChecks = []string{
+	"egress-refused", "ipv6-refused", "external-dns-refused", "pinned-dns-refused", "unlisted-names-unresolvable",
+}
+
+func TestClosedNetworkChecksEnforced(t *testing.T) {
+	names, got := closedResults(t, false)
+	want := []string{
+		"nft-flush-refused", "egress-refused", "ipv6-refused", "external-dns-refused",
+		"write-refused /etc/hosts", "write-refused " + netpolicy.ResolvConfPath, "write-refused /etc/nsswitch.conf",
+		"pinned-dns-refused", "unlisted-names-unresolvable",
+	}
+	if strings.Join(names, ",") != strings.Join(want, ",") {
+		t.Fatalf("checks = %v; want %v", names, want)
+	}
+	for _, name := range closedProbeChecks {
+		r, ok := got[name]
+		if !ok {
+			t.Fatalf("missing check %s", name)
+		}
+		if !r.Pass {
+			t.Errorf("%s failed: %s", name, r.Detail)
+		}
+	}
+}
+
+func TestClosedNetworkChecksDetectOpenBoundary(t *testing.T) {
+	_, got := closedResults(t, true)
+	for _, name := range closedProbeChecks {
+		if got[name].Pass {
+			t.Errorf("%s passed with the firewall open: %s", name, got[name].Detail)
+		}
+	}
+}
+
 func TestNetworkChecksDetectOpenBoundary(t *testing.T) {
 	got := networkResults(t, true, false)
 	for _, name := range probeChecks {

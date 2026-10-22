@@ -49,8 +49,8 @@ type NetworkOptions struct {
 	// raw-IP egress is refused; default "1.1.1.1".
 	RawIPTarget string
 	// UnlistedNames must not resolve; default a random name under
-	// example.invalid and one under the allowed host's parent domain
-	// (anthropic.com without an allowed host).
+	// example.invalid and, when AllowedHost is set, one under its parent
+	// domain.
 	UnlistedNames []string
 	// ProtectedFiles hold the guest's name resolution and must refuse the
 	// agent's writes; default /etc/hosts, /etc/resolv.conf, and
@@ -86,7 +86,10 @@ func (o NetworkOptions) withDefaults() NetworkOptions {
 		o.RawIPTarget = "1.1.1.1"
 	}
 	if o.UnlistedNames == nil {
-		o.UnlistedNames = []string{randomLabel() + ".example.invalid", randomLabel() + "." + parentDomain(o.AllowedHost)}
+		o.UnlistedNames = []string{randomLabel() + ".example.invalid"}
+		if o.AllowedHost != "" {
+			o.UnlistedNames = append(o.UnlistedNames, randomLabel()+"."+parentDomain(o.AllowedHost))
+		}
 	}
 	if o.ProtectedFiles == nil {
 		o.ProtectedFiles = []string{"/etc/hosts", netpolicy.ResolvConfPath, "/etc/nsswitch.conf"}
@@ -101,11 +104,9 @@ func randomLabel() string {
 	return "paddock-" + hex.EncodeToString(b[:])
 }
 
-// parentDomain drops the first label of a name of three or more labels.
+// parentDomain drops the first label of a name of three or more labels and
+// returns any shorter name unchanged.
 func parentDomain(host string) string {
-	if host == "" {
-		return "anthropic.com"
-	}
 	if _, rest, ok := strings.Cut(host, "."); ok && strings.Contains(rest, ".") {
 		return rest
 	}

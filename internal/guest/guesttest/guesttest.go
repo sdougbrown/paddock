@@ -107,7 +107,7 @@ func UDPEcho(t testing.TB) string {
 // Resolver maps names to addresses.
 type Resolver map[string][]netip.Addr
 
-// LookupNetIP implements the resolver interfaces of sniproxy and netprobe.
+// LookupNetIP satisfies sniproxy.Resolver and the resolver interfaces of the guest probes.
 func (r Resolver) LookupNetIP(_ context.Context, network, host string) ([]netip.Addr, error) {
 	addrs, ok := r[host]
 	if !ok {
@@ -124,8 +124,8 @@ func (r Resolver) LookupNetIP(_ context.Context, network, host string) ([]netip.
 }
 
 // Net simulates the agent's view of the guest network. With Open false it
-// follows the allowlist ruleset: tcp/443 to any address goes to Proxy, and
-// every other connection is refused. With Open true (a missing firewall)
+// follows the allowlist ruleset: the simulated firewall steers IPv4 tcp/443
+// to Proxy, and every other connection is refused. With Open true (a missing firewall)
 // tcp goes straight to Upstream and udp to UDPUpstream.
 type Net struct {
 	Resolver    Resolver
@@ -135,7 +135,7 @@ type Net struct {
 	Open        bool
 }
 
-// DialContext implements netprobe.Dialer.
+// DialContext satisfies the dialer interfaces of the guest probes and sniproxy.Dialer.
 func (n *Net) DialContext(ctx context.Context, network, addr string) (net.Conn, error) {
 	ap, err := n.resolve(ctx, addr)
 	if err != nil {

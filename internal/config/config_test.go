@@ -109,6 +109,7 @@ memory = "6G"
 		{"bad mode", strings.Replace(ok, `"rw"`, `"wx"`, 1), "workspace.mode", nil},
 		{"bad policy", strings.Replace(ok, "allowlist", "open", 1), "network.policy", nil},
 		{"bad memory", strings.Replace(ok, "6G", "lots", 1), "limits.memory", nil},
+		{"unit-less memory", strings.Replace(ok, "6G", "512", 1), "limits.memory", nil},
 		{"bad env name", ok + "[env]\n\"A-B\" = \"x\"\n", "env.A-B", nil},
 		{"syntax error", "engine = \n", "p.toml", nil},
 	}

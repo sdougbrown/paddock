@@ -51,7 +51,7 @@ type ProfileClaude struct {
 // Engines supported in v1.
 const EngineAppleContainer = "apple-container"
 
-var memoryRe = regexp.MustCompile(`^[0-9]+[KkMmGg]?$`)
+var memoryRe = regexp.MustCompile(`^[0-9]+[KkMmGg]$`)
 
 func (p *Profile) validate() error {
 	if p.Hooks != nil {

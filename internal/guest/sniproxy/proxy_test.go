@@ -116,7 +116,7 @@ func startProxy(t *testing.T, mutate func(*sniproxy.Config)) *harness {
 	cert, pool := guesttest.SelfSigned(t, "allowed.test", "second.test")
 	up := guesttest.EchoTLS(t, cert)
 	allow, err := sniproxy.NewAllowlist([]string{
-		"allowed.test", "second.test", "loop.test", "gone.test", "flaky.test", "slow.test", "private.test", "resolver.test",
+		"allowed.test", "second.test", "loop.test", "gone.test", "flaky.test", "slow.test", "private.test", "resolver.test", "refused.test",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -124,7 +124,7 @@ func startProxy(t *testing.T, mutate func(*sniproxy.Config)) *harness {
 	h := &harness{
 		dialer: &routeDialer{
 			target: up.Addr().String(),
-			refuse: map[string]bool{"203.0.113.30:443": true},
+			refuse: map[string]bool{"203.0.113.30:443": true, "203.0.113.50:443": true, "203.0.113.51:443": true},
 			hang:   map[string]bool{"203.0.113.40:443": true},
 		},
 		log:  &syncBuffer{},
@@ -143,6 +143,7 @@ func startProxy(t *testing.T, mutate func(*sniproxy.Config)) *harness {
 				netip.MustParseAddr("fd00::5"), netip.MustParseAddr("100.100.1.1"),
 			},
 			"resolver.test": {netip.MustParseAddr("198.51.100.53")},
+			"refused.test":  {netip.MustParseAddr("203.0.113.50"), netip.MustParseAddr("203.0.113.51")},
 		},
 		ExcludeAddrs: []netip.Addr{netip.MustParseAddr("198.51.100.53")},
 		Dialer:       h.dialer,
@@ -386,17 +387,20 @@ func TestProxyRefusals(t *testing.T) {
 		send       func(t *testing.T, c net.Conn, h *harness)
 		wantSNI    string
 		wantReason sniproxy.Reason
+		wantDials  []string
 	}{
-		{"denied name", tlsHello("evil.test"), "evil.test", sniproxy.ReasonDenied},
-		{"subdomain of allowed", tlsHello("sub.allowed.test"), "sub.allowed.test", sniproxy.ReasonDenied},
-		{"no sni", tlsHello(""), "", sniproxy.ReasonNoSNI},
-		{"ip literal", tlsHello("203.0.113.10"), "", sniproxy.ReasonNoSNI},
-		{"http", writeBytes("GET / HTTP/1.1\r\nHost: allowed.test\r\n\r\n"), "", sniproxy.ReasonNotTLS},
-		{"silent client", func(*testing.T, net.Conn, *harness) {}, "", sniproxy.ReasonTimeout},
-		{"loopback upstream", tlsHello("loop.test"), "loop.test", sniproxy.ReasonUpstream},
-		{"unresolvable", tlsHello("gone.test"), "gone.test", sniproxy.ReasonUpstream},
-		{"private upstream", tlsHello("private.test"), "private.test", sniproxy.ReasonUpstream},
-		{"resolver upstream", tlsHello("resolver.test"), "resolver.test", sniproxy.ReasonUpstream},
+		{"denied name", tlsHello("evil.test"), "evil.test", sniproxy.ReasonDenied, nil},
+		{"subdomain of allowed", tlsHello("sub.allowed.test"), "sub.allowed.test", sniproxy.ReasonDenied, nil},
+		{"no sni", tlsHello(""), "", sniproxy.ReasonNoSNI, nil},
+		{"ip literal", tlsHello("203.0.113.10"), "", sniproxy.ReasonNoSNI, nil},
+		{"http", writeBytes("GET / HTTP/1.1\r\nHost: allowed.test\r\n\r\n"), "", sniproxy.ReasonNotTLS, nil},
+		{"silent client", func(*testing.T, net.Conn, *harness) {}, "", sniproxy.ReasonTimeout, nil},
+		{"loopback upstream", tlsHello("loop.test"), "loop.test", sniproxy.ReasonUpstream, nil},
+		{"unresolvable", tlsHello("gone.test"), "gone.test", sniproxy.ReasonUpstream, nil},
+		{"private upstream", tlsHello("private.test"), "private.test", sniproxy.ReasonUpstream, nil},
+		{"resolver upstream", tlsHello("resolver.test"), "resolver.test", sniproxy.ReasonUpstream, nil},
+		{"every upstream refuses", tlsHello("refused.test"), "refused.test", sniproxy.ReasonUpstream,
+			[]string{"203.0.113.50:443", "203.0.113.51:443"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -430,8 +434,8 @@ func TestProxyRefusals(t *testing.T) {
 			if d[0].Time.IsZero() {
 				t.Fatal("denial has no time")
 			}
-			if calls := h.dialer.calls(); len(calls) != 0 {
-				t.Fatalf("dialed %v for a refused connection", calls)
+			if got, want := strings.Join(h.dialer.calls(), ","), strings.Join(tt.wantDials, ","); got != want {
+				t.Fatalf("dialed %q; want %q", got, want)
 			}
 		})
 	}

@@ -21,7 +21,7 @@ func main() {
 
 func run(args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
-		fmt.Fprintln(stderr, "usage: paddock <version>")
+		fmt.Fprintln(stderr, "usage: paddock version")
 		return 2
 	}
 	switch args[0] {

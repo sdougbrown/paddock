@@ -1,6 +1,7 @@
 package applecontainer
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -10,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/sdougbrown/paddock/images"
 	"github.com/sdougbrown/paddock/internal/plan"
@@ -136,7 +138,7 @@ func (e *Engine) ensureImage(tag string, build func() error) error {
 }
 
 func (e *Engine) imageExists(tag string) (bool, error) {
-	out, err := exec.Command(e.bin(), "image", "ls", "--quiet").Output()
+	out, err := e.cliOutput(0, "image", "ls", "--quiet")
 	if err != nil {
 		return false, fmt.Errorf("container image ls: %w", err)
 	}
@@ -161,13 +163,18 @@ func (e *Engine) buildBase(tag string) error {
 	return e.build(tag, df, dir, "")
 }
 
-func (e *Engine) build(tag, dockerfile, context, parent string) error {
+// buildTimeout bounds one `container build`.
+const buildTimeout = 30 * time.Minute
+
+func (e *Engine) build(tag, dockerfile, contextDir, parent string) error {
 	args := []string{"build", "-f", dockerfile, "-t", tag}
 	if parent != "" {
 		args = append(args, "--build-arg", "PADDOCK_PARENT="+parent)
 	}
-	args = append(args, context)
-	cmd := exec.Command(e.bin(), args...)
+	args = append(args, contextDir)
+	ctx, cancel := context.WithTimeout(context.Background(), buildTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, e.bin(), args...)
 	cmd.Stdout = e.Stderr
 	cmd.Stderr = e.Stderr
 	if err := cmd.Run(); err != nil {

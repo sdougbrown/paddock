@@ -25,6 +25,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path"
 	"runtime"
 
 	"github.com/sdougbrown/paddock/internal/guest/sniproxy"
@@ -118,10 +119,12 @@ func agentCommand(cfg *initcfg.Config, net *network, env []string) ([]string, st
 // verifyArgv is the command line of the verify role for cfg.
 func verifyArgv(cfg *initcfg.Config, net *network) ([]string, error) {
 	p := verifyPlan{
-		Policy:   cfg.Network.Policy,
-		UID:      cfg.User.UID,
-		DenyLog:  cfg.Network.DenyLog,
-		Writable: []string{cfg.User.Home, cfg.User.Home + "/.claude"},
+		Policy:  cfg.Network.Policy,
+		UID:     cfg.User.UID,
+		DenyLog: cfg.Network.DenyLog,
+	}
+	for _, d := range agentDirs(path.Clean(cfg.User.Home)) {
+		p.Writable = append(p.Writable, d.path)
 	}
 	if net.proxy != nil {
 		p.ProxyPID = net.proxy.Process.Pid

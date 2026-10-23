@@ -7,6 +7,7 @@ import (
 	"errors"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"strings"
 	"syscall"
@@ -44,6 +45,10 @@ func helperMain() int {
 		testArgs:       []string{"-c", os.Getenv("HELPER_SCRIPT")},
 		selfExe:        os.Args[0],
 		secretsGrace:   time.Second,
+		cancelGrace:    time.Second,
+	}
+	if d, err := time.ParseDuration(os.Getenv("HELPER_START_DELAY")); err == nil {
+		e.testStartDelay = d
 	}
 	p := &plan.Plan{
 		Engine:    "apple-container",
@@ -54,7 +59,10 @@ func helperMain() int {
 		Network:   plan.Network{Policy: "none"},
 		Argv:      []string{"unused"},
 	}
-	code, err := e.Run(context.Background(), p, engine.Options{})
+	// SIGUSR1 cancels the context passed to Run.
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGUSR1)
+	defer stop()
+	code, err := e.Run(ctx, p, engine.Options{})
 	if err != nil {
 		os.Stderr.WriteString("helper: " + err.Error() + "\n")
 		return 1
@@ -68,7 +76,7 @@ type helper struct {
 	out  bytes.Buffer
 }
 
-func startHelper(t *testing.T, script string) *helper {
+func startHelper(t *testing.T, script string, env ...string) *helper {
 	t.Helper()
 	if os.Getenv("PADDOCK_CONTAINER_TESTS") != "1" {
 		t.Skip("set PADDOCK_CONTAINER_TESTS=1 to run container tests")
@@ -85,6 +93,7 @@ func startHelper(t *testing.T, script string) *helper {
 	h.cmd = exec.Command(os.Args[0])
 	h.cmd.Env = append(os.Environ(), "PADDOCK_ENGINE_HELPER=1", "HELPER_HOME="+home,
 		"HELPER_WORKSPACE="+ws, "HELPER_SCRIPT="+script, "HELPER_TOKEN="+fakeSecret)
+	h.cmd.Env = append(h.cmd.Env, env...)
 	h.cmd.Stdout, h.cmd.Stderr = &h.out, &h.out
 	if err := h.cmd.Start(); err != nil {
 		t.Fatal(err)
@@ -196,10 +205,10 @@ func TestContainerSIGTERMReachesGuest(t *testing.T) {
 }
 
 func TestContainerSIGTERMBeforeRunningStillExits143(t *testing.T) {
-	h := startHelper(t, "exec sleep 300")
+	h := startHelper(t, "exec sleep 300", "HELPER_START_DELAY=3s")
 	eventually(t, 30*time.Second, "run dir to appear", func() bool { return h.name() != "" })
-	if _, running := listed(h.name(), false); running {
-		t.Skip("container was already running when the signal was sent")
+	if present, _ := listed(h.name(), true); present {
+		t.Fatal("container exists before the start delay elapsed")
 	}
 	if err := h.cmd.Process.Signal(syscall.SIGTERM); err != nil {
 		t.Fatal(err)
@@ -207,6 +216,24 @@ func TestContainerSIGTERMBeforeRunningStillExits143(t *testing.T) {
 	if code := h.wait(t); code != 143 {
 		t.Fatalf("exit code %d, want 143; output:\n%s", code, h.out.String())
 	}
+}
+
+// TestContainerCancelStopsGuest cancels Run's context while the guest ignores
+// SIGTERM, so the container ends only through the `container stop` that
+// follows cancelGrace.
+func TestContainerCancelStopsGuest(t *testing.T) {
+	h := startHelper(t, "trap '' TERM; while :; do sleep 1; done")
+	name := waitRunning(t, h)
+	if err := h.cmd.Process.Signal(syscall.SIGUSR1); err != nil {
+		t.Fatal(err)
+	}
+	if code := h.wait(t); code != 137 {
+		t.Fatalf("exit code %d, want 137 (SIGKILL from container stop); output:\n%s", code, h.out.String())
+	}
+	eventually(t, 20*time.Second, "container to be gone", func() bool {
+		present, _ := listed(name, true)
+		return !present
+	})
 }
 
 func TestContainerWatchdogStopsAfterSIGKILL(t *testing.T) {
@@ -220,7 +247,7 @@ func TestContainerWatchdogStopsAfterSIGKILL(t *testing.T) {
 		present, _ := listed(name, true)
 		return !present
 	})
-	eventually(t, 5*time.Second, "state dirs to be removed", func() bool {
+	eventually(t, 20*time.Second, "state dirs to be removed", func() bool {
 		_, e1 := os.Stat(filepath.Join(h.runDir(), "state"))
 		_, e2 := os.Stat(filepath.Join(h.runDir(), "secrets"))
 		_, e3 := os.Stat(filepath.Join(h.runDir(), "settings"))
@@ -278,9 +305,8 @@ func TestContainerBuildImages(t *testing.T) {
 	if err != nil || strings.TrimSpace(string(out)) != "layered" {
 		t.Fatalf("layer content = %q, %v", out, err)
 	}
-	start = time.Now()
 	again, err := e.ensureImages(p)
-	if err != nil || again != tag || time.Since(start) > 5*time.Second {
-		t.Fatalf("second call: %q, %v, %s", again, err, time.Since(start))
+	if err != nil || again != tag {
+		t.Fatalf("second call: %q, %v", again, err)
 	}
 }

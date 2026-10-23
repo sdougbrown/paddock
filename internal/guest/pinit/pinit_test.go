@@ -19,6 +19,7 @@ func TestLifelineHosts(t *testing.T) {
 		allowed, errSub string
 	}{
 		{[]string{"registry.npmjs.org", "api.anthropic.com"}, "api.anthropic.com", ""},
+		{[]string{"a.test", "api.anthropic.com"}, "api.anthropic.com", ""},
 		{[]string{"z.example.org", "b.test", "A.test"}, "a.test", ""},
 		{[]string{"example.com", "example.net", "example.org"}, "example.com", ""},
 		{[]string{"*.anthropic.com"}, "", "wildcards are not supported"},
@@ -60,6 +61,21 @@ func TestVerifyArgv(t *testing.T) {
 			{Path: "/Users/a/.claude/projects/-ws", ReadOnly: false},
 		},
 	}
+	t.Run("no transcript dir", func(t *testing.T) {
+		bare := *cfg
+		bare.Claude = initcfg.ClaudeHome{}
+		argv, err := verifyArgv(&bare, &network{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var p verifyPlan
+		if err := json.Unmarshal([]byte(argv[2]), &p); err != nil {
+			t.Fatal(err)
+		}
+		if want := []string{"/Users/a", "/Users/a/.claude"}; !slices.Equal(p.Writable, want) {
+			t.Errorf("Writable = %q; want %q", p.Writable, want)
+		}
+	})
 	proxied := &network{proxy: &exec.Cmd{Process: &os.Process{Pid: 4242}}, allowed: "api.anthropic.com", denied: lifelineDeniedHost}
 	tests := []struct {
 		name                             string

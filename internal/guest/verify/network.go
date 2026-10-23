@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/netip"
 	"os"
@@ -28,8 +29,10 @@ type NetworkOptions struct {
 	AllowedHost string
 	// DeniedHost is a resolvable name that is not allowlisted.
 	DeniedHost string
-	// DenyLog is the proxy's denial log. When set, the denied-host check
-	// also requires a matching denial entry.
+	// DenyLog is the proxy's denial log. When set, the denied-host and
+	// raw-IP checks also require a matching denial entry. The log is
+	// guest-writable, so an entry corroborates the refusal the probe saw;
+	// it does not prove the refusal.
 	DenyLog string
 	// ProxyPID is the SNI proxy's pid.
 	ProxyPID int
@@ -222,6 +225,10 @@ func (o NetworkOptions) proxyKillRefused(context.Context) (string, error) {
 	return "", fmt.Errorf("signal proxy pid %d: %w", o.ProxyPID, err)
 }
 
+// deniedHostRefused passes when the denied name's handshake is refused. With
+// DenyLog set it also requires a recent denial entry for that name. The log
+// is guest-writable, so the entry corroborates the refusal; it does not
+// prove the proxy made it.
 func (o NetworkOptions) deniedHostRefused(ctx context.Context) (string, error) {
 	if o.DeniedHost == "" {
 		return "", errors.New("no denied host configured")
@@ -245,7 +252,9 @@ func (o NetworkOptions) deniedHostRefused(ctx context.Context) (string, error) {
 
 // rawIPRefused sends a ClientHello without SNI to a raw IP. With DenyLog
 // set it also requires the proxy's no-SNI denial for this connection, so a
-// target that refuses no-SNI hellos itself cannot pass for the proxy.
+// target that refuses no-SNI hellos itself cannot pass for the proxy. The
+// log is guest-writable, so the entry corroborates the refusal; it does not
+// prove the proxy made it.
 func (o NetworkOptions) rawIPRefused(ctx context.Context) (string, error) {
 	since := time.Now().Add(-time.Second)
 	addr := net.JoinHostPort(o.RawIPTarget, "443")
@@ -263,7 +272,9 @@ func (o NetworkOptions) rawIPRefused(ctx context.Context) (string, error) {
 }
 
 // requireDenial passes when DenyLog is unset or holds an entry that match
-// accepts; want describes that entry.
+// accepts; want describes that entry. The entry corroborates the refusal
+// the probe already observed. The log is guest-writable, so a match is not
+// proof that the proxy refused the connection.
 func (o NetworkOptions) requireDenial(detail, want string, match func(sniproxy.Denial) bool) (string, error) {
 	if o.DenyLog == "" {
 		return detail, nil
@@ -437,15 +448,20 @@ func (l *localAddrDialer) DialContext(ctx context.Context, network, addr string)
 	return c, err
 }
 
-// hasDenial reports whether the denial log at path holds an entry match
-// accepts.
+// denialLogLimit caps how much of the denial log hasDenial reads.
+const denialLogLimit = 4 << 20
+
+// hasDenial reports whether the first denialLogLimit bytes of the denial log
+// at path hold an entry match accepts. Entries past the cap are not read.
+// The log is guest-writable, so a match corroborates a refusal the probe
+// already observed; it does not prove one.
 func hasDenial(path string, match func(sniproxy.Denial) bool) (bool, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return false, err
 	}
 	defer f.Close()
-	sc := bufio.NewScanner(f)
+	sc := bufio.NewScanner(io.LimitReader(f, denialLogLimit))
 	sc.Buffer(make([]byte, 0, 4096), 1<<20)
 	for sc.Scan() {
 		var d sniproxy.Denial

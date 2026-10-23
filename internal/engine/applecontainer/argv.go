@@ -1,6 +1,7 @@
 package applecontainer
 
 import (
+	"fmt"
 	"strconv"
 
 	"github.com/sdougbrown/paddock/internal/initcfg"
@@ -23,10 +24,14 @@ type mountLayout struct {
 	UserSettingsAt string
 }
 
-// guestMounts lists the plan's mounts followed by the paddock-managed ones.
-func guestMounts(p *plan.Plan, l mountLayout) []guestMount {
+// guestMounts lists the plan's mounts followed by the paddock-managed ones. A
+// plan mount whose guest path is paddock-managed is an error.
+func guestMounts(p *plan.Plan, l mountLayout) ([]guestMount, error) {
 	var ms []guestMount
 	for _, m := range p.Mounts {
+		if initcfg.Reserved(m.Guest) {
+			return nil, fmt.Errorf("plan mount %q targets paddock-managed guest path %s", m.Host, m.Guest)
+		}
 		ms = append(ms, guestMount{m.Host, m.Guest, m.ReadOnly})
 	}
 	ms = append(ms,
@@ -41,7 +46,7 @@ func guestMounts(p *plan.Plan, l mountLayout) []guestMount {
 	if l.UserSettings != "" {
 		ms = append(ms, guestMount{l.UserSettings, l.UserSettingsAt, true})
 	}
-	return ms
+	return ms, nil
 }
 
 // runSpec is everything `container run` needs. It holds no secret values.

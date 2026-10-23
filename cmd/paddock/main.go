@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 
 	"github.com/sdougbrown/paddock/internal/config"
+	"github.com/sdougbrown/paddock/internal/engine/applecontainer"
 	"github.com/sdougbrown/paddock/internal/resolve"
 )
 
@@ -39,9 +40,20 @@ func run(args []string, stdout, stderr io.Writer) int {
 			return 1
 		}
 		return 0
-	case "run", "setup":
-		fmt.Fprintf(stderr, "paddock %s: not implemented\n", args[0])
-		return 2
+	case "run":
+		code, err := runCmd(args[1:], stderr)
+		if err != nil {
+			fmt.Fprintln(stderr, "paddock run:", err)
+		}
+		return code
+	case applecontainer.WatchdogCommand:
+		return applecontainer.RunWatchdog(args[1:])
+	case "setup":
+		code, err := setupCmd(args[1:], stderr)
+		if err != nil {
+			fmt.Fprintln(stderr, "paddock setup:", err)
+		}
+		return code
 	}
 	fmt.Fprintf(stderr, "paddock: unknown command %q\n", args[0])
 	return 2

@@ -107,6 +107,13 @@ func LoadChain(src SpecSource, ref string) ([]LoadedSpec, error) {
 // checkSpec applies the rules that hold for a spec on its own: no env
 // credentials, and repository specs define no egress or managed settings and
 // extend an operator parent.
+//
+// Repository-trust specs must additionally be blocked, before paddock loads
+// them, from declaring context.readonly host mounts, setup.command,
+// setup.cache_dir and setup.cache_key, managed-settings allow rules and hooks
+// (the managed_settings rule already blocks these), and image
+// Dockerfiles: each runs repository-chosen code or exposes host paths outside
+// the operator's review.
 func checkSpec(ls LoadedSpec, parent *LoadedSpec) error {
 	for _, name := range sortedKeys(ls.Spec.Env) {
 		kind, _, err := ParseSource(ls.Spec.Env[name])

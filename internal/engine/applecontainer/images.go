@@ -83,7 +83,8 @@ func layerTag(spec, hash string) string {
 
 // ensureImages builds the base image and each plan layer that is not already
 // present, and returns the tag of the last layer. Build output goes to
-// stderr.
+// stderr. Once the chain is built or reused, other tags of the chain's
+// repositories are removed.
 func (e *Engine) ensureImages(p *plan.Plan) (string, error) {
 	hash, err := imageHash(images.BaseDockerfile, "", "")
 	if err != nil {
@@ -93,6 +94,7 @@ func (e *Engine) ensureImages(p *plan.Plan) (string, error) {
 	if err := e.ensureImage(tag, func() error { return e.buildBase(tag) }); err != nil {
 		return "", err
 	}
+	chain := []string{tag}
 	for _, l := range p.Image.Layers {
 		if l.Dockerfile == "" {
 			continue
@@ -121,8 +123,40 @@ func (e *Engine) ensureImages(p *plan.Plan) (string, error) {
 			return "", err
 		}
 		tag = next
+		chain = append(chain, tag)
 	}
+	e.pruneSuperseded(chain)
 	return tag, nil
+}
+
+// pruneSuperseded removes every tag of a repository in chain that is not in
+// chain. Other repositories are never touched, and a failure to list or remove
+// is logged and ignored: an image still used by a running container stays.
+func (e *Engine) pruneSuperseded(chain []string) {
+	keep := make(map[string]bool, len(chain))
+	repos := make(map[string]bool, len(chain))
+	for _, t := range chain {
+		keep[t] = true
+		repo, _, _ := strings.Cut(t, ":")
+		repos[repo] = true
+	}
+	out, err := e.cliOutput(0, "image", "ls", "--quiet")
+	if err != nil {
+		e.debugf("prune images: container image ls: %v", err)
+		return
+	}
+	for _, line := range strings.Fields(string(out)) {
+		name := strings.TrimPrefix(line, "docker.io/")
+		repo, _, ok := strings.Cut(name, ":")
+		if !ok || !repos[repo] || keep[name] {
+			continue
+		}
+		if _, err := e.cliOutput(0, "image", "rm", line); err != nil {
+			e.debugf("prune images: container image rm %s: %v", line, err)
+			continue
+		}
+		e.debugf("removed superseded image %s", line)
+	}
 }
 
 func (e *Engine) ensureImage(tag string, build func() error) error {

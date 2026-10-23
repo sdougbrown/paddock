@@ -107,6 +107,11 @@ memory = "6G"
 				t.Fatalf("network.policy = %q, want \"host\"", p.Network.Policy)
 			}
 		}},
+		{"valid lowercase memory unit", strings.Replace(ok, "6G", "512m", 1), "", func(t *testing.T, p *Profile) {
+			if p.Limits.Memory != "512m" {
+				t.Fatalf("limits.memory = %q, want \"512m\"", p.Limits.Memory)
+			}
+		}},
 		{"negative cpus", strings.Replace(ok, "cpus = 4", "cpus = -1", 1), "limits.cpus", nil},
 		{"traversing default_spec", "default_spec = \"../x\"\n" + ok, "default_spec", nil},
 		{"unknown top-level key", ok + "bogus = 1\n", "bogus", nil},
@@ -146,20 +151,36 @@ func TestLoadSpec(t *testing.T) {
 		name    string
 		body    string
 		wantErr string
+		check   func(t *testing.T, s *Spec)
 	}{
-		{"valid", "extends = \"afresh\"\n[egress]\na = [\"x.example.com\"]\n[context]\nreadonly = [\"~/x\"]\n", ""},
-		{"unknown key", "wat = 1\n", "wat"},
-		{"rw mount key", "[mounts]\nreadwrite = [\"/x\"]\n", "mounts"},
-		{"hooks table", "[hooks]\npre = \"x\"\n", "host hooks are not supported"},
-		{"env file source", "[env]\nT = \"file:/x\"\n", "env.T"},
-		{"env env source", "[env]\nT = \"env:X\"\n", "env.T"},
-		{"literal env", "[env]\nT = \"1\"\n", ""},
-		{"bad env name", "[env]\n\"A-B\" = \"x\"\n", "env.A-B"},
-		{"bad egress host", "[egress]\na = [\"x/y\"]\n", "egress.a"},
-		{"bad egress set name", "[egress]\n\"-bad\" = [\"x.example.com\"]\n", "egress."},
-		{"cache without command", "[setup]\ncache_key = \"yarn.lock\"\n", "setup"},
-		{"context without dockerfile", "[image]\ncontext = \"x\"\n", "image.context"},
-		{"bad extends", "extends = \"../x\"\n", "extends"},
+		{"valid", "extends = \"afresh\"\n[egress]\na = [\"x.example.com\"]\n[context]\nreadonly = [\"~/x\"]\n", "", func(t *testing.T, s *Spec) {
+			if s.Extends != "afresh" || !slices.Equal(s.Egress["a"], []string{"x.example.com"}) || !slices.Equal(s.Context.Readonly, []string{"~/x"}) {
+				t.Fatalf("extends = %q, egress = %v, context.readonly = %v", s.Extends, s.Egress, s.Context.Readonly)
+			}
+		}},
+		{"valid image", "[image]\ndockerfile = \"Dockerfile\"\ncontext = \"..\"\n", "", func(t *testing.T, s *Spec) {
+			if s.Image.Dockerfile != "Dockerfile" || s.Image.Context != ".." {
+				t.Fatalf("image = %+v", s.Image)
+			}
+		}},
+		{"valid image without context", "[image]\ndockerfile = \"Dockerfile\"\n", "", nil},
+		{"valid setup", "[setup]\ncommand = [\"yarn\", \"install\"]\ncache_key = \"yarn.lock\"\ncache_dir = \"/cache\"\n", "", func(t *testing.T, s *Spec) {
+			if !slices.Equal(s.Setup.Command, []string{"yarn", "install"}) || s.Setup.CacheKey != "yarn.lock" || s.Setup.CacheDir != "/cache" {
+				t.Fatalf("setup = %+v", s.Setup)
+			}
+		}},
+		{"unknown key", "wat = 1\n", "wat", nil},
+		{"rw mount key", "[mounts]\nreadwrite = [\"/x\"]\n", "mounts", nil},
+		{"hooks table", "[hooks]\npre = \"x\"\n", "host hooks are not supported", nil},
+		{"env file source", "[env]\nT = \"file:/x\"\n", "env.T", nil},
+		{"env env source", "[env]\nT = \"env:X\"\n", "env.T", nil},
+		{"literal env", "[env]\nT = \"1\"\n", "", nil},
+		{"bad env name", "[env]\n\"A-B\" = \"x\"\n", "env.A-B", nil},
+		{"bad egress host", "[egress]\na = [\"x/y\"]\n", "egress.a", nil},
+		{"bad egress set name", "[egress]\n\"-bad\" = [\"x.example.com\"]\n", "egress.", nil},
+		{"cache without command", "[setup]\ncache_key = \"yarn.lock\"\n", "setup", nil},
+		{"context without dockerfile", "[image]\ncontext = \"x\"\n", "image.context", nil},
+		{"bad extends", "extends = \"../x\"\n", "extends", nil},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -169,10 +190,8 @@ func TestLoadSpec(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				if tc.name == "valid" {
-					if s.Extends != "afresh" || !slices.Equal(s.Egress["a"], []string{"x.example.com"}) || !slices.Equal(s.Context.Readonly, []string{"~/x"}) {
-						t.Fatalf("extends = %q, egress = %v, context.readonly = %v", s.Extends, s.Egress, s.Context.Readonly)
-					}
+				if tc.check != nil {
+					tc.check(t, s)
 				}
 				return
 			}
@@ -195,6 +214,13 @@ func TestLoadSpecMissing(t *testing.T) {
 	}
 	if _, err := r.LoadProfile("../x"); err == nil {
 		t.Fatal("want error for traversing profile name")
+	}
+}
+
+func TestLoadProfileRejectsSpecStyleName(t *testing.T) {
+	r := writeRoot(t, map[string]string{"profiles/a/b.toml": "engine = \"apple-container\"\n"})
+	if _, err := r.LoadProfile("a/b"); err == nil || !strings.Contains(err.Error(), "invalid profile name") {
+		t.Fatalf("want invalid profile name error, got %v", err)
 	}
 }
 

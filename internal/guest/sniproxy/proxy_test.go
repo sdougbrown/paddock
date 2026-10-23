@@ -153,17 +153,7 @@ func startProxy(t *testing.T, mutate func(*sniproxy.Config)) *harness {
 	if mutate != nil {
 		mutate(&cfg)
 	}
-	p, err := sniproxy.New(cfg)
-	if err != nil {
-		t.Fatal(err)
-	}
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { ln.Close() })
-	go func() { _ = p.Serve(ln) }()
-	h.addr = ln.Addr().String()
+	h.addr = guesttest.ServeProxy(t, cfg)
 	return h
 }
 

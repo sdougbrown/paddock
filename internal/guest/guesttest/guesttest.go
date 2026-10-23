@@ -202,7 +202,7 @@ func StartGuest(t testing.TB, allowed string, resolver Resolver) *Guest {
 	}
 	t.Cleanup(func() { logFile.Close() })
 	upstream := up.Addr().String()
-	p, err := sniproxy.New(sniproxy.Config{
+	proxy := ServeProxy(t, sniproxy.Config{
 		Allowlist: allow,
 		Resolver:  resolver,
 		Dialer: dialFunc(func(ctx context.Context, _, _ string) (net.Conn, error) {
@@ -211,6 +211,18 @@ func StartGuest(t testing.TB, allowed string, resolver Resolver) *Guest {
 		}),
 		DenyLog: logFile,
 	})
+	return &Guest{
+		Net:      &Net{Resolver: resolver, Proxy: proxy, Upstream: upstream, UDPUpstream: UDPEcho(t)},
+		Resolver: resolver,
+		DenyLog:  logPath,
+	}
+}
+
+// ServeProxy runs a sniproxy built from cfg on a loopback listener until the
+// test ends and returns the listener's address.
+func ServeProxy(t testing.TB, cfg sniproxy.Config) string {
+	t.Helper()
+	p, err := sniproxy.New(cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -220,11 +232,7 @@ func StartGuest(t testing.TB, allowed string, resolver Resolver) *Guest {
 	}
 	t.Cleanup(func() { ln.Close() })
 	go func() { _ = p.Serve(ln) }()
-	return &Guest{
-		Net:      &Net{Resolver: resolver, Proxy: ln.Addr().String(), Upstream: upstream, UDPUpstream: UDPEcho(t)},
-		Resolver: resolver,
-		DenyLog:  logPath,
-	}
+	return ln.Addr().String()
 }
 
 type dialFunc func(ctx context.Context, network, addr string) (net.Conn, error)

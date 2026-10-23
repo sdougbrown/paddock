@@ -13,7 +13,7 @@ the fixer profile mounts `repo` from the workspace read-only, so the directory m
 
 ## Image layers
 
-A spec may ship `images/<spec>/Dockerfile`. paddock builds `paddock-base`, then each spec layer in
+A spec may ship `images/<spec>/Dockerfile`. paddock builds the base image `paddock/base`, then each spec layer in
 chain order, passing the previous image as the build argument `PADDOCK_PARENT`. A layer's
 Dockerfile must start with:
 

@@ -73,6 +73,14 @@ memory = "6G"
 				t.Fatalf("workspace.readonly = %v, network.run = %v", p.Workspace.Readonly, p.Network.Run)
 			}
 		}},
+		{"valid env, mounts, and claude", ok + "[env]\nA = \"1\"\n[mounts]\nreadonly = [\"~/x\"]\n[claude]\nseed_files = [\"CLAUDE.md\"]\nskills = \"~/s\"\nagents = \"~/a\"\n", "", func(t *testing.T, p *Profile) {
+			if p.Env["A"] != "1" || !slices.Equal(p.Mounts.Readonly, []string{"~/x"}) {
+				t.Fatalf("env = %v, mounts.readonly = %v", p.Env, p.Mounts.Readonly)
+			}
+			if !slices.Equal(p.Claude.SeedFiles, []string{"CLAUDE.md"}) || p.Claude.Skills != "~/s" || p.Claude.Agents != "~/a" {
+				t.Fatalf("claude = %+v", p.Claude)
+			}
+		}},
 		{"valid default_spec", "default_spec = \"owner/repo\"\n" + ok, "", nil},
 		{"valid zero cpus", strings.Replace(ok, "cpus = 4", "cpus = 0", 1), "", func(t *testing.T, p *Profile) {
 			if p.Limits.CPUs != 0 {

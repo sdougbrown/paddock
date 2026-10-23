@@ -1,0 +1,12 @@
+extends = "afresh"
+
+[setup]
+command = ["yarn", "install", "--immutable"]
+cache_key = "yarn.lock"
+cache_dir = "/var/cache/paddock/setup"
+
+[context]
+readonly = ["~/Code/_notes/plans"]
+
+[claude]
+managed_settings = "claude/scanner-managed-settings.json"

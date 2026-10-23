@@ -1,0 +1,4 @@
+engine = "apple-container"
+[workspace]
+mode = "rw"
+readonly = ["../x"]

@@ -38,3 +38,10 @@ setup run. `setup.cache_dir` must be a clean absolute guest path strictly under
 same cache serialize on an exclusive flock of `<cache dir>.lock`, held until the setup run ends.
 The setup phase uses the profile's `workspace.mode`; a profile whose workspace is `ro` cannot run
 setup.
+
+## Claude Code inside paddock
+
+Turn Claude Code's own sandbox off for a command that runs in a paddock: settings written for it set
+`sandbox.enabled: false`. paddock's mounts, egress allowlist, and dropped privileges, together with the
+caller's permission hook, are the boundary. Claude Code's Linux sandbox needs bubblewrap and socat,
+which paddock images do not ship, and it cannot mount a fresh /proc inside the guest.

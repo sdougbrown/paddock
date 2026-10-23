@@ -30,6 +30,8 @@ func TestValidate(t *testing.T) {
 		{"x/y", "not a hostname"},
 		{"x.example.com:443", "not a hostname"},
 		{strings.Repeat("a", 64) + ".com", "not a hostname"},
+		{strings.Repeat("a", 63) + ".com", ""},
+		{strings.Repeat("abcdefghi.", 26) + "com", "not a hostname"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.host, func(t *testing.T) {

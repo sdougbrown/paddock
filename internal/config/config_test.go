@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -64,6 +65,8 @@ memory = "6G"
 		wantErr string
 	}{
 		{"valid", ok, ""},
+		{"valid default_spec", "default_spec = \"owner/repo\"\n" + ok, ""},
+		{"traversing default_spec", "default_spec = \"../x\"\n" + ok, "default_spec"},
 		{"unknown top-level key", ok + "bogus = 1\n", "bogus"},
 		{"unknown nested key", ok + "[network.extra]\nx = 1\n", "network.extra"},
 		{"hooks table", ok + "[hooks]\npre = \"x\"\n", "host hooks are not supported"},
@@ -82,6 +85,11 @@ memory = "6G"
 			if tc.wantErr == "" {
 				if err != nil || p.Limits.CPUs != 4 {
 					t.Fatalf("got %+v, %v", p, err)
+				}
+				if tc.name == "valid" {
+					if !slices.Equal(p.Workspace.Readonly, []string{"repo"}) || !slices.Equal(p.Network.Run, []string{"anthropic"}) {
+						t.Fatalf("workspace.readonly = %v, network.run = %v", p.Workspace.Readonly, p.Network.Run)
+					}
 				}
 				return
 			}
@@ -106,6 +114,7 @@ func TestLoadSpec(t *testing.T) {
 		{"env env source", "[env]\nT = \"env:X\"\n", "env.T"},
 		{"literal env", "[env]\nT = \"1\"\n", ""},
 		{"bad egress host", "[egress]\na = [\"x/y\"]\n", "egress.a"},
+		{"bad egress set name", "[egress]\n\"-bad\" = [\"x.example.com\"]\n", "egress."},
 		{"cache without command", "[setup]\ncache_key = \"yarn.lock\"\n", "setup"},
 		{"context without dockerfile", "[image]\ncontext = \"x\"\n", "image.context"},
 		{"bad extends", "extends = \"../x\"\n", "extends"},
@@ -113,10 +122,15 @@ func TestLoadSpec(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			r := writeRoot(t, map[string]string{"projects/o/r.toml": tc.body})
-			_, err := r.LoadSpec("o/r")
+			s, err := r.LoadSpec("o/r")
 			if tc.wantErr == "" {
 				if err != nil {
 					t.Fatal(err)
+				}
+				if tc.name == "valid" {
+					if s.Extends != "afresh" || !slices.Equal(s.Egress["a"], []string{"x.example.com"}) || !slices.Equal(s.Context.Readonly, []string{"~/x"}) {
+						t.Fatalf("extends = %q, egress = %v, context.readonly = %v", s.Extends, s.Egress, s.Context.Readonly)
+					}
 				}
 				return
 			}
@@ -134,6 +148,8 @@ func TestLoadSpecMissing(t *testing.T) {
 	}
 	if _, err := r.LoadSpec("a/b/c"); err == nil {
 		t.Fatal("want error for three-segment ref")
+	} else if errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("invalid ref reported as missing: %v", err)
 	}
 	if _, err := r.LoadProfile("../x"); err == nil {
 		t.Fatal("want error for traversing profile name")

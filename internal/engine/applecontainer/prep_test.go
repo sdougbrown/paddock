@@ -28,7 +28,7 @@ func testSpec() runSpec {
 }
 
 func testMounts() []guestMount {
-	return guestMounts(&plan.Plan{Mounts: []plan.Mount{
+	ms, err := guestMounts(&plan.Plan{Mounts: []plan.Mount{
 		{Host: "/w", Guest: "/w"},
 		{Host: "/w/repo", Guest: "/w/repo", ReadOnly: true},
 		{Host: "/skills", Guest: "/skills", ReadOnly: true},
@@ -37,6 +37,10 @@ func testMounts() []guestMount {
 		BinDir:        "/cache/bin/h",
 		TranscriptDir: "/home/u/.claude/projects/-w",
 	})
+	if err != nil {
+		panic(err)
+	}
+	return ms
 }
 
 func TestRunArgv(t *testing.T) {
@@ -66,9 +70,13 @@ func TestRunArgvMountsUserSettingsReadOnly(t *testing.T) {
 	if strings.Contains(strings.Join(runArgv(s), " "), "settings.json") {
 		t.Fatal("settings mount present without a settings file")
 	}
-	s.Mounts = guestMounts(&plan.Plan{}, mountLayout{
+	var err error
+	s.Mounts, err = guestMounts(&plan.Plan{}, mountLayout{
 		UserSettings: "/run/s/user-settings.json", UserSettingsAt: "/home/u/.claude/settings.json",
 	})
+	if err != nil {
+		t.Fatal(err)
+	}
 	if !slices.Contains(runArgv(s), "/run/s/user-settings.json:/home/u/.claude/settings.json:ro") {
 		t.Fatalf("argv lacks the read-only file mount: %v", runArgv(s))
 	}
@@ -336,12 +344,15 @@ func TestBuildInitConfig(t *testing.T) {
 			Skills:          "/s",
 		},
 	}
-	mounts := guestMounts(p, mountLayout{
+	mounts, err := guestMounts(p, mountLayout{
 		Dirs:          runDirs{State: "/run/s", Secrets: "/run/x", Log: "/run/l"},
 		BinDir:        "/cache/bin/h",
 		TranscriptDir: "/t",
 		UserSettings:  "/run/set/user-settings.json", UserSettingsAt: testUser.Home + "/.claude/settings.json",
 	})
+	if err != nil {
+		t.Fatal(err)
+	}
 	cfg, err := buildInitConfig(p, initInput{User: testUser, TranscriptDir: "/t", Mounts: mounts, Passthrough: []string{"TERM=xterm"}})
 	if err != nil {
 		t.Fatal(err)
@@ -379,9 +390,12 @@ func TestInitMountsMatchRunArgv(t *testing.T) {
 			Workspace: "/w", Workdir: "/w", Argv: []string{"x"}, Network: plan.Network{Policy: "none"},
 			Mounts: []plan.Mount{{Host: "/w", Guest: "/w"}, {Host: "/s", Guest: "/s", ReadOnly: true}},
 		}
-		mounts := guestMounts(p, mountLayout{
+		mounts, err := guestMounts(p, mountLayout{
 			Dirs: runDirs{State: "/run/s", Secrets: "/run/x", Log: "/run/l"}, BinDir: bin, TranscriptDir: "/t",
 		})
+		if err != nil {
+			t.Fatal(err)
+		}
 		cfg, err := buildInitConfig(p, initInput{User: testUser, TranscriptDir: "/t", Mounts: mounts})
 		if err != nil {
 			t.Fatal(err)
@@ -634,5 +648,48 @@ func TestWriteSecrets(t *testing.T) {
 	}
 	if got, _ := os.ReadFile(p); string(got) != "A=b\n" {
 		t.Errorf("content = %q", got)
+	}
+}
+
+func TestGuestMountsRejectManagedGuestPaths(t *testing.T) {
+	for _, guest := range []string{"/run/paddock", "/run/paddock/seed", "/run/paddock-secrets", "/run/paddock-log/x", "/opt/paddock", "/opt/paddock/../paddock/bin"} {
+		p := &plan.Plan{Mounts: []plan.Mount{{Host: "/h", Guest: guest}}}
+		if _, err := guestMounts(p, mountLayout{}); err == nil || !strings.Contains(err.Error(), "paddock-managed") {
+			t.Errorf("guest %q: err = %v", guest, err)
+		}
+	}
+	p := &plan.Plan{Mounts: []plan.Mount{{Host: "/h", Guest: "/opt/paddock2"}, {Host: "/h", Guest: "/run/paddocks"}}}
+	if _, err := guestMounts(p, mountLayout{}); err != nil {
+		t.Errorf("sibling paths rejected: %v", err)
+	}
+}
+
+func TestImageExistsMatchesImageLsOutput(t *testing.T) {
+	// Output shape of `container image ls -q` from Apple container 1.6.0, plus
+	// a docker.io/-prefixed name as printed after a build.
+	bin, _ := fakeContainer(t,
+		"alpine:3.20",
+		"alpine:3.22",
+		"node:22.15-bookworm-slim",
+		"paddock/afresh-afresh-scanner-app:fb710fee1985",
+		"paddock/afresh:bf490c6a3900",
+		"paddock/base:2887019daf15",
+		"docker.io/paddock/built:0123456789ab",
+	)
+	e := &Engine{Bin: bin, Stderr: io.Discard}
+	for _, tc := range []struct {
+		tag  string
+		want bool
+	}{
+		{"paddock/afresh:bf490c6a3900", true},
+		{"paddock/built:0123456789ab", true},
+		{"paddock/afresh:000000000000", false},
+		{"fresh:bf490c6a3900", false},
+		{"app:fb710fee1985", false},
+	} {
+		got, err := e.imageExists(tc.tag)
+		if err != nil || got != tc.want {
+			t.Errorf("imageExists(%q) = %v, %v; want %v", tc.tag, got, err, tc.want)
+		}
 	}
 }

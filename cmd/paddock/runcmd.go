@@ -31,7 +31,7 @@ func runCmd(args []string, stderr io.Writer) (int, error) {
 	}
 	o.Argv = fs.Args()
 	if len(o.Argv) == 0 && !verify {
-		return 1, fmt.Errorf("a command is required after --")
+		return 1, fmt.Errorf("a command or --verify is required")
 	}
 	if len(o.Argv) > 0 && verify {
 		return 1, fmt.Errorf("--verify takes no command")

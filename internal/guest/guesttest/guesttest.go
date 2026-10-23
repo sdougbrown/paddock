@@ -107,7 +107,7 @@ func UDPEcho(t testing.TB) string {
 // Resolver maps names to addresses.
 type Resolver map[string][]netip.Addr
 
-// LookupNetIP satisfies sniproxy.Resolver and the resolver interfaces of the guest probes.
+// LookupNetIP satisfies sniproxy.Resolver.
 func (r Resolver) LookupNetIP(_ context.Context, network, host string) ([]netip.Addr, error) {
 	addrs, ok := r[host]
 	if !ok {
@@ -136,7 +136,7 @@ type Net struct {
 	Open        bool
 }
 
-// DialContext satisfies the dialer interfaces of the guest probes and sniproxy.Dialer.
+// DialContext satisfies sniproxy.Dialer.
 func (n *Net) DialContext(ctx context.Context, network, addr string) (net.Conn, error) {
 	ap, err := n.resolve(ctx, addr)
 	if err != nil {

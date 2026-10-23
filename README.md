@@ -4,10 +4,11 @@ Run one command in a sandbox with explicit mounts, limits, and an egress allowli
 
 ```sh
 make build
-PADDOCK_CONFIG_DIR=./internal/resolve/testdata/root bin/paddock plan --profile fixer -- claude
+PADDOCK_CONFIG_DIR=./internal/resolve/testdata/root bin/paddock plan --profile fixer --workspace <dir> -- claude
 ```
 
-`paddock plan` prints the resolved plan as JSON. Config lives in `~/.config/paddock`
+`paddock plan` prints the resolved plan as JSON. `--workspace` defaults to the current directory;
+the fixer profile mounts `repo` from the workspace read-only, so the directory must contain a `repo/`. Config lives in `~/.config/paddock`
 (`profiles/<role>.toml`, `projects/<owner>[/<repo>].toml`). See `AGENTS.md` for the trust rules.
 
 ## Image layers

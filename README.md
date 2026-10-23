@@ -9,7 +9,7 @@ PADDOCK_CONFIG_DIR=./internal/resolve/testdata/root bin/paddock plan --profile f
 
 `paddock plan` prints the resolved plan as JSON. `--workspace` defaults to the current directory;
 the fixer profile mounts `repo` from the workspace read-only, so the directory must contain a `repo/`. Config lives in `~/.config/paddock`
-(`profiles/<role>.toml`, `projects/<owner>[/<repo>].toml`). See `AGENTS.md` for the trust rules.
+(`profiles/<role>.toml`, `projects/<owner>[/<repo>].toml`). See `AGENTS.md` for the trust rules and `SECURITY.md` for the threat model and residual risks.
 
 ## Image layers
 
@@ -24,7 +24,8 @@ FROM ${PADDOCK_PARENT}
 
 Layer tags are `paddock/<lowercased spec, "/" as "-">:<hash>`, where the hash covers the Dockerfile,
 the build context (symlinks in the context path are resolved first), and the parent tag. Layers
-whose tag already exists are not rebuilt.
+whose tag already exists are not rebuilt. After the chain is built or reused, paddock removes other
+tags of `paddock/base` and the chain's layer repositories; images in use, and all other images, are left alone.
 
 ## Setup cache
 

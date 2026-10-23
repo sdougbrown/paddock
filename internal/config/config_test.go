@@ -89,6 +89,16 @@ memory = "6G"
 				t.Fatalf("workspace.mode = %q, network.policy = %q, want both empty", p.Workspace.Mode, p.Network.Policy)
 			}
 		}},
+		{"valid none policy", strings.Replace(ok, "allowlist", "none", 1), "", func(t *testing.T, p *Profile) {
+			if p.Network.Policy != "none" {
+				t.Fatalf("network.policy = %q, want \"none\"", p.Network.Policy)
+			}
+		}},
+		{"valid host policy", strings.Replace(ok, "allowlist", "host", 1), "", func(t *testing.T, p *Profile) {
+			if p.Network.Policy != "host" {
+				t.Fatalf("network.policy = %q, want \"host\"", p.Network.Policy)
+			}
+		}},
 		{"negative cpus", strings.Replace(ok, "cpus = 4", "cpus = -1", 1), "limits.cpus", nil},
 		{"traversing default_spec", "default_spec = \"../x\"\n" + ok, "default_spec", nil},
 		{"unknown top-level key", ok + "bogus = 1\n", "bogus", nil},

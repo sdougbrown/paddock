@@ -33,6 +33,7 @@ Agent-specific behavior (what to run, which prompt, which skills) belongs to the
 
 ## Notes
 
+- `SECURITY.md` holds the threat model and documented residual risks; update it with any change to them.
 - The proxy denial log is diagnostic, not tamper-evident: any guest uid can write a rw virtiofs mount.
 - Under the allowlist policy only the proxy uid may send DNS, so a lookup cannot carry data out.
   paddock-init maps each allowlisted host to `netpolicy.HostsAddr` (TEST-NET-1) in a root-owned

@@ -30,11 +30,15 @@ type routeDialer struct {
 	hang   map[string]bool
 	mu     sync.Mutex
 	dialed []string
+	// failWrite makes every successful dial return a connection whose
+	// Write fails.
+	failWrite bool
 }
 
 func (d *routeDialer) DialContext(ctx context.Context, network, addr string) (net.Conn, error) {
 	d.mu.Lock()
 	d.dialed = append(d.dialed, addr)
+	fail := d.failWrite
 	d.mu.Unlock()
 	if d.refuse[addr] {
 		return nil, errors.New("connection refused")
@@ -44,7 +48,25 @@ func (d *routeDialer) DialContext(ctx context.Context, network, addr string) (ne
 		return nil, ctx.Err()
 	}
 	var nd net.Dialer
-	return nd.DialContext(ctx, network, d.target)
+	c, err := nd.DialContext(ctx, network, d.target)
+	if err != nil || !fail {
+		return c, err
+	}
+	return failWriteConn{c}, nil
+}
+
+// failWriteConn is a connection whose Write always fails.
+type failWriteConn struct{ net.Conn }
+
+func (failWriteConn) Write([]byte) (int, error) {
+	return 0, errors.New("write refused")
+}
+
+// failingWriter is a denial log whose Write always fails.
+type failingWriter struct{}
+
+func (failingWriter) Write([]byte) (int, error) {
+	return 0, errors.New("disk full")
 }
 
 func (d *routeDialer) calls() []string {
@@ -215,6 +237,146 @@ func TestProxyDialsNextAddressAfterTimeout(t *testing.T) {
 	want := "203.0.113.40:443,203.0.113.41:443"
 	if got := strings.Join(h.dialer.calls(), ","); got != want {
 		t.Fatalf("dialed %s; want %s", got, want)
+	}
+}
+
+// If the ClientHello cannot be replayed upstream, the client is closed with
+// nothing sent and no denial is logged: the connection was allowed.
+func TestProxyReplayWriteFailureClosesClient(t *testing.T) {
+	h := startProxy(t, nil)
+	h.dialer.mu.Lock()
+	h.dialer.failWrite = true
+	h.dialer.mu.Unlock()
+	c, err := net.Dial("tcp", h.addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	_ = c.SetDeadline(time.Now().Add(5 * time.Second))
+	go tlsHello("allowed.test")(t, c, h)
+	n, err := io.Copy(io.Discard, c)
+	if err != nil && !errors.Is(err, net.ErrClosed) && !isConnReset(err) {
+		t.Fatalf("read: %v", err)
+	}
+	if n != 0 {
+		t.Fatalf("proxy sent %d bytes after a failed replay", n)
+	}
+	if d := h.log.denials(t); len(d) != 0 {
+		t.Fatalf("denials = %v; want none for an allowed connection", d)
+	}
+	if calls := h.dialer.calls(); len(calls) != 1 {
+		t.Fatalf("dialed %v; want one dial", calls)
+	}
+}
+
+// An upstream that answers and then ends the stream, by FIN or by RST,
+// makes the proxy close the client promptly rather than leaving it to its
+// read deadline.
+func TestProxyUpstreamEndClosesClient(t *testing.T) {
+	for _, tt := range []struct {
+		name  string
+		reset bool
+	}{{"close", false}, {"reset", true}} {
+		t.Run(tt.name, func(t *testing.T) {
+			h := startProxy(t, nil)
+			cert, pool := guesttest.SelfSigned(t, "allowed.test")
+			h.dialer.target = abruptUpstream(t, cert, tt.reset)
+			h.pool = pool
+			raw, err := net.Dial("tcp", h.addr)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer raw.Close()
+			_ = raw.SetDeadline(time.Now().Add(5 * time.Second))
+			c := tls.Client(raw, &tls.Config{ServerName: "allowed.test", RootCAs: pool})
+			if err := c.Handshake(); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := c.Write([]byte("hi\n")); err != nil {
+				t.Fatal(err)
+			}
+			_ = raw.SetReadDeadline(time.Now().Add(2 * time.Second))
+			data, err := io.ReadAll(c)
+			var ne net.Error
+			if errors.As(err, &ne) && ne.Timeout() {
+				t.Fatal("client read timed out; the proxy did not close the stream")
+			}
+			// A FIN leaves the reply intact. A reset may discard it.
+			if !tt.reset && string(data) != "echo hi\n" {
+				t.Fatalf("client read %q; want the upstream reply", data)
+			}
+		})
+	}
+}
+
+// abruptUpstream serves one TLS connection: it answers the first line and
+// then closes, sending a reset when reset is set. It returns its address.
+func abruptUpstream(t *testing.T, cert tls.Certificate, reset bool) string {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { ln.Close() })
+	go func() {
+		raw, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		tc := tls.Server(raw, &tls.Config{Certificates: []tls.Certificate{cert}})
+		line, err := bufio.NewReader(tc).ReadString('\n')
+		if err == nil {
+			_, _ = tc.Write([]byte("echo " + line))
+		}
+		if tcp, ok := raw.(*net.TCPConn); ok && reset {
+			_ = tcp.SetLinger(0)
+		}
+		_ = raw.Close()
+	}()
+	return ln.Addr().String()
+}
+
+// The denial log failing must not stop the proxy from serving later
+// connections.
+func TestProxyServesAfterDenyLogFailure(t *testing.T) {
+	h := startProxy(t, func(c *sniproxy.Config) { c.DenyLog = failingWriter{} })
+	c, err := net.Dial("tcp", h.addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = c.SetDeadline(time.Now().Add(5 * time.Second))
+	tlsHello("evil.test")(t, c, h)
+	_, _ = io.Copy(io.Discard, c)
+	c.Close()
+	got, err := h.roundTrip(t, "allowed.test")
+	if err != nil {
+		t.Fatalf("allowed connection after a failed denial write: %v", err)
+	}
+	if got != "echo hi\n" {
+		t.Fatalf("got %q", got)
+	}
+}
+
+// Denial timestamps come from Config.Now.
+func TestDenialTimeUsesConfigNow(t *testing.T) {
+	fixed := time.Date(2026, 10, 22, 17, 0, 0, 0, time.UTC)
+	h := startProxy(t, func(c *sniproxy.Config) {
+		c.Now = func() time.Time { return fixed }
+	})
+	c, err := net.Dial("tcp", h.addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	_ = c.SetDeadline(time.Now().Add(5 * time.Second))
+	tlsHello("evil.test")(t, c, h)
+	_, _ = io.Copy(io.Discard, c)
+	d := h.log.denials(t)
+	if len(d) != 1 {
+		t.Fatalf("denials = %v; want one", d)
+	}
+	if !d[0].Time.Equal(fixed) {
+		t.Fatalf("denial time = %v; want injected %v", d[0].Time, fixed)
 	}
 }
 

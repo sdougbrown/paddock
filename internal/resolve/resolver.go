@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/sdougbrown/paddock/internal/config"
+	"github.com/sdougbrown/paddock/internal/initcfg"
 	"github.com/sdougbrown/paddock/internal/plan"
 )
 
@@ -231,6 +232,9 @@ func (r *Resolver) mounts(prof *config.Profile, m *Merged, ws, phase string) ([]
 			}
 			if containsPath(p, ws) {
 				return fmt.Errorf("%s: %q equals or contains the workspace %s", key, p, ws)
+			}
+			if initcfg.Reserved(p) {
+				return fmt.Errorf("%s: %q is a paddock-managed guest path", key, p)
 			}
 			if !hasMount(mounts, p) {
 				mounts = append(mounts, plan.Mount{Host: p, Guest: p, ReadOnly: true})

@@ -135,6 +135,7 @@ func TestLoadSpec(t *testing.T) {
 		{"env file source", "[env]\nT = \"file:/x\"\n", "env.T"},
 		{"env env source", "[env]\nT = \"env:X\"\n", "env.T"},
 		{"literal env", "[env]\nT = \"1\"\n", ""},
+		{"bad env name", "[env]\n\"A-B\" = \"x\"\n", "env.A-B"},
 		{"bad egress host", "[egress]\na = [\"x/y\"]\n", "egress.a"},
 		{"bad egress set name", "[egress]\n\"-bad\" = [\"x.example.com\"]\n", "egress."},
 		{"cache without command", "[setup]\ncache_key = \"yarn.lock\"\n", "setup"},
@@ -180,10 +181,12 @@ func TestLoadSpecMissing(t *testing.T) {
 
 func TestRootPath(t *testing.T) {
 	r := Root{Dir: "/cfg"}
-	for rel, wantErr := range map[string]bool{"images/a/Dockerfile": false, "/etc/passwd": true, "../x": true, "a/../../x": true, "": true} {
-		_, err := r.Path(rel)
-		if (err != nil) != wantErr {
-			t.Errorf("Path(%q) err=%v, wantErr=%v", rel, err, wantErr)
+	if got, err := r.Path("images/a/Dockerfile"); err != nil || got != filepath.FromSlash("/cfg/images/a/Dockerfile") {
+		t.Errorf("Path(images/a/Dockerfile) = %q, %v", got, err)
+	}
+	for _, rel := range []string{"/etc/passwd", "../x", "a/../../x", ""} {
+		if _, err := r.Path(rel); err == nil {
+			t.Errorf("Path(%q) succeeded, want error", rel)
 		}
 	}
 }

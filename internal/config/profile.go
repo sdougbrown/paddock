@@ -2,8 +2,9 @@ package config
 
 import (
 	"fmt"
+	"maps"
 	"regexp"
-	"sort"
+	"slices"
 
 	"github.com/sdougbrown/paddock/internal/envname"
 )
@@ -72,21 +73,24 @@ func (p *Profile) validate() error {
 	if p.DefaultSpec != "" && !ValidRef(p.DefaultSpec) {
 		return fmt.Errorf("default_spec: invalid spec ref %q", p.DefaultSpec)
 	}
-	names := make([]string, 0, len(p.Env))
-	for n := range p.Env {
-		names = append(names, n)
-	}
-	sort.Strings(names)
-	for _, n := range names {
-		if !envname.Valid(n) {
-			return fmt.Errorf("env.%s: invalid variable name", n)
-		}
+	if err := validateEnvNames(p.Env); err != nil {
+		return err
 	}
 	if p.Limits.CPUs < 0 {
 		return fmt.Errorf("limits.cpus: must not be negative")
 	}
 	if p.Limits.Memory != "" && !memoryRe.MatchString(p.Limits.Memory) {
 		return fmt.Errorf("limits.memory: %q must look like 512M or 6G", p.Limits.Memory)
+	}
+	return nil
+}
+
+// validateEnvNames reports the first invalid env name in sorted order.
+func validateEnvNames(env map[string]string) error {
+	for _, n := range slices.Sorted(maps.Keys(env)) {
+		if !envname.Valid(n) {
+			return fmt.Errorf("env.%s: invalid variable name", n)
+		}
 	}
 	return nil
 }

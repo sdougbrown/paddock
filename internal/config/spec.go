@@ -2,11 +2,12 @@ package config
 
 import (
 	"fmt"
+	"maps"
+	"slices"
 	"sort"
 	"strings"
 
 	"github.com/sdougbrown/paddock/internal/egresshost"
-	"github.com/sdougbrown/paddock/internal/envname"
 )
 
 // Spec is a project spec layer: what a command's environment contains.
@@ -68,15 +69,10 @@ func (s *Spec) validate() error {
 	if len(s.Setup.Command) == 0 && (s.Setup.CacheKey != "" || s.Setup.CacheDir != "") {
 		return fmt.Errorf("setup: cache_key/cache_dir set without command")
 	}
-	envNames := make([]string, 0, len(s.Env))
-	for n := range s.Env {
-		envNames = append(envNames, n)
+	if err := validateEnvNames(s.Env); err != nil {
+		return err
 	}
-	sort.Strings(envNames)
-	for _, n := range envNames {
-		if !envname.Valid(n) {
-			return fmt.Errorf("env.%s: invalid variable name", n)
-		}
+	for _, n := range slices.Sorted(maps.Keys(s.Env)) {
 		if v := s.Env[n]; strings.HasPrefix(v, "file:") || strings.HasPrefix(v, "env:") {
 			return fmt.Errorf("env.%s: specs may only set literal env values, not a file: or env: source", n)
 		}

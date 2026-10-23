@@ -63,33 +63,55 @@ memory = "6G"
 		name    string
 		body    string
 		wantErr string
+		check   func(t *testing.T, p *Profile)
 	}{
-		{"valid", ok, ""},
-		{"valid default_spec", "default_spec = \"owner/repo\"\n" + ok, ""},
-		{"traversing default_spec", "default_spec = \"../x\"\n" + ok, "default_spec"},
-		{"unknown top-level key", ok + "bogus = 1\n", "bogus"},
-		{"unknown nested key", ok + "[network.extra]\nx = 1\n", "network.extra"},
-		{"hooks table", ok + "[hooks]\npre = \"x\"\n", "host hooks are not supported"},
-		{"empty hooks table", ok + "[hooks]\n", "host hooks are not supported"},
-		{"bad engine", strings.Replace(ok, "apple-container", "docker", 1), "engine"},
-		{"bad mode", strings.Replace(ok, `"rw"`, `"wx"`, 1), "workspace.mode"},
-		{"bad policy", strings.Replace(ok, "allowlist", "open", 1), "network.policy"},
-		{"bad memory", strings.Replace(ok, "6G", "lots", 1), "limits.memory"},
-		{"bad env name", ok + "[env]\n\"A-B\" = \"x\"\n", "env.A-B"},
-		{"syntax error", "engine = \n", "p.toml"},
+		{"valid", ok, "", func(t *testing.T, p *Profile) {
+			if p.Limits.CPUs != 4 {
+				t.Fatalf("limits.cpus = %d, want 4", p.Limits.CPUs)
+			}
+			if !slices.Equal(p.Workspace.Readonly, []string{"repo"}) || !slices.Equal(p.Network.Run, []string{"anthropic"}) {
+				t.Fatalf("workspace.readonly = %v, network.run = %v", p.Workspace.Readonly, p.Network.Run)
+			}
+		}},
+		{"valid default_spec", "default_spec = \"owner/repo\"\n" + ok, "", nil},
+		{"valid zero cpus", strings.Replace(ok, "cpus = 4", "cpus = 0", 1), "", func(t *testing.T, p *Profile) {
+			if p.Limits.CPUs != 0 {
+				t.Fatalf("limits.cpus = %d, want 0", p.Limits.CPUs)
+			}
+		}},
+		{"valid ro mode", strings.Replace(ok, `"rw"`, `"ro"`, 1), "", func(t *testing.T, p *Profile) {
+			if p.Workspace.Mode != "ro" {
+				t.Fatalf("workspace.mode = %q, want \"ro\"", p.Workspace.Mode)
+			}
+		}},
+		{"valid no optional tables", "engine = \"apple-container\"\n", "", func(t *testing.T, p *Profile) {
+			if p.Workspace.Mode != "" || p.Network.Policy != "" {
+				t.Fatalf("workspace.mode = %q, network.policy = %q, want both empty", p.Workspace.Mode, p.Network.Policy)
+			}
+		}},
+		{"negative cpus", strings.Replace(ok, "cpus = 4", "cpus = -1", 1), "limits.cpus", nil},
+		{"traversing default_spec", "default_spec = \"../x\"\n" + ok, "default_spec", nil},
+		{"unknown top-level key", ok + "bogus = 1\n", "bogus", nil},
+		{"unknown nested key", ok + "[network.extra]\nx = 1\n", "network.extra", nil},
+		{"hooks table", ok + "[hooks]\npre = \"x\"\n", "host hooks are not supported", nil},
+		{"empty hooks table", ok + "[hooks]\n", "host hooks are not supported", nil},
+		{"bad engine", strings.Replace(ok, "apple-container", "docker", 1), "engine", nil},
+		{"bad mode", strings.Replace(ok, `"rw"`, `"wx"`, 1), "workspace.mode", nil},
+		{"bad policy", strings.Replace(ok, "allowlist", "open", 1), "network.policy", nil},
+		{"bad memory", strings.Replace(ok, "6G", "lots", 1), "limits.memory", nil},
+		{"bad env name", ok + "[env]\n\"A-B\" = \"x\"\n", "env.A-B", nil},
+		{"syntax error", "engine = \n", "p.toml", nil},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			r := writeRoot(t, map[string]string{"profiles/p.toml": tc.body})
 			p, err := r.LoadProfile("p")
 			if tc.wantErr == "" {
-				if err != nil || p.Limits.CPUs != 4 {
+				if err != nil {
 					t.Fatalf("got %+v, %v", p, err)
 				}
-				if tc.name == "valid" {
-					if !slices.Equal(p.Workspace.Readonly, []string{"repo"}) || !slices.Equal(p.Network.Run, []string{"anthropic"}) {
-						t.Fatalf("workspace.readonly = %v, network.run = %v", p.Workspace.Readonly, p.Network.Run)
-					}
+				if tc.check != nil {
+					tc.check(t, p)
 				}
 				return
 			}

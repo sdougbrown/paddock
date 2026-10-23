@@ -39,6 +39,11 @@ func Validate(host string) error {
 		return fmt.Errorf("egress host %q is not a hostname", host)
 	}
 	tld := n[strings.LastIndexByte(n, '.')+1:]
+	// No real top-level domain is all digits. Rejecting such names catches
+	// IPv4 forms that netip refuses (01.2.3.4, 999.1.1.1, 3232235521).
+	if strings.Trim(tld, "0123456789") == "" {
+		return fmt.Errorf("egress host %q: IP addresses are not allowed; the proxy matches TLS server names", host)
+	}
 	for _, r := range reservedTLDs {
 		if tld == r {
 			return fmt.Errorf("egress host %q: %q is a reserved name that never resolves", host, "."+r)

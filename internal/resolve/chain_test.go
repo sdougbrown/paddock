@@ -54,35 +54,37 @@ func TestChainRules(t *testing.T) {
 	cached := op("[setup]\ncommand = [\"make\"]\ncache_key = \"yarn.lock\"\ncache_dir = \"/var/cache/x\"\n")
 	tests := []struct {
 		name    string
+		root    string
 		specs   map[string]fakeSpec
 		wantErr string
 	}{
-		{"repository spec with egress", map[string]fakeSpec{"base": base, "leaf": repo("extends = \"base\"\n[egress]\nx = [\"x.example.com\"]\n")}, "may not define egress"},
-		{"repository spec with managed settings", map[string]fakeSpec{"base": base, "leaf": repo("extends = \"base\"\n[claude]\nmanaged_settings = \"m.json\"\n")}, "claude.managed_settings: repository-trust specs may not set managed settings"},
-		{"repository spec without parent", map[string]fakeSpec{"leaf": repo("")}, "must extend an operator-trust"},
-		{"repository spec extending repository spec", map[string]fakeSpec{"base": base, "mid": repo("extends = \"base\"\n"), "leaf": repo("extends = \"mid\"\n")}, "must extend an operator-trust"},
-		{"repository spec extending operator spec", map[string]fakeSpec{"base": base, "leaf": repo("extends = \"base\"\n[context]\nreadonly = [\"/x\"]\n")}, ""},
-		{"file credential", map[string]fakeSpec{"leaf": op("[env]\nT = \"file:/x\"\n")}, "env.T: specs may only set literal env values, not a file source"},
-		{"env credential", map[string]fakeSpec{"leaf": op("[env]\nT = \"env:X\"\n")}, "env.T: specs may only set literal env values, not an env source"},
-		{"literal env", map[string]fakeSpec{"leaf": op("[env]\nT = \"1\"\n")}, ""},
-		{"cycle", map[string]fakeSpec{"a": op("extends = \"b\"\n"), "b": op("extends = \"c\"\n"), "c": op("extends = \"a\"\n")}, "a -> b -> c -> a"},
-		{"self cycle", map[string]fakeSpec{"a": op("extends = \"a\"\n")}, "a -> a"},
-		{"missing parent", map[string]fakeSpec{"leaf": op("extends = \"ghost\"\n")}, "extends \"ghost\""},
-		{"invalid egress pattern", map[string]fakeSpec{"leaf": op("[egress]\nbad = [\"api.anthropic.com\", \"*.com\"]\n")}, "egress.bad"},
-		{"redefined egress set", map[string]fakeSpec{"base": base, "leaf": op("extends = \"base\"\n[egress]\nanthropic = [\"evil.example.com\"]\n")}, "egress.anthropic"},
-		{"redefined env name", map[string]fakeSpec{"base": base, "leaf": op("extends = \"base\"\n[env]\nA = \"2\"\n")}, "env.A"},
-		{"redefined setup command", map[string]fakeSpec{"base": base, "leaf": op("extends = \"base\"\n[setup]\ncommand = [\"other\"]\n")}, "setup.command"},
-		{"redefined setup cache_key", map[string]fakeSpec{"base": cached, "leaf": op("extends = \"base\"\n[setup]\ncache_key = \"other.lock\"\n")}, "setup.cache_key: already defined"},
-		{"redefined setup cache_dir", map[string]fakeSpec{"base": cached, "leaf": op("extends = \"base\"\n[setup]\ncache_dir = \"/var/cache/y\"\n")}, "setup.cache_dir: already defined"},
-		{"child adds egress set, env, context path", map[string]fakeSpec{"base": base, "leaf": op("extends = \"base\"\n[egress]\nmore = [\"m.example.com\"]\n[env]\nB = \"2\"\n[context]\nreadonly = [\"/notes\"]\n")}, ""},
+		{"repository spec with egress", "", map[string]fakeSpec{"base": base, "leaf": repo("extends = \"base\"\n[egress]\nx = [\"x.example.com\"]\n")}, "may not define egress"},
+		{"repository spec with managed settings", "", map[string]fakeSpec{"base": base, "leaf": repo("extends = \"base\"\n[claude]\nmanaged_settings = \"m.json\"\n")}, "claude.managed_settings: repository-trust specs may not set managed settings"},
+		{"repository spec without parent", "", map[string]fakeSpec{"leaf": repo("")}, "must extend an operator-trust"},
+		{"repository spec extending repository spec", "", map[string]fakeSpec{"base": base, "mid": repo("extends = \"base\"\n"), "leaf": repo("extends = \"mid\"\n")}, "must extend an operator-trust"},
+		{"repository spec extending operator spec", "", map[string]fakeSpec{"base": base, "leaf": repo("extends = \"base\"\n[context]\nreadonly = [\"/x\"]\n")}, ""},
+		{"file credential", "", map[string]fakeSpec{"leaf": op("[env]\nT = \"file:/x\"\n")}, "env.T: specs may only set literal env values, not a file source"},
+		{"env credential", "", map[string]fakeSpec{"leaf": op("[env]\nT = \"env:X\"\n")}, "env.T: specs may only set literal env values, not an env source"},
+		{"literal env", "", map[string]fakeSpec{"leaf": op("[env]\nT = \"1\"\n")}, ""},
+		{"cycle", "a", map[string]fakeSpec{"a": op("extends = \"b\"\n"), "b": op("extends = \"c\"\n"), "c": op("extends = \"a\"\n")}, "a -> b -> c -> a"},
+		{"self cycle", "a", map[string]fakeSpec{"a": op("extends = \"a\"\n")}, "a -> a"},
+		{"missing parent", "", map[string]fakeSpec{"leaf": op("extends = \"ghost\"\n")}, "extends \"ghost\""},
+		{"invalid egress pattern", "", map[string]fakeSpec{"leaf": op("[egress]\nbad = [\"api.anthropic.com\", \"*.com\"]\n")}, "egress.bad"},
+		{"redefined egress set", "", map[string]fakeSpec{"base": base, "leaf": op("extends = \"base\"\n[egress]\nanthropic = [\"evil.example.com\"]\n")}, "egress.anthropic"},
+		{"redefined env name", "", map[string]fakeSpec{"base": base, "leaf": op("extends = \"base\"\n[env]\nA = \"2\"\n")}, "env.A"},
+		{"redefined setup command", "", map[string]fakeSpec{"base": base, "leaf": op("extends = \"base\"\n[setup]\ncommand = [\"other\"]\n")}, "setup.command"},
+		{"redefined setup cache_key", "", map[string]fakeSpec{"base": cached, "leaf": op("extends = \"base\"\n[setup]\ncache_key = \"other.lock\"\n")}, "setup.cache_key: already defined"},
+		{"redefined setup cache_dir", "", map[string]fakeSpec{"base": cached, "leaf": op("extends = \"base\"\n[setup]\ncache_dir = \"/var/cache/y\"\n")}, "setup.cache_dir: already defined"},
+		{"child adds egress set, env, context path", "", map[string]fakeSpec{"base": base, "leaf": op("extends = \"base\"\n[egress]\nmore = [\"m.example.com\"]\n[env]\nB = \"2\"\n[context]\nreadonly = [\"/notes\"]\n")}, ""},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			src := fakeSource{specs: tc.specs}
-			chain, err := LoadChain(src, "leaf")
-			if _, isCycle := tc.specs["a"]; isCycle {
-				chain, err = LoadChain(src, "a")
+			root := tc.root
+			if root == "" {
+				root = "leaf"
 			}
+			chain, err := LoadChain(src, root)
 			if err == nil {
 				_, err = Merge(src, chain)
 			}

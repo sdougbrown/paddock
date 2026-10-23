@@ -453,6 +453,11 @@ func TestMountPathRules(t *testing.T) {
 		{"spec contains workspace", func(ws string) string { return filepath.Dir(real(ws)) }, true, "context.readonly"},
 		{"profile colon", func(string) string { return "/opt/a:b" }, false, "mounts.readonly"},
 		{"spec colon", func(string) string { return "/opt/a:b" }, true, "context.readonly"},
+		{"profile paddock state", func(string) string { return "/run/paddock" }, false, "mounts.readonly"},
+		{"profile below paddock secrets", func(string) string { return "/run/paddock-secrets/x" }, false, "mounts.readonly"},
+		{"spec paddock log", func(string) string { return "/run/paddock-log" }, true, "context.readonly"},
+		{"spec below paddock bin", func(string) string { return "/opt/paddock/bin" }, true, "context.readonly"},
+		{"profile sibling of paddock bin", func(string) string { return "/opt/paddock2" }, false, ""},
 		{"profile below workspace", func(ws string) string { return filepath.Join(real(ws), "repo") }, false, ""},
 		{"spec below workspace", func(ws string) string { return filepath.Join(real(ws), "repo") }, true, ""},
 	}

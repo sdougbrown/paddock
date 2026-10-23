@@ -194,3 +194,22 @@ func TestCommitNoneAndHost(t *testing.T) {
 		t.Errorf("host steps = %v; want none", r.steps)
 	}
 }
+
+// An unknown mode has no ruleset, so Commit must load deny-all and fail.
+func TestCommitUnknownModeDeniesAll(t *testing.T) {
+	t.Run("open", func(t *testing.T) {
+		r := &recorder{}
+		p := basePolicy()
+		p.Mode = "open"
+		err := Commit(context.Background(), p, CommitOptions{Apply: r.apply})
+		if err == nil {
+			t.Fatal("Commit with mode open returned nil")
+		}
+		if got := strings.Join(r.steps, ","); got != "apply deny-all" {
+			t.Errorf("steps = %s; want only deny-all", got)
+		}
+		if r.last() != "deny-all" {
+			t.Errorf("last applied = %q; want deny-all", r.last())
+		}
+	})
+}

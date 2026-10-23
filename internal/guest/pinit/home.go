@@ -77,6 +77,18 @@ func (h homeFS) agentDir(guest string, mode os.FileMode, uid, gid int) error {
 	return h.chown(h.p(guest), uid, gid)
 }
 
+// agentDirSpec is a directory prepareHome makes agent-owned.
+type agentDirSpec struct {
+	path string
+	mode os.FileMode
+}
+
+// agentDirs lists the directories under home that the agent owns and may
+// write: home itself and ~/.claude.
+func agentDirs(home string) []agentDirSpec {
+	return []agentDirSpec{{home, 0o755}, {home + "/.claude", 0o700}}
+}
+
 // prepareHome lays out the agent's HOME: HOME and ~/.claude (and
 // ~/.claude/projects when it already exists) owned by the agent, seed files
 // and ~/.claude.json, the skills and agents symlinks, and the managed
@@ -85,11 +97,10 @@ func prepareHome(h homeFS, cfg *initcfg.Config) error {
 	u, c := cfg.User, cfg.Claude
 	home := path.Clean(u.Home)
 	claude := home + "/.claude"
-	if err := h.agentDir(home, 0o755, u.UID, u.GID); err != nil {
-		return fmt.Errorf("home: %w", err)
-	}
-	if err := h.agentDir(claude, 0o700, u.UID, u.GID); err != nil {
-		return fmt.Errorf("home: %w", err)
+	for _, d := range agentDirs(home) {
+		if err := h.agentDir(d.path, d.mode, u.UID, u.GID); err != nil {
+			return fmt.Errorf("home: %w", err)
+		}
 	}
 	if _, err := os.Lstat(h.p(claude + "/projects")); err == nil {
 		if err := h.agentDir(claude+"/projects", 0o700, u.UID, u.GID); err != nil {

@@ -125,8 +125,8 @@ func (r Resolver) LookupNetIP(_ context.Context, network, host string) ([]netip.
 
 // Net simulates the agent's view of the guest network. With Open false it
 // follows the allowlist ruleset: the simulated firewall steers IPv4 tcp/443
-// to Proxy, and every other connection is refused. With Open true (a missing firewall)
-// tcp goes straight to Upstream and udp to UDPUpstream.
+// to Proxy, and every other connection is refused. With Open true (a missing
+// firewall) tcp goes straight to Upstream and udp to UDPUpstream.
 type Net struct {
 	Resolver    Resolver
 	Proxy       string

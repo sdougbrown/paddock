@@ -259,6 +259,58 @@ func TestLookPath(t *testing.T) {
 	if _, err := lookPath("missing", dir); err == nil {
 		t.Error("missing: no error")
 	}
+	if got, err := lookPath("/bin/tool", ""); err != nil || got != "/bin/tool" {
+		t.Errorf("absolute path: got %q, %v", got, err)
+	}
+}
+
+func TestEnvValue(t *testing.T) {
+	env := []string{"AB=1", "A=2", "C="}
+	for _, tt := range []struct{ name, want string }{
+		{"A", "2"},
+		{"AB", "1"},
+		{"C", ""},
+		{"MISSING", ""},
+	} {
+		if got := envValue(env, tt.name); got != tt.want {
+			t.Errorf("envValue(%q) = %q, want %q", tt.name, got, tt.want)
+		}
+	}
+	if got := envValue([]string{"AB=1"}, "A"); got != "" {
+		t.Errorf("prefix collision: got %q", got)
+	}
+}
+
+func TestEnsureAccounts(t *testing.T) {
+	user := initcfg.User{Name: "doug", UID: 501, GID: 20, Home: "/Users/doug"}
+	tests := []struct {
+		name      string
+		cfg       initcfg.Config
+		wantErr   string
+		wantProxy bool
+	}{
+		{"agent only", initcfg.Config{User: user}, "", false},
+		{"proxy uid without gid", initcfg.Config{User: user, ProxyUID: 970}, "invalid proxy gid", false},
+		{"full", initcfg.Config{User: user, ProxyUID: 970, ProxyGID: 970}, "", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			root := t.TempDir()
+			writeFile(t, filepath.Join(root, "etc/passwd"), basePasswd, 0o644)
+			writeFile(t, filepath.Join(root, "etc/group"), baseGroup, 0o644)
+			err := ensureAccounts(root, &tt.cfg)
+			if tt.wantErr == "" && err != nil || tt.wantErr != "" && (err == nil || !strings.Contains(err.Error(), tt.wantErr)) {
+				t.Fatalf("err = %v, want %q", err, tt.wantErr)
+			}
+			passwd := readFile(t, filepath.Join(root, "etc/passwd"))
+			if !strings.Contains(passwd, "doug:x:501:20::/Users/doug:/bin/bash\n") {
+				t.Errorf("agent entry missing:\n%s", passwd)
+			}
+			if got := strings.Contains(passwd, "paddock-proxy:x:970:970::/nonexistent:/usr/sbin/nologin\n"); got != tt.wantProxy {
+				t.Errorf("proxy entry present = %v, want %v:\n%s", got, tt.wantProxy, passwd)
+			}
+		})
+	}
 }
 
 func TestPrepareHomeLeavesFileMountAlone(t *testing.T) {
@@ -300,5 +352,21 @@ func TestPrepareHomeRefusesRoot(t *testing.T) {
 	}
 	if err := prepareHome(h, cfg); err == nil || !strings.Contains(err.Error(), "filesystem root") {
 		t.Errorf("prepareHome with HOME=/: err = %v", err)
+	}
+}
+
+func TestPrepareHomeRejectsInvalidManagedSettings(t *testing.T) {
+	root := t.TempDir()
+	cfg := &initcfg.Config{
+		User:   initcfg.User{Name: "doug", UID: 501, GID: 20, Home: "/Users/doug"},
+		Claude: initcfg.ClaudeHome{ManagedSettings: json.RawMessage(`{not json`)},
+	}
+	h := newHomeFS(root, cfg)
+	h.chown = func(string, int, int) error { return nil }
+	if err := prepareHome(h, cfg); err == nil || !strings.Contains(err.Error(), "not valid JSON") {
+		t.Fatalf("err = %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, initcfg.ManagedSettingsPath)); !os.IsNotExist(err) {
+		t.Errorf("managed settings written: %v", err)
 	}
 }

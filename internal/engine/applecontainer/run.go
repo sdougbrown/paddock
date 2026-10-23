@@ -173,7 +173,10 @@ func (e *Engine) Run(ctx context.Context, p *plan.Plan, o engine.Options) (int, 
 		layout.UserSettings = filepath.Join(dirs.Settings, userSettingsFile)
 		layout.UserSettingsAt = userSettingsPath(u.Home)
 	}
-	mounts := guestMounts(p, layout)
+	mounts, err := guestMounts(p, layout)
+	if err != nil {
+		return 1, err
+	}
 	cfg, err := buildInitConfig(p, initInput{User: u, Verify: o.Verify, TranscriptDir: tdir, Mounts: mounts, Passthrough: pass})
 	if err != nil {
 		return 1, err
@@ -221,6 +224,7 @@ func (e *Engine) Run(ctx context.Context, p *plan.Plan, o engine.Options) (int, 
 	if err := ctx.Err(); err != nil {
 		return 1, err
 	}
+	time.Sleep(e.testStartDelay)
 	if err := cmd.Start(); err != nil {
 		return 1, fmt.Errorf("container run: %w", err)
 	}
@@ -267,9 +271,6 @@ var signalNames = map[os.Signal]string{
 	syscall.SIGHUP:  "HUP",
 }
 
-// cliTimeout bounds each short `container` CLI call.
-const cliTimeout = 5 * time.Second
-
 // pendingRetry is how often an undelivered signal or stop is retried.
 const pendingRetry = 200 * time.Millisecond
 
@@ -287,9 +288,9 @@ func (e *Engine) stopContainer(name string, secs int) error {
 }
 
 // forwardSignals delivers signals received by paddock to the guest process,
-// because `container run` does not forward them. A signal the CLI cannot yet
-// deliver, such as one that arrives while the VM is booting, stays pending
-// and is retried until it succeeds or done closes. When ctx is cancelled the
+// because `container run` does not forward them. A signal that cannot yet be
+// delivered, such as one that arrives while the VM is booting, stays pending
+// and is retried every pendingRetry until it is delivered or done closes. When ctx is cancelled the
 // guest gets SIGTERM, and `container stop` follows after cancelGrace.
 func (e *Engine) forwardSignals(ctx context.Context, name string, sigs <-chan os.Signal, done <-chan struct{}) {
 	var pending os.Signal
@@ -328,10 +329,17 @@ func (e *Engine) forwardSignals(ctx context.Context, name string, sigs <-chan os
 	}
 }
 
-// signalContainer delivers s to the guest process and reports success.
+// signalContainer delivers s to the guest process and reports whether it was
+// delivered. A kill that succeeds while the VM is still booting can be
+// acknowledged and dropped, so delivery counts only when the container was
+// observed running immediately before the kill.
 func (e *Engine) signalContainer(name string, s os.Signal) bool {
 	n, ok := signalNames[s]
 	if !ok {
+		return false
+	}
+	if !e.isRunning(name) {
+		e.debugf("%s not running; %s stays pending", name, n)
 		return false
 	}
 	e.debugf("forwarding %s to %s", n, name)

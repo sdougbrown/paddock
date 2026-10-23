@@ -381,6 +381,9 @@ func TestProxyRefusals(t *testing.T) {
 	}{
 		{"denied name", tlsHello("evil.test"), "evil.test", sniproxy.ReasonDenied, nil},
 		{"subdomain of allowed", tlsHello("sub.allowed.test"), "sub.allowed.test", sniproxy.ReasonDenied, nil},
+		// A reserved name cannot be allowlisted, but it is still a hostname:
+		// the lifeline's denied host relies on a ReasonDenied line naming it.
+		{"reserved name", tlsHello("paddock-lifeline-denied.invalid"), "paddock-lifeline-denied.invalid", sniproxy.ReasonDenied, nil},
 		{"no sni", tlsHello(""), "", sniproxy.ReasonNoSNI, nil},
 		{"ip literal", tlsHello("203.0.113.10"), "", sniproxy.ReasonNoSNI, nil},
 		{"http", writeBytes("GET / HTTP/1.1\r\nHost: allowed.test\r\n\r\n"), "", sniproxy.ReasonNotTLS, nil},

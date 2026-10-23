@@ -70,6 +70,12 @@ func (p *Profile) validate() error {
 	default:
 		return fmt.Errorf("network.policy: %q must be \"allowlist\", \"none\", or \"host\"", p.Network.Policy)
 	}
+	if err := validateSetNames("network.run", p.Network.Run); err != nil {
+		return err
+	}
+	if err := validateSetNames("network.setup", p.Network.Setup); err != nil {
+		return err
+	}
 	if p.DefaultSpec != "" && !ValidRef(p.DefaultSpec) {
 		return fmt.Errorf("default_spec: invalid spec ref %q", p.DefaultSpec)
 	}
@@ -90,6 +96,17 @@ func validateEnvNames(env map[string]string) error {
 	for _, n := range slices.Sorted(maps.Keys(env)) {
 		if !envname.Valid(n) {
 			return fmt.Errorf("env.%s: invalid variable name", n)
+		}
+	}
+	return nil
+}
+
+// validateSetNames checks that every egress set a profile references has a
+// name a spec's [egress] table could define.
+func validateSetNames(key string, names []string) error {
+	for _, n := range names {
+		if !nameRe.MatchString(n) {
+			return fmt.Errorf("%s: invalid egress set name %q", key, n)
 		}
 	}
 	return nil

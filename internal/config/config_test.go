@@ -121,6 +121,8 @@ memory = "6G"
 		{"bad engine", strings.Replace(ok, "apple-container", "docker", 1), "engine", nil},
 		{"bad mode", strings.Replace(ok, `"rw"`, `"wx"`, 1), "workspace.mode", nil},
 		{"bad policy", strings.Replace(ok, "allowlist", "open", 1), "network.policy", nil},
+		{"bad run set name", strings.Replace(ok, `run = ["anthropic"]`, `run = ["-bad"]`, 1), "network.run", nil},
+		{"bad setup set name", strings.Replace(ok, `run = ["anthropic"]`, "run = [\"anthropic\"]\nsetup = [\"a/b\"]", 1), "network.setup", nil},
 		{"bad memory", strings.Replace(ok, "6G", "lots", 1), "limits.memory", nil},
 		{"unit-less memory", strings.Replace(ok, "6G", "512", 1), "limits.memory", nil},
 		{"bad env name", ok + "[env]\n\"A-B\" = \"x\"\n", "env.A-B", nil},

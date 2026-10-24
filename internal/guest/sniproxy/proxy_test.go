@@ -337,6 +337,34 @@ func TestProxyReplayStallClosesClient(t *testing.T) {
 	}
 }
 
+// The replay deadline ends with the replay: a spliced stream still carries
+// data after DialTimeout has passed.
+func TestProxyStreamOutlivesReplayDeadline(t *testing.T) {
+	const timeout = 200 * time.Millisecond
+	h := startProxy(t, func(c *sniproxy.Config) { c.DialTimeout = timeout })
+	raw, err := net.Dial("tcp", h.addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer raw.Close()
+	_ = raw.SetDeadline(time.Now().Add(5 * time.Second))
+	c := tls.Client(raw, &tls.Config{ServerName: "allowed.test", RootCAs: h.pool})
+	if err := c.Handshake(); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(2 * timeout)
+	if _, err := c.Write([]byte("hi\n")); err != nil {
+		t.Fatal(err)
+	}
+	got, err := bufio.NewReader(c).ReadString('\n')
+	if err != nil {
+		t.Fatalf("read after the replay deadline: %v", err)
+	}
+	if got != "echo hi\n" {
+		t.Fatalf("got %q", got)
+	}
+}
+
 // An upstream that answers and then ends the stream, by FIN or by RST,
 // makes the proxy close the client promptly rather than leaving it to its
 // read deadline.

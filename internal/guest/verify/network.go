@@ -46,7 +46,9 @@ type NetworkOptions struct {
 	// default netpolicy.HostsAddr.
 	HostsAddr netip.Addr
 	// Resolvers are the pinned DNS servers, which only the proxy uid may
-	// query; default the nameservers in /etc/resolv.conf.
+	// query. When empty, pinned-dns-refused reads the nameservers from
+	// /etc/resolv.conf as it runs, so a missing or empty file fails that
+	// check with its cause; withDefaults cannot report an error.
 	Resolvers []netip.Addr
 	// RawIPTarget is a routable IPv4 address dialed without a name to show
 	// raw-IP egress is refused; default "1.1.1.1".

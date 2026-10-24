@@ -443,7 +443,7 @@ const guestCacheRoot = "/var/cache/paddock/"
 
 func setupPlan(ref string, s Setup) (*plan.SetupPlan, error) {
 	sp := &plan.SetupPlan{Command: s.Command, CacheKeyFile: s.CacheKey, CacheDir: s.CacheDir}
-	if d := s.CacheDir; d != "" && (!path.IsAbs(d) || path.Clean(d) != d || !strings.HasPrefix(d, guestCacheRoot) || d == guestCacheRoot) {
+	if d := s.CacheDir; d != "" && (!path.IsAbs(d) || path.Clean(d) != d || !strings.HasPrefix(d, guestCacheRoot)) {
 		return nil, fmt.Errorf("spec %q: setup.cache_dir: %q must be a clean absolute path strictly under %s", ref, d, guestCacheRoot)
 	}
 	if s.CacheKey != "" {

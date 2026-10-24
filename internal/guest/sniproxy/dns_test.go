@@ -21,6 +21,9 @@ import (
 // the same port.
 type dnsServer struct {
 	addr netip.AddrPort
+	// listen, when valid, is the address to serve on instead of a free
+	// loopback port.
+	listen netip.AddrPort
 	// answer builds the response to q; tcp reports the transport.
 	answer func(q dnsmessage.Question, tcp bool) (dnsmessage.Header, []dnsmessage.Resource)
 	// badID makes every response carry the wrong ID.
@@ -47,9 +50,13 @@ func serveDNS(t *testing.T, s *dnsServer) *dnsServer {
 	// TCP side of the UDP port picked, so try again.
 	var pc net.PacketConn
 	var ln net.Listener
+	listen := "127.0.0.1:0"
+	if s.listen.IsValid() {
+		listen = s.listen.String()
+	}
 	for range 20 {
 		var err error
-		if pc, err = net.ListenPacket("udp4", "127.0.0.1:0"); err != nil {
+		if pc, err = net.ListenPacket("udp4", listen); err != nil {
 			t.Fatal(err)
 		}
 		s.addr = pc.LocalAddr().(*net.UDPAddr).AddrPort()
@@ -58,6 +65,9 @@ func serveDNS(t *testing.T, s *dnsServer) *dnsServer {
 		}
 		pc.Close()
 		pc = nil
+		if s.listen.IsValid() {
+			t.Fatal(err)
+		}
 	}
 	if pc == nil {
 		t.Fatal("no port free for both UDP and TCP")
@@ -154,6 +164,20 @@ func strayResponses(t *testing.T, query []byte) [][]byte {
 		out = append(out, b)
 	}
 	return out
+}
+
+// ServeDNSAt starts a fake DNS server on addr for the launch tests, which
+// cannot reach the unexported fake. It answers A queries for the names in
+// a and returns the questions it was asked.
+func ServeDNSAt(t *testing.T, addr netip.AddrPort, a map[string]netip.Addr) func() []string {
+	t.Helper()
+	s := serveDNS(t, &dnsServer{listen: addr, answer: func(q dnsmessage.Question, _ bool) (dnsmessage.Header, []dnsmessage.Resource) {
+		if ip, ok := a[q.Name.String()]; ok && q.Type == dnsmessage.TypeA {
+			return dnsmessage.Header{}, []dnsmessage.Resource{rr(q.Name.String(), &dnsmessage.AResource{A: ip.As4()})}
+		}
+		return dnsmessage.Header{}, nil
+	}})
+	return s.queries
 }
 
 // queries returns the questions asked, sorted: the resolver asks the record

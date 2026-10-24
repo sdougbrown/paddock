@@ -148,9 +148,7 @@ func TestLaunchServesPassedListener(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = cmd.Process.Kill(); _ = cmd.Wait() })
-	if cmd.SysProcAttr.Credential.Uid != 65534 {
-		t.Errorf("uid %d", cmd.SysProcAttr.Credential.Uid)
-	}
+	checkChildIDs(t, cmd.Process.Pid)
 	// The parent may close its copy; the child keeps serving.
 	addr := o.Listener.Addr().String()
 	o.Listener.Close()
@@ -182,6 +180,29 @@ func TestLaunchServesPassedListener(t *testing.T) {
 	}
 	if err := syscall.Kill(cmd.Process.Pid, 0); err != nil {
 		t.Errorf("child not running: %v", err)
+	}
+}
+
+// checkChildIDs reads the running child's credentials from /proc: every
+// uid and gid is 65534, and it has no supplementary groups.
+func checkChildIDs(t *testing.T, pid int) {
+	t.Helper()
+	b, err := os.ReadFile(fmt.Sprintf("/proc/%d/status", pid))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]string{"Uid": "65534 65534 65534 65534", "Gid": "65534 65534 65534 65534", "Groups": ""}
+	for _, line := range strings.Split(string(b), "\n") {
+		k, v, ok := strings.Cut(line, ":")
+		if w, check := want[k]; ok && check {
+			if got := strings.Join(strings.Fields(v), " "); got != w {
+				t.Errorf("child %s: %q, want %q", k, got, w)
+			}
+			delete(want, k)
+		}
+	}
+	for k := range want {
+		t.Errorf("no %s line in /proc/%d/status", k, pid)
 	}
 }
 

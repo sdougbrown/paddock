@@ -185,6 +185,18 @@ func TestReserved(t *testing.T) {
 	}
 }
 
+func TestWriteRejectsInvalidConfig(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "init.json")
+	c := validConfig()
+	c.Workdir = ""
+	if err := Write(path, c); err == nil || !strings.Contains(err.Error(), "workdir") {
+		t.Fatalf("Write = %v; want a workdir error", err)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("Write left a file behind: %v", err)
+	}
+}
+
 func TestWriteReadRoundTrip(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "init.json")
 	want := validConfig()

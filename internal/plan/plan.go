@@ -59,7 +59,8 @@ type EnvVar struct {
 	Value  string `json:"value,omitempty"`
 }
 
-// Network is the resolved egress policy. Hosts is deduplicated and sorted.
+// Network is the resolved egress policy. Policy is one of
+// initcfg.Policies(). Hosts is deduplicated and sorted.
 type Network struct {
 	Policy string   `json:"policy"`
 	Sets   []string `json:"sets"`

@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"net"
 	"net/netip"
+	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/sdougbrown/paddock/internal/guest/netprobe"
@@ -16,10 +18,14 @@ import (
 type CommitOptions struct {
 	// Apply loads a ruleset. Nil means Apply (nft -f -).
 	Apply func(ctx context.Context, ruleset string) error
-	// StartProxy starts the SNI proxy listening on Policy.ProxyAddr as
-	// Policy.ProxyUID. It runs while deny-all is in force. Required for
+	// StartProxy starts the SNI proxy listening on p.ProxyAddr as
+	// p.ProxyUID, where p is the policy being committed, and returns the
+	// proxy's process id. It runs while deny-all is in force. Required for
 	// mode allowlist.
-	StartProxy func(ctx context.Context) error
+	StartProxy func(ctx context.Context, p Policy) (pid int, err error)
+	// ProcessUIDs returns the real, effective, saved, and filesystem uids
+	// of process pid. Nil means reading /proc/<pid>/status.
+	ProcessUIDs func(pid int) ([4]int, error)
 	// Lifeline checks the committed allowlist from inside the guest.
 	// Required for mode allowlist.
 	Lifeline func(ctx context.Context) error
@@ -27,10 +33,11 @@ type CommitOptions struct {
 
 // Commit puts p into force and returns nil only when it holds.
 //
-// For mode allowlist the order is: deny-all, StartProxy, the allowlist
-// ruleset, Lifeline. Each ruleset load is atomic, so the guest is never open
-// between steps. If any step fails, Commit loads deny-all again and returns
-// the error; the caller must not start the agent. Mode none loads deny-all.
+// For mode allowlist the order is: deny-all, StartProxy, a check that the
+// proxy process runs as p.ProxyUID, the allowlist ruleset, Lifeline. Each
+// ruleset load is atomic, so the guest is never open between steps. If any
+// step fails, Commit loads deny-all again and returns the error; the caller
+// must not start the agent. Mode none loads deny-all.
 // Mode host loads nothing. Every deny-all load ignores ctx's cancellation:
 // deny-all is the state a cancelled commit must end in.
 //
@@ -65,8 +72,16 @@ func Commit(ctx context.Context, p Policy, o CommitOptions) error {
 	if err := apply(context.WithoutCancel(ctx), DenyAll()); err != nil {
 		return fmt.Errorf("netpolicy: apply deny-all: %w", err)
 	}
-	if err := o.StartProxy(ctx); err != nil {
+	pid, err := o.StartProxy(ctx, p)
+	if err != nil {
 		return failClosed(ctx, apply, fmt.Errorf("netpolicy: start proxy: %w", err))
+	}
+	uids := o.ProcessUIDs
+	if uids == nil {
+		uids = procStatusUIDs
+	}
+	if err := checkProxyUIDs(uids, pid, p.ProxyUID); err != nil {
+		return failClosed(ctx, apply, err)
 	}
 	if err := apply(ctx, rules); err != nil {
 		return failClosed(ctx, apply, fmt.Errorf("netpolicy: apply allowlist: %w", err))
@@ -75,6 +90,50 @@ func Commit(ctx context.Context, p Policy, o CommitOptions) error {
 		return failClosed(ctx, apply, fmt.Errorf("netpolicy: lifeline: %w", err))
 	}
 	return nil
+}
+
+// checkProxyUIDs reports an error unless every uid of process pid is
+// proxyUID. The allowlist ruleset exempts proxyUID from the tcp/443
+// redirect and lets only it reach DNS, so a proxy running as another uid
+// would leave proxyUID's egress open to whatever does run as it.
+func checkProxyUIDs(uids func(int) ([4]int, error), pid, proxyUID int) error {
+	got, err := uids(pid)
+	if err != nil {
+		return fmt.Errorf("netpolicy: proxy process %d: %w", pid, err)
+	}
+	for _, u := range got {
+		if u != proxyUID {
+			return fmt.Errorf("netpolicy: proxy process %d runs as uids %v, but the ruleset exempts uid %d", pid, got, proxyUID)
+		}
+	}
+	return nil
+}
+
+// procStatusUIDs reads the Uid line of /proc/<pid>/status: the real,
+// effective, saved, and filesystem uids.
+func procStatusUIDs(pid int) ([4]int, error) {
+	b, err := os.ReadFile("/proc/" + strconv.Itoa(pid) + "/status")
+	if err != nil {
+		return [4]int{}, err
+	}
+	for _, line := range strings.Split(string(b), "\n") {
+		v, ok := strings.CutPrefix(line, "Uid:")
+		if !ok {
+			continue
+		}
+		f := strings.Fields(v)
+		if len(f) != 4 {
+			return [4]int{}, fmt.Errorf("malformed Uid line %q", line)
+		}
+		var uids [4]int
+		for i, s := range f {
+			if uids[i], err = strconv.Atoi(s); err != nil {
+				return [4]int{}, fmt.Errorf("malformed Uid line %q", line)
+			}
+		}
+		return uids, nil
+	}
+	return [4]int{}, errors.New("no Uid line in /proc status")
 }
 
 // failClosed loads deny-all and returns cause, joined with any error from

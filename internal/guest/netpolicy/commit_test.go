@@ -3,6 +3,10 @@ package netpolicy
 import (
 	"context"
 	"errors"
+	"fmt"
+	"os"
+	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -12,7 +16,9 @@ type recorder struct {
 	failOn  string       // step name whose every call fails
 	failAt  map[int]bool // apply calls that fail, counted from 1
 	applied []string
-	ctxErrs []error // ctx.Err() seen by each apply call
+	ctxErrs []error  // ctx.Err() seen by each apply call
+	started []Policy // the policy each start step got
+	runAs   *[4]int  // the proxy's uids; nil means the policy's ProxyUID
 }
 
 func (r *recorder) apply(ctx context.Context, rules string) error {
@@ -27,6 +33,29 @@ func (r *recorder) apply(ctx context.Context, rules string) error {
 	}
 	r.applied = append(r.applied, name)
 	return nil
+}
+
+// proxyPID is the process id the recorded start step reports.
+const proxyPID = 4242
+
+func (r *recorder) startProxy(_ context.Context, p Policy) (int, error) {
+	r.steps = append(r.steps, "start")
+	r.started = append(r.started, p)
+	if r.failOn == "start" {
+		return 0, errors.New("start failed")
+	}
+	return proxyPID, nil
+}
+
+func (r *recorder) uids(pid int) ([4]int, error) {
+	if pid != proxyPID {
+		return [4]int{}, fmt.Errorf("uids of pid %d; the proxy is %d", pid, proxyPID)
+	}
+	if r.runAs != nil {
+		return *r.runAs, nil
+	}
+	u := r.started[len(r.started)-1].ProxyUID
+	return [4]int{u, u, u, u}, nil
 }
 
 func (r *recorder) step(name string) func(context.Context) error {
@@ -68,8 +97,8 @@ func TestCommitAllowlist(t *testing.T) {
 			r := &recorder{failOn: tt.failOn}
 			err := Commit(context.Background(), basePolicy(), CommitOptions{
 				Apply:      r.apply,
-				StartProxy: r.step("start"),
-				Lifeline:   r.step("lifeline"),
+				StartProxy: r.startProxy, ProcessUIDs: r.uids,
+				Lifeline: r.step("lifeline"),
 			})
 			if got := strings.Join(r.steps, ","); got != tt.wantSteps {
 				t.Errorf("steps = %s; want %s", got, tt.wantSteps)
@@ -110,8 +139,8 @@ func TestCommitReportsFailedRollback(t *testing.T) {
 			r := &recorder{failOn: tt.failOn, failAt: tt.failAt}
 			err := Commit(context.Background(), basePolicy(), CommitOptions{
 				Apply:      r.apply,
-				StartProxy: r.step("start"),
-				Lifeline:   r.step("lifeline"),
+				StartProxy: r.startProxy, ProcessUIDs: r.uids,
+				Lifeline: r.step("lifeline"),
 			})
 			if got := strings.Join(r.steps, ","); got != tt.wantSteps {
 				t.Errorf("steps = %s; want %s", got, tt.wantSteps)
@@ -134,7 +163,7 @@ func TestCommitRollbackOutlivesCancel(t *testing.T) {
 	defer cancel()
 	err := Commit(ctx, basePolicy(), CommitOptions{
 		Apply:      r.apply,
-		StartProxy: r.step("start"),
+		StartProxy: r.startProxy, ProcessUIDs: r.uids,
 		Lifeline: func(ctx context.Context) error {
 			cancel()
 			return ctx.Err()
@@ -158,7 +187,7 @@ func TestCommitInvalidPolicyFailsClosed(t *testing.T) {
 	r := &recorder{}
 	p := basePolicy()
 	p.Resolvers = nil
-	err := Commit(context.Background(), p, CommitOptions{Apply: r.apply, StartProxy: r.step("start"), Lifeline: r.step("lifeline")})
+	err := Commit(context.Background(), p, CommitOptions{Apply: r.apply, StartProxy: r.startProxy, ProcessUIDs: r.uids, Lifeline: r.step("lifeline")})
 	if err == nil {
 		t.Fatal("want error")
 	}
@@ -206,7 +235,7 @@ func TestCommitDenyAllOutlivesCancel(t *testing.T) {
 			r := &recorder{}
 			p := basePolicy()
 			p.Mode = mode
-			_ = Commit(ctx, p, CommitOptions{Apply: r.apply, StartProxy: r.step("start"), Lifeline: r.step("lifeline")})
+			_ = Commit(ctx, p, CommitOptions{Apply: r.apply, StartProxy: r.startProxy, ProcessUIDs: r.uids, Lifeline: r.step("lifeline")})
 			if len(r.ctxErrs) == 0 || r.ctxErrs[0] != nil {
 				t.Fatalf("first deny-all load got context error %v; want a live context", r.ctxErrs)
 			}
@@ -242,4 +271,59 @@ func TestCommitUnknownModeDeniesAll(t *testing.T) {
 			t.Errorf("last applied = %q; want deny-all", r.last())
 		}
 	})
+}
+
+// Commit hands StartProxy the policy whose ruleset it loads, so the proxy
+// binds the address and runs as the uid that ruleset exempts.
+func TestCommitPassesPolicyToStartProxy(t *testing.T) {
+	r := &recorder{}
+	if err := Commit(context.Background(), basePolicy(), CommitOptions{Apply: r.apply, StartProxy: r.startProxy, ProcessUIDs: r.uids, Lifeline: r.step("lifeline")}); err != nil {
+		t.Fatal(err)
+	}
+	if len(r.started) != 1 || !reflect.DeepEqual(r.started[0], basePolicy()) {
+		t.Fatalf("StartProxy got %+v; want %+v", r.started, basePolicy())
+	}
+}
+
+// The ruleset exempts only ProxyUID from the tcp/443 redirect. A proxy
+// running as any other uid would leave ProxyUID's egress open, so Commit
+// must fall back to deny-all before loading the allowlist.
+func TestCommitProxyUIDMismatchFailsClosed(t *testing.T) {
+	for name, uids := range map[string][4]int{
+		"all":       {1000, 1000, 1000, 1000},
+		"real":      {1000, 970, 970, 970},
+		"effective": {970, 1000, 970, 970},
+		"saved":     {970, 970, 1000, 970},
+		"fs":        {970, 970, 970, 1000},
+	} {
+		t.Run(name, func(t *testing.T) {
+			r := &recorder{runAs: &uids}
+			err := Commit(context.Background(), basePolicy(), CommitOptions{Apply: r.apply, StartProxy: r.startProxy, ProcessUIDs: r.uids, Lifeline: r.step("lifeline")})
+			if err == nil || !strings.Contains(err.Error(), "uid 970") {
+				t.Fatalf("err = %v; want a mismatch naming uid 970", err)
+			}
+			if got := strings.Join(r.steps, ","); got != "apply deny-all,start,apply deny-all" {
+				t.Errorf("steps = %s; want deny-all, start, deny-all", got)
+			}
+			if r.last() != "deny-all" {
+				t.Errorf("last applied = %q; want deny-all", r.last())
+			}
+		})
+	}
+}
+
+func TestProcStatusUIDs(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("reads /proc")
+	}
+	got, err := procStatusUIDs(os.Getpid())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got[0] != os.Getuid() || got[1] != os.Geteuid() {
+		t.Fatalf("uids = %v; want real %d and effective %d", got, os.Getuid(), os.Geteuid())
+	}
+	if _, err := procStatusUIDs(-1); err == nil {
+		t.Fatal("procStatusUIDs(-1) succeeded")
+	}
 }

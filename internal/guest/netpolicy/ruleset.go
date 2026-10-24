@@ -35,8 +35,8 @@
 // literal. Raw-IP connections to any other port hit the reject rule.
 //
 // Commit sequences the allowlist mode fail-closed: deny-all first, then the
-// proxy starts, then the allowlist ruleset, then the lifeline check, and on any
-// failure back to deny-all.
+// proxy starts and is checked to run as the proxy uid, then the allowlist
+// ruleset, then the lifeline check, and on any failure back to deny-all.
 package netpolicy
 
 import (

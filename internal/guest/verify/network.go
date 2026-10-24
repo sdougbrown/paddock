@@ -127,6 +127,11 @@ func parentDomain(host string) string {
 // is refused because a TLS client dialing an IP literal sends no SNI. The
 // agent has no DNS: allowlisted names resolve through /etc/hosts, and every
 // other name fails without a query leaving the guest.
+//
+// netpolicy.Lifeline.Check probes four of the same paths as root during
+// Commit (denied host, no-SNI hello, pinned DNS, allowed host) but counts
+// any probe error as a refusal. A change to how the guest refuses traffic
+// must be checked against both.
 func NetworkChecks(o NetworkOptions) []Check {
 	o = o.withDefaults()
 	checks := []Check{
@@ -390,13 +395,17 @@ func (o NetworkOptions) dnsQueryRefused(ctx context.Context, addr string) (strin
 	return fmt.Sprintf("%s answered with %d bytes", addr, n), errUnexpectedSuccess
 }
 
+// resolvConfPath is where pinnedDNSRefused reads the default pinned
+// resolvers.
+var resolvConfPath = netpolicy.ResolvConfPath
+
 // pinnedDNSRefused passes when neither a UDP query nor a TCP connection to
 // any pinned resolver gets through.
 func (o NetworkOptions) pinnedDNSRefused(ctx context.Context) (string, error) {
 	resolvers := o.Resolvers
 	if len(resolvers) == 0 {
 		var err error
-		if resolvers, err = netpolicy.ReadResolvConf(netpolicy.ResolvConfPath); err != nil {
+		if resolvers, err = netpolicy.ReadResolvConf(resolvConfPath); err != nil {
 			return "", err
 		}
 	}

@@ -10,6 +10,7 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 	"testing"
@@ -231,6 +232,17 @@ func TestAllowedHostMustResolveThroughHosts(t *testing.T) {
 	o := NetworkOptions{AllowedHost: "allowed.test", Timeout: 3 * time.Second, Dialer: g.Net, Resolver: g.Resolver}.withDefaults()
 	if d, err := o.allowedHostConnects(context.Background()); err == nil || !strings.Contains(err.Error(), "/etc/hosts") {
 		t.Fatalf("detail %q, err %v; want a failure naming /etc/hosts", d, err)
+	}
+}
+
+// Only the one /etc/hosts address may come back: any other address in the
+// answer came from a resolver.
+func TestAllowedHostMustResolveOnlyThroughHosts(t *testing.T) {
+	r := guesttest.Resolver{"allowed.test": {netpolicy.HostsAddr, netip.MustParseAddr("203.0.113.10")}}
+	g := guesttest.StartGuest(t, "allowed.test", r)
+	o := NetworkOptions{AllowedHost: "allowed.test", Timeout: 3 * time.Second, Dialer: g.Net, Resolver: g.Resolver}.withDefaults()
+	if d, err := o.allowedHostConnects(context.Background()); err == nil || !strings.Contains(err.Error(), "want only") {
+		t.Fatalf("detail %q, err %v; want a failure for the extra address", d, err)
 	}
 }
 
@@ -483,6 +495,54 @@ func TestUnlistedNamesNeedRefusedSend(t *testing.T) {
 				t.Errorf("pass = %v (%s: %v); want %v", err == nil, d, err, tt.wantPass)
 			}
 		})
+	}
+}
+
+// An unlisted name that resolves got an answer from outside the guest.
+func TestUnlistedNameResolvedFails(t *testing.T) {
+	r := guesttest.Resolver{"x.example.invalid": {netip.MustParseAddr("203.0.113.10")}}
+	o := NetworkOptions{UnlistedNames: []string{"y.example.invalid", "x.example.invalid"}, Resolver: dnsView{hosts: r}}.withDefaults()
+	d, err := o.unlistedNamesUnresolvable(context.Background())
+	if !errors.Is(err, errUnexpectedSuccess) || !strings.Contains(d, "x.example.invalid resolved to [203.0.113.10]") {
+		t.Errorf("%s: err = %v; want %v for x.example.invalid", d, err, errUnexpectedSuccess)
+	}
+}
+
+// With no Resolvers, the pinned resolvers come from resolv.conf when the
+// check runs, and a file that names none fails the check.
+func TestPinnedDNSReadsResolvConf(t *testing.T) {
+	dir := t.TempDir()
+	conf := filepath.Join(dir, "resolv.conf")
+	if err := os.WriteFile(conf, []byte("nameserver 198.51.100.54\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	old := resolvConfPath
+	t.Cleanup(func() { resolvConfPath = old })
+	resolvConfPath = conf
+	var dialed []string
+	refuse := guesttest.DialFunc(func(_ context.Context, network, addr string) (net.Conn, error) {
+		dialed = append(dialed, network+" "+addr)
+		if network == "udp" {
+			return nil, &net.OpError{Op: "write", Net: network, Err: syscall.EPERM}
+		}
+		return nil, &net.OpError{Op: "dial", Net: network, Err: syscall.EHOSTUNREACH}
+	})
+	o := NetworkOptions{Timeout: time.Second, Dialer: refuse}.withDefaults()
+	if d, err := o.pinnedDNSRefused(context.Background()); err != nil {
+		t.Fatalf("%s: %v", d, err)
+	}
+	if want := []string{"udp 198.51.100.54:53", "tcp 198.51.100.54:53"}; !slices.Equal(dialed, want) {
+		t.Errorf("dialed %v; want %v", dialed, want)
+	}
+	if err := os.WriteFile(conf, []byte("# no nameserver\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if d, err := o.pinnedDNSRefused(context.Background()); err == nil {
+		t.Errorf("resolv.conf without a nameserver passed: %s", d)
+	}
+	resolvConfPath = filepath.Join(dir, "missing")
+	if d, err := o.pinnedDNSRefused(context.Background()); err == nil {
+		t.Errorf("missing resolv.conf passed: %s", d)
 	}
 }
 

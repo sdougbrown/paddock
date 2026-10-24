@@ -318,14 +318,13 @@ func TestPrepareSetupCacheErrorsAfterLockingReleaseTheLock(t *testing.T) {
 			s := &plan.SetupPlan{CacheHost: filepath.Join(t.TempDir(), "c")}
 			tc.setup(t, s)
 			hit, release, err := PrepareSetupCache(s)
-			if err == nil {
-				release()
-				t.Fatal("want an error")
+			if release == nil {
+				t.Fatal("release is nil")
 			}
-			if hit || release == nil {
-				t.Fatalf("hit %v, release nil %v", hit, release == nil)
+			defer release()
+			if err == nil || hit {
+				t.Fatalf("hit %v, err %v; want an error", hit, err)
 			}
-			release()
 			lf, err := os.OpenFile(lockFile(s), os.O_RDWR, 0)
 			if err != nil {
 				t.Fatal(err)

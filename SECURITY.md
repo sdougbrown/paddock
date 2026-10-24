@@ -45,6 +45,14 @@ runs the allowlist proxy as a separate uid, and installs a firewall the agent ca
    managed settings (and with them allow rules and hooks) from them. Before they are loaded, it must
    also block `context.readonly` host mounts, `setup.command`, `setup.cache_dir`/`setup.cache_key`,
    and image Dockerfiles.
+7. **The setup cache is shared between workspaces.** The host cache directory is keyed on the spec
+   ref and a hash of the workspace's `setup.cache_key` file, and the workspace controls that file:
+   copying another project's lockfile gives the same key. The setup phase mounts the cache
+   read-write and runs the workspace's package scripts (risk 2), so a setup in one workspace can
+   plant entries that a later setup of another workspace with the same spec and lockfile reads. A
+   cache hit is only reported; the setup command still runs. Use install commands that check cached
+   packages against the lockfile's checksums, do not run setup for an untrusted workspace under a
+   spec that trusted workspaces use, or clear `~/.cache/paddock/<spec>`.
 
 ## Notes on the network policy
 

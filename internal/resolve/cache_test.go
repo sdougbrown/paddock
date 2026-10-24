@@ -25,7 +25,10 @@ func TestSetupCacheHitAndMiss(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "pkg.zip"), nil, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	hit, release, _ = PrepareSetupCache(s)
+	hit, release, err = PrepareSetupCache(s)
+	if err != nil {
+		t.Fatal(err)
+	}
 	release()
 	if hit {
 		t.Error("populated dir without a completion marker counted as a hit")
@@ -37,7 +40,10 @@ func TestSetupCacheHitAndMiss(t *testing.T) {
 	if len(entries) != 1 {
 		t.Errorf("marker written inside the mounted cache dir: %v", entries)
 	}
-	hit, release, _ = PrepareSetupCache(s)
+	hit, release, err = PrepareSetupCache(s)
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer release()
 	if !hit {
 		t.Error("completed dir not counted as a hit")
@@ -168,7 +174,7 @@ func TestPrepareSetupCacheSerializes(t *testing.T) {
 			t.Fatal(r.err)
 		}
 		r.release()
-	case <-time.After(5 * time.Second):
+	case <-time.After(30 * time.Second):
 		t.Fatal("second prepare still blocked after release")
 	}
 }

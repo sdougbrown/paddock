@@ -31,7 +31,12 @@ type CommitOptions struct {
 // ruleset, Lifeline. Each ruleset load is atomic, so the guest is never open
 // between steps. If any step fails, Commit loads deny-all again and returns
 // the error; the caller must not start the agent. Mode none loads deny-all.
-// Mode host loads nothing.
+// Mode host loads nothing. Every deny-all load ignores ctx's cancellation:
+// deny-all is the state a cancelled commit must end in.
+//
+// Commit must run before any other guest process opens a connection.
+// `flush ruleset` keeps conntrack entries, so a connection opened earlier
+// would keep passing the established-flow rules, past the tcp/443 DNAT.
 func Commit(ctx context.Context, p Policy, o CommitOptions) error {
 	apply := o.Apply
 	if apply == nil {
@@ -41,7 +46,7 @@ func Commit(ctx context.Context, p Policy, o CommitOptions) error {
 	case ModeHost:
 		return nil
 	case ModeNone:
-		if err := apply(ctx, DenyAll()); err != nil {
+		if err := apply(context.WithoutCancel(ctx), DenyAll()); err != nil {
 			return fmt.Errorf("netpolicy: apply deny-all: %w", err)
 		}
 		return nil
@@ -57,7 +62,7 @@ func Commit(ctx context.Context, p Policy, o CommitOptions) error {
 	if err != nil {
 		return failClosed(ctx, apply, err)
 	}
-	if err := apply(ctx, DenyAll()); err != nil {
+	if err := apply(context.WithoutCancel(ctx), DenyAll()); err != nil {
 		return fmt.Errorf("netpolicy: apply deny-all: %w", err)
 	}
 	if err := o.StartProxy(ctx); err != nil {

@@ -22,14 +22,16 @@ import (
 )
 
 // routeDialer sends every dial to target and records the requested
-// addresses. Addresses in refuse fail at once; addresses in hang block until
-// the dial's context ends, like a host that drops SYNs.
+// addresses and their dial deadlines. Addresses in refuse fail at once;
+// addresses in timeout fail at once with context.DeadlineExceeded, as a host
+// that drops SYNs does once the dial's share of DialTimeout runs out.
 type routeDialer struct {
-	target string
-	refuse map[string]bool
-	hang   map[string]bool
-	mu     sync.Mutex
-	dialed []string
+	target    string
+	refuse    map[string]bool
+	timeout   map[string]bool
+	mu        sync.Mutex
+	dialed    []string
+	deadlines []time.Time
 	// failWrite makes every successful dial return a connection whose
 	// Write fails.
 	failWrite bool
@@ -38,14 +40,15 @@ type routeDialer struct {
 func (d *routeDialer) DialContext(ctx context.Context, network, addr string) (net.Conn, error) {
 	d.mu.Lock()
 	d.dialed = append(d.dialed, addr)
+	deadline, _ := ctx.Deadline()
+	d.deadlines = append(d.deadlines, deadline)
 	fail := d.failWrite
 	d.mu.Unlock()
 	if d.refuse[addr] {
 		return nil, errors.New("connection refused")
 	}
-	if d.hang[addr] {
-		<-ctx.Done()
-		return nil, ctx.Err()
+	if d.timeout[addr] {
+		return nil, context.DeadlineExceeded
 	}
 	var nd net.Dialer
 	c, err := nd.DialContext(ctx, network, d.target)
@@ -144,9 +147,9 @@ func startProxy(t *testing.T, mutate func(*sniproxy.Config)) *harness {
 	}
 	h := &harness{
 		dialer: &routeDialer{
-			target: up.Addr().String(),
-			refuse: map[string]bool{"203.0.113.30:443": true, "203.0.113.50:443": true, "203.0.113.51:443": true},
-			hang:   map[string]bool{"203.0.113.40:443": true},
+			target:  up.Addr().String(),
+			refuse:  map[string]bool{"203.0.113.30:443": true, "203.0.113.50:443": true, "203.0.113.51:443": true},
+			timeout: map[string]bool{"203.0.113.40:443": true},
 		},
 		resolver: &lookupRecorder{Resolver: guesttest.Resolver{
 			"allowed.test": {netip.MustParseAddr("2001:db8::10"), netip.MustParseAddr("203.0.113.10")},
@@ -237,9 +240,11 @@ func TestProxyFallsBackAcrossAddresses(t *testing.T) {
 }
 
 // A first address that never answers gets only its share of DialTimeout,
-// so the second address still has time to connect.
+// so the second address still has time to connect. The shares are read from
+// the dial deadlines, so the test does not wait for one to run out.
 func TestProxyDialsNextAddressAfterTimeout(t *testing.T) {
-	h := startProxy(t, func(c *sniproxy.Config) { c.DialTimeout = 2 * time.Second })
+	const timeout = 10 * time.Second
+	h := startProxy(t, func(c *sniproxy.Config) { c.DialTimeout = timeout })
 	cert, pool := guesttest.SelfSigned(t, "slow.test")
 	up := guesttest.EchoTLS(t, cert)
 	h.dialer.target = up.Addr().String()
@@ -250,6 +255,14 @@ func TestProxyDialsNextAddressAfterTimeout(t *testing.T) {
 	want := "203.0.113.40:443,203.0.113.41:443"
 	if got := strings.Join(h.dialer.calls(), ","); got != want {
 		t.Fatalf("dialed %s; want %s", got, want)
+	}
+	h.dialer.mu.Lock()
+	first, second := h.dialer.deadlines[0], h.dialer.deadlines[1]
+	h.dialer.mu.Unlock()
+	// The first address gets half the time left; the second gets the rest,
+	// up to the overall deadline.
+	if gap := second.Sub(first); gap < timeout/5 {
+		t.Fatalf("first dial deadline %v is only %v before the second's %v; want about %v", first, gap, second, timeout/2)
 	}
 }
 

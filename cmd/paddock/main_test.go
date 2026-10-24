@@ -12,7 +12,11 @@ import (
 	"github.com/sdougbrown/paddock/internal/plan"
 )
 
-func TestPlanCommand(t *testing.T) {
+// planFixture points PADDOCK_CONFIG_DIR at the resolve testdata root and
+// returns a workspace holding the "repo" directory the fixer profile mounts
+// read-only.
+func planFixture(t *testing.T) string {
+	t.Helper()
 	root, err := filepath.Abs(filepath.Join("..", "..", "internal", "resolve", "testdata", "root"))
 	if err != nil {
 		t.Fatal(err)
@@ -22,7 +26,11 @@ func TestPlanCommand(t *testing.T) {
 	if err := os.Mkdir(filepath.Join(ws, "repo"), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	return ws
+}
 
+func TestPlanCommand(t *testing.T) {
+	ws := planFixture(t)
 	var stdout, stderr bytes.Buffer
 	code := run([]string{"plan", "--profile", "fixer", "--spec", "afresh", "--workspace", ws, "--", "claude"}, &stdout, &stderr)
 	if code != 0 {
@@ -45,16 +53,8 @@ func TestPlanCommand(t *testing.T) {
 }
 
 func TestPlanCommandNeedsHome(t *testing.T) {
-	root, err := filepath.Abs(filepath.Join("..", "..", "internal", "resolve", "testdata", "root"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PADDOCK_CONFIG_DIR", root)
+	ws := planFixture(t)
 	t.Setenv("HOME", "")
-	ws := t.TempDir()
-	if err := os.Mkdir(filepath.Join(ws, "repo"), 0o755); err != nil {
-		t.Fatal(err)
-	}
 	var stdout, stderr bytes.Buffer
 	code := run([]string{"plan", "--profile", "fixer", "--spec", "afresh", "--workspace", ws}, &stdout, &stderr)
 	if code == 0 || !strings.Contains(stderr.String(), "home directory") {
@@ -66,11 +66,6 @@ func TestPlanCommandSelectsSpecFromOrigin(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not installed")
 	}
-	root, err := filepath.Abs(filepath.Join("..", "..", "internal", "resolve", "testdata", "root"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PADDOCK_CONFIG_DIR", root)
 	tests := []struct {
 		name, profile, origin string
 		wantSpec, wantErr     string
@@ -81,10 +76,7 @@ func TestPlanCommandSelectsSpecFromOrigin(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			ws := t.TempDir()
-			if err := os.Mkdir(filepath.Join(ws, "repo"), 0o755); err != nil {
-				t.Fatal(err)
-			}
+			ws := planFixture(t)
 			for _, args := range [][]string{{"init", "-q"}, {"remote", "add", "origin", tc.origin}} {
 				if out, err := exec.Command("git", append([]string{"-C", ws}, args...)...).CombinedOutput(); err != nil {
 					t.Fatalf("git %v: %v\n%s", args, err, out)

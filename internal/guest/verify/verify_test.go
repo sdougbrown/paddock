@@ -193,8 +193,13 @@ func TestClosedNetworkChecksEnforced(t *testing.T) {
 		"write-refused /etc/hosts", "write-refused " + netpolicy.ResolvConfPath, "write-refused /etc/nsswitch.conf",
 		"pinned-dns-refused", "unlisted-names-unresolvable",
 	}
-	if strings.Join(names, ",") != strings.Join(want, ",") {
-		t.Fatalf("checks = %v; want %v", names, want)
+	// Only the firewall check's place is fixed: it runs first.
+	if len(names) == 0 || names[0] != want[0] {
+		t.Fatalf("checks = %v; want %s first", names, want[0])
+	}
+	sorted := slices.Sorted(slices.Values(names))
+	if slices.Sort(want); !slices.Equal(sorted, want) {
+		t.Fatalf("checks = %v; want %v in any order after the first", names, want)
 	}
 	for _, name := range closedProbeChecks {
 		r, ok := got[name]
@@ -332,6 +337,11 @@ func TestDeniedHostNeedsLogEntry(t *testing.T) {
 	if _, err := o.deniedHostRefused(context.Background()); err == nil {
 		t.Fatal("denied-host check passed without a denial entry")
 	}
+	// A log the agent deleted gives no corroboration either.
+	o.DenyLog = filepath.Join(t.TempDir(), "missing.jsonl")
+	if d, err := o.deniedHostRefused(context.Background()); err == nil || !strings.Contains(err.Error(), "read denial log") {
+		t.Fatalf("missing denial log: %s: err = %v; want a read failure", d, err)
+	}
 }
 
 // A denial entry from before the probe ran does not corroborate its refusal.
@@ -405,6 +415,14 @@ func TestProxyKillRefused(t *testing.T) {
 	o.ProxyPID = 0
 	if _, err := o.proxyKillRefused(context.Background()); err == nil {
 		t.Fatal("check passed with no proxy pid")
+	}
+}
+
+// A proxy that is not running fails the check, whoever runs it.
+func TestProxyKillRefusedDeadProxy(t *testing.T) {
+	o := NetworkOptions{ProxyPID: 1 << 30}
+	if d, err := o.proxyKillRefused(context.Background()); err == nil || !strings.Contains(err.Error(), "is not running") {
+		t.Fatalf("pid %d: %s: err = %v; want not running", o.ProxyPID, d, err)
 	}
 }
 
@@ -528,11 +546,15 @@ func TestPinnedDNSReadsResolvConf(t *testing.T) {
 		return nil, &net.OpError{Op: "dial", Net: network, Err: syscall.EHOSTUNREACH}
 	})
 	o := NetworkOptions{Timeout: time.Second, Dialer: refuse}.withDefaults()
+	if !slices.Contains(o.ProtectedFiles, conf) {
+		t.Errorf("ProtectedFiles = %v; want the resolv.conf the check reads, %s", o.ProtectedFiles, conf)
+	}
 	if d, err := o.pinnedDNSRefused(context.Background()); err != nil {
 		t.Fatalf("%s: %v", d, err)
 	}
-	if want := []string{"udp 198.51.100.54:53", "tcp 198.51.100.54:53"}; !slices.Equal(dialed, want) {
-		t.Errorf("dialed %v; want %v", dialed, want)
+	slices.Sort(dialed)
+	if want := []string{"tcp 198.51.100.54:53", "udp 198.51.100.54:53"}; !slices.Equal(dialed, want) {
+		t.Errorf("dialed %v; want each of %v once", dialed, want)
 	}
 	if err := os.WriteFile(conf, []byte("# no nameserver\n"), 0o644); err != nil {
 		t.Fatal(err)

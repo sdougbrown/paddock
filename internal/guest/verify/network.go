@@ -98,7 +98,7 @@ func (o NetworkOptions) withDefaults() NetworkOptions {
 		}
 	}
 	if o.ProtectedFiles == nil {
-		o.ProtectedFiles = []string{"/etc/hosts", netpolicy.ResolvConfPath, "/etc/nsswitch.conf"}
+		o.ProtectedFiles = []string{"/etc/hosts", resolvConfPath, "/etc/nsswitch.conf"}
 	}
 	return o
 }
@@ -395,8 +395,9 @@ func (o NetworkOptions) dnsQueryRefused(ctx context.Context, addr string) (strin
 	return fmt.Sprintf("%s answered with %d bytes", addr, n), errUnexpectedSuccess
 }
 
-// resolvConfPath is where pinnedDNSRefused reads the default pinned
-// resolvers.
+// resolvConfPath is the guest's resolver configuration: pinnedDNSRefused
+// reads the default pinned resolvers from it, and it is a default
+// ProtectedFiles entry.
 var resolvConfPath = netpolicy.ResolvConfPath
 
 // pinnedDNSRefused passes when neither a UDP query nor a TCP connection to

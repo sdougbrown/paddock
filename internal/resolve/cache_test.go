@@ -104,12 +104,22 @@ func TestSetupCacheMarkerDoesNotFollowSymlinks(t *testing.T) {
 	}
 }
 
-func TestCacheDirNestsLowercasedRef(t *testing.T) {
+func TestCacheDirNestsRef(t *testing.T) {
 	ws := t.TempDir()
 	os.WriteFile(filepath.Join(ws, "yarn.lock"), []byte("a"), 0o644)
 	d, err := CacheDir("/h", "Afresh/Scanner", ws, "yarn.lock")
-	if err != nil || !strings.HasPrefix(d, filepath.Join("/h", ".cache", "paddock", "afresh", "scanner")+string(filepath.Separator)) {
+	if err != nil || !strings.HasPrefix(d, filepath.Join("/h", ".cache", "paddock", "Afresh", "Scanner")+string(filepath.Separator)) {
 		t.Fatalf("CacheDir = %q, %v", d, err)
+	}
+}
+
+func TestCacheDirNeedsAbsoluteHome(t *testing.T) {
+	ws := t.TempDir()
+	os.WriteFile(filepath.Join(ws, "yarn.lock"), []byte("a"), 0o644)
+	for _, home := range []string{"", "rel/home"} {
+		if d, err := CacheDir(home, "afresh", ws, "yarn.lock"); err == nil {
+			t.Errorf("home %q: CacheDir = %q, want an error", home, d)
+		}
 	}
 }
 

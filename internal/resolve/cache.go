@@ -17,16 +17,19 @@ import (
 )
 
 // CacheDir returns the host dependency-cache directory for a spec and
-// workdir: <home>/.cache/paddock/<lowercased ref as nested directories>/<first
-// 16 hex of sha256 of the workdir's keyFile>. Refs are validated against ".."
-// when the spec chain loads.
+// workdir: <home>/.cache/paddock/<ref as nested directories>/<first 16 hex of
+// sha256 of the workdir's keyFile>. home must be absolute. Refs are validated
+// against ".." when the spec chain loads.
 func CacheDir(home, ref, workdir, keyFile string) (string, error) {
+	if !filepath.IsAbs(home) {
+		return "", fmt.Errorf("setup cache: home directory %q is not absolute", home)
+	}
 	data, err := os.ReadFile(filepath.Join(workdir, keyFile))
 	if err != nil {
 		return "", fmt.Errorf("setup.cache_key: %w", err)
 	}
 	sum := sha256.Sum256(data)
-	return filepath.Join(home, ".cache", "paddock", filepath.FromSlash(strings.ToLower(ref)), hex.EncodeToString(sum[:])[:16]), nil
+	return filepath.Join(home, ".cache", "paddock", filepath.FromSlash(ref), hex.EncodeToString(sum[:])[:16]), nil
 }
 
 // setupCache adds the dependency-cache mount to a setup-phase plan. The

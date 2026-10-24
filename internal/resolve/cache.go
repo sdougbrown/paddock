@@ -36,21 +36,16 @@ func CacheDir(home, ref, workdir, keyFile string) (string, error) {
 const maxKeyFileSize = 64 << 20
 
 // hashKeyFile returns the sha256 of workdir's keyFile. The workspace controls
-// that file, so it must resolve to a regular file inside workdir of at most
+// that file, so it is opened through an os.Root (symlinks may not leave
+// workdir), without blocking, and must be a regular file of at most
 // maxKeyFileSize bytes.
 func hashKeyFile(workdir, keyFile string) ([]byte, error) {
-	root, err := filepath.EvalSymlinks(workdir)
+	root, err := os.OpenRoot(workdir)
 	if err != nil {
 		return nil, err
 	}
-	real, err := filepath.EvalSymlinks(filepath.Join(root, keyFile))
-	if err != nil {
-		return nil, err
-	}
-	if rel, err := filepath.Rel(root, real); err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return nil, fmt.Errorf("%q resolves outside the workdir", keyFile)
-	}
-	f, err := os.OpenFile(real, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
+	defer root.Close()
+	f, err := root.OpenFile(keyFile, os.O_RDONLY|syscall.O_NONBLOCK, 0)
 	if err != nil {
 		return nil, err
 	}

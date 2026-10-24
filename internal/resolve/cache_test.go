@@ -257,7 +257,7 @@ func TestCacheDirKeyFileRules(t *testing.T) {
 		t.Errorf("symlink inside the workdir: %q, %v; want %q", d, err, want)
 	}
 	for key, wantErr := range map[string]string{
-		"outside.lock": "outside the workdir",
+		"outside.lock": "escapes",
 		"dir.lock":     "not a regular file",
 		"fifo.lock":    "not a regular file",
 	} {

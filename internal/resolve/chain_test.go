@@ -253,6 +253,29 @@ func TestParseOrigin(t *testing.T) {
 	}
 }
 
+func TestRedactOrigin(t *testing.T) {
+	tests := []struct {
+		url  string
+		want string
+	}{
+		{"https://github.com/o/r.git", "https://github.com/o/r.git"},
+		{"https://user:tok@github.com/o/r", "https://github.com/o/r"},
+		{"https://tok@github.com/o/r/extra", "https://github.com/o/r/extra"},
+		{"https://github.com/o/r?access_token=tok#tok", "https://github.com/o/r"},
+		{"ssh://git:tok@github.com:22/o/r.git", "ssh://github.com:22/o/r.git"},
+		{"https://user:tok@[bad", "(unparseable URL)"},
+		{"git@github.com:o/r.git", "o/r"},
+		{"tok@github.com:a/b/c", "(scp-style remote)"},
+		{"host/x:user:tok@y", "(unrecognized remote)"},
+		{"  ", "(unrecognized remote)"},
+	}
+	for _, tc := range tests {
+		if got := redactOrigin(tc.url); got != tc.want {
+			t.Errorf("redactOrigin(%q) = %q; want %q", tc.url, got, tc.want)
+		}
+	}
+}
+
 func TestResolveValue(t *testing.T) {
 	dir := t.TempDir()
 	write := func(name, content string) string {

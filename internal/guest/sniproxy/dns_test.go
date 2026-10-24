@@ -7,6 +7,7 @@ import (
 	"io"
 	"net"
 	"net/netip"
+	"os"
 	"slices"
 	"strings"
 	"sync"
@@ -24,6 +25,10 @@ type dnsServer struct {
 	answer func(q dnsmessage.Question, tcp bool) (dnsmessage.Header, []dnsmessage.Resource)
 	// badID makes every response carry the wrong ID.
 	badID bool
+	// stray sends, ahead of each UDP response, two datagrams that do not
+	// answer the query: one with the wrong ID and one with the wrong
+	// question. Both carry strayAddr for the queried name.
+	stray bool
 
 	mu    sync.Mutex
 	asked []string
@@ -65,6 +70,11 @@ func serveDNS(t *testing.T, s *dnsServer) *dnsServer {
 			n, from, err := pc.ReadFrom(buf)
 			if err != nil {
 				return
+			}
+			if s.stray {
+				for _, b := range strayResponses(t, buf[:n]) {
+					_, _ = pc.WriteTo(b, from)
+				}
 			}
 			if resp := s.respond(t, buf[:n], false); resp != nil {
 				_, _ = pc.WriteTo(resp, from)
@@ -118,6 +128,32 @@ func (s *dnsServer) respond(t *testing.T, query []byte, tcp bool) []byte {
 		return nil
 	}
 	return b
+}
+
+const strayAddr = "198.51.100.66"
+
+func strayResponses(t *testing.T, query []byte) [][]byte {
+	var m dnsmessage.Message
+	if err := m.Unpack(query); err != nil || len(m.Questions) != 1 {
+		return nil
+	}
+	q := m.Questions[0]
+	answers := []dnsmessage.Resource{rr(q.Name.String(), a4(strayAddr))}
+	other := q
+	other.Name = dnsmessage.MustNewName("other.test.")
+	var out [][]byte
+	for _, msg := range []dnsmessage.Message{
+		{Header: dnsmessage.Header{ID: m.ID + 1, Response: true}, Questions: m.Questions, Answers: answers},
+		{Header: dnsmessage.Header{ID: m.ID, Response: true}, Questions: []dnsmessage.Question{other}, Answers: answers},
+	} {
+		b, err := msg.Pack()
+		if err != nil {
+			t.Errorf("fake dns: pack: %v", err)
+			return nil
+		}
+		out = append(out, b)
+	}
+	return out
 }
 
 // queries returns the questions asked, sorted: the resolver asks the record
@@ -207,16 +243,20 @@ func TestDNSResolverNXDomain(t *testing.T) {
 // TestDNSResolverNXDomainOutranksFailure: with no addresses, a not-found
 // answer for one type is the result even when the other type failed.
 func TestDNSResolverNXDomainOutranksFailure(t *testing.T) {
-	s := startDNS(t, func(q dnsmessage.Question, _ bool) (dnsmessage.Header, []dnsmessage.Resource) {
-		if q.Type == dnsmessage.TypeA {
-			return dnsmessage.Header{RCode: dnsmessage.RCodeServerFailure}, nil
-		}
-		return dnsmessage.Header{RCode: dnsmessage.RCodeNameError}, nil
-	})
-	_, err := lookup(t, []netip.AddrPort{s.addr}, "ip", "missing.test")
-	var de *net.DNSError
-	if !errors.As(err, &de) || !de.IsNotFound {
-		t.Fatalf("err = %v; want a not-found DNSError", err)
+	for _, nx := range []dnsmessage.Type{dnsmessage.TypeA, dnsmessage.TypeAAAA} {
+		t.Run(nx.String(), func(t *testing.T) {
+			s := startDNS(t, func(q dnsmessage.Question, _ bool) (dnsmessage.Header, []dnsmessage.Resource) {
+				if q.Type == nx {
+					return dnsmessage.Header{RCode: dnsmessage.RCodeNameError}, nil
+				}
+				return dnsmessage.Header{RCode: dnsmessage.RCodeServerFailure}, nil
+			})
+			_, err := lookup(t, []netip.AddrPort{s.addr}, "ip", "missing.test")
+			var de *net.DNSError
+			if !errors.As(err, &de) || !de.IsNotFound {
+				t.Fatalf("err = %v; want a not-found DNSError", err)
+			}
+		})
 	}
 }
 
@@ -333,16 +373,39 @@ func TestDNSResolverMixedAnswers(t *testing.T) {
 	}
 }
 
-func TestDNSResolverRejectsMismatchedResponse(t *testing.T) {
+// TestDNSResolverIgnoresStrayResponses: a UDP datagram that does not
+// answer the query, by ID or by question, is skipped, and the answer that
+// follows it is used.
+func TestDNSResolverIgnoresStrayResponses(t *testing.T) {
+	s := serveDNS(t, &dnsServer{stray: true, answer: func(q dnsmessage.Question, _ bool) (dnsmessage.Header, []dnsmessage.Resource) {
+		return dnsmessage.Header{}, []dnsmessage.Resource{rr(q.Name.String(), a4("203.0.113.9"))}
+	}})
+	got, err := lookup(t, []netip.AddrPort{s.addr}, "ip4", "x.test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []netip.Addr{netip.MustParseAddr("203.0.113.9")}; !slices.Equal(got, want) {
+		t.Errorf("got %v, want %v", got, want)
+	}
+}
+
+// TestDNSResolverMismatchedServerTimesOut: a server whose every response
+// carries the wrong ID never answers, so its query times out and the next
+// server is asked.
+func TestDNSResolverMismatchedServerTimesOut(t *testing.T) {
 	answer := func(q dnsmessage.Question, _ bool) (dnsmessage.Header, []dnsmessage.Resource) {
 		return dnsmessage.Header{}, []dnsmessage.Resource{rr(q.Name.String(), a4("203.0.113.9"))}
 	}
 	bad := serveDNS(t, &dnsServer{answer: answer, badID: true})
-	if _, err := lookup(t, []netip.AddrPort{bad.addr}, "ip4", "x.test"); err == nil || !strings.Contains(err.Error(), "does not match") {
-		t.Fatalf("err = %v; want a mismatch error", err)
-	}
 	good := startDNS(t, answer)
-	got, err := lookup(t, []netip.AddrPort{bad.addr, good.addr}, "ip4", "x.test")
+	r := &DNSResolver{Servers: []netip.AddrPort{bad.addr}, Timeout: 200 * time.Millisecond}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if _, err := r.LookupNetIP(ctx, "ip4", "x.test"); !errors.Is(err, os.ErrDeadlineExceeded) {
+		t.Fatalf("err = %v; want the per-query timeout", err)
+	}
+	r.Servers = []netip.AddrPort{bad.addr, good.addr}
+	got, err := r.LookupNetIP(ctx, "ip4", "x.test")
 	if err != nil || len(got) != 1 {
 		t.Fatalf("with a second server: %v, %v", got, err)
 	}

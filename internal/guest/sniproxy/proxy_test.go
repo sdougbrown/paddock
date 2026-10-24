@@ -104,11 +104,32 @@ func (s *syncBuffer) denials(t *testing.T) []sniproxy.Denial {
 	return out
 }
 
+// lookupRecorder is a resolver that records the names it is asked for.
+type lookupRecorder struct {
+	guesttest.Resolver
+	mu    sync.Mutex
+	names []string
+}
+
+func (r *lookupRecorder) LookupNetIP(ctx context.Context, network, host string) ([]netip.Addr, error) {
+	r.mu.Lock()
+	r.names = append(r.names, host)
+	r.mu.Unlock()
+	return r.Resolver.LookupNetIP(ctx, network, host)
+}
+
+func (r *lookupRecorder) calls() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]string(nil), r.names...)
+}
+
 type harness struct {
-	addr   string
-	dialer *routeDialer
-	log    *syncBuffer
-	pool   *x509.CertPool
+	addr     string
+	dialer   *routeDialer
+	resolver *lookupRecorder
+	log      *syncBuffer
+	pool     *x509.CertPool
 }
 
 func startProxy(t *testing.T, mutate func(*sniproxy.Config)) *harness {
@@ -127,12 +148,7 @@ func startProxy(t *testing.T, mutate func(*sniproxy.Config)) *harness {
 			refuse: map[string]bool{"203.0.113.30:443": true, "203.0.113.50:443": true, "203.0.113.51:443": true},
 			hang:   map[string]bool{"203.0.113.40:443": true},
 		},
-		log:  &syncBuffer{},
-		pool: pool,
-	}
-	cfg := sniproxy.Config{
-		Allowlist: allow,
-		Resolver: guesttest.Resolver{
+		resolver: &lookupRecorder{Resolver: guesttest.Resolver{
 			"allowed.test": {netip.MustParseAddr("2001:db8::10"), netip.MustParseAddr("203.0.113.10")},
 			"second.test":  {netip.MustParseAddr("203.0.113.11")},
 			"loop.test":    {netip.MustParseAddr("127.0.0.1"), netip.MustParseAddr("::1"), netip.MustParseAddr("169.254.1.1")},
@@ -144,7 +160,13 @@ func startProxy(t *testing.T, mutate func(*sniproxy.Config)) *harness {
 			},
 			"resolver.test": {netip.MustParseAddr("198.51.100.53")},
 			"refused.test":  {netip.MustParseAddr("203.0.113.50"), netip.MustParseAddr("203.0.113.51")},
-		},
+		}},
+		log:  &syncBuffer{},
+		pool: pool,
+	}
+	cfg := sniproxy.Config{
+		Allowlist:    allow,
+		Resolver:     h.resolver,
 		ExcludeAddrs: []netip.Addr{netip.MustParseAddr("198.51.100.53")},
 		Dialer:       h.dialer,
 		HelloTimeout: 200 * time.Millisecond,
@@ -429,6 +451,11 @@ func TestProxyRefusals(t *testing.T) {
 			}
 			if got, want := strings.Join(h.dialer.calls(), ","), strings.Join(tt.wantDials, ","); got != want {
 				t.Fatalf("dialed %q; want %q", got, want)
+			}
+			// Only an allowlisted name is ever resolved.
+			lookups := h.resolver.calls()
+			if tt.wantReason != sniproxy.ReasonUpstream && len(lookups) != 0 {
+				t.Fatalf("looked up %v for a connection refused as %q", lookups, tt.wantReason)
 			}
 		})
 	}

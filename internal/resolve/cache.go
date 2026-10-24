@@ -8,9 +8,7 @@ import (
 	"io"
 	"io/fs"
 	"os"
-	"path"
 	"path/filepath"
-	"strings"
 	"sync"
 	"syscall"
 
@@ -104,10 +102,11 @@ func (r *Resolver) setupCache(p *plan.Plan) error {
 }
 
 // guestOverlap reports whether guest paths a and b are equal or one lies
-// under the other.
+// under the other: containment checked in both directions.
 func guestOverlap(a, b string) bool {
-	a, b = path.Clean(a), path.Clean(b)
-	return a == b || strings.HasPrefix(a, strings.TrimSuffix(b, "/")+"/") || strings.HasPrefix(b, strings.TrimSuffix(a, "/")+"/")
+	_, aInB := relInside(b, a)
+	_, bInA := relInside(a, b)
+	return aInB || bInA
 }
 
 // completionMarker is the host file recording that setup finished in s's

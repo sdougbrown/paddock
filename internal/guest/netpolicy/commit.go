@@ -160,6 +160,11 @@ func (l Lifeline) Check(ctx context.Context) error {
 			errs = append(errs, fmt.Errorf("DNS query to %s was answered (%d bytes); only the proxy uid may query it", addr, n))
 		}
 	}
+	// A cancelled context fails every later probe, and a failed probe
+	// reads as a refusal, so the refusals above prove nothing.
+	if err := ctx.Err(); err != nil {
+		errs = append(errs, fmt.Errorf("lifeline interrupted: %w", err))
+	}
 	return errors.Join(errs...)
 }
 

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path"
 	"path/filepath"
@@ -391,38 +392,39 @@ func (r *Resolver) claude(prof *config.Profile, m *Merged, mounts []plan.Mount) 
 	return c, nil
 }
 
-// underReadonlyMount reports whether the deepest mount holding p is
-// read-only, both for p as written and for p with its symlinks resolved, so a
-// link inside a read-only mount cannot lead into a writable one. Mounts are
-// same-path, so resolving on the host matches what the guest sees.
+// underReadonlyMount reports whether p lies in a read-only mount: the deepest
+// mount holding p is read-only, and no symlink lies between that mount and p.
+// The guest would follow such a link into whatever mount holds its target.
 func underReadonlyMount(mounts []plan.Mount, p string) bool {
-	if !deepestMountReadonly(mounts, p, func(s string) string { return s }) {
+	var m *plan.Mount
+	for i := range mounts {
+		g := mounts[i].Guest
+		if (p == g || strings.HasPrefix(p, g+string(filepath.Separator))) && (m == nil || len(g) > len(m.Guest)) {
+			m = &mounts[i]
+		}
+	}
+	if m == nil || !m.ReadOnly {
 		return false
 	}
-	real, err := filepath.EvalSymlinks(p)
+	rel, err := filepath.Rel(m.Guest, p)
 	if err != nil {
-		return true
+		return false
 	}
-	resolve := func(s string) string {
-		if r, err := filepath.EvalSymlinks(s); err == nil {
-			return r
+	cur := m.Host
+	for _, part := range strings.Split(rel, string(filepath.Separator)) {
+		if part == "." {
+			continue
 		}
-		return s
-	}
-	return deepestMountReadonly(mounts, real, resolve)
-}
-
-// deepestMountReadonly reports whether the longest mount path holding p, after
-// passing each mount's host path through form, is read-only.
-func deepestMountReadonly(mounts []plan.Mount, p string, form func(string) string) bool {
-	best, ro := -1, false
-	for _, m := range mounts {
-		g := form(m.Host)
-		if (p == g || strings.HasPrefix(p, g+string(filepath.Separator))) && len(g) > best {
-			best, ro = len(g), m.ReadOnly
+		cur = filepath.Join(cur, part)
+		st, err := os.Lstat(cur)
+		if errors.Is(err, fs.ErrNotExist) {
+			return true
+		}
+		if err != nil || st.Mode()&fs.ModeSymlink != 0 {
+			return false
 		}
 	}
-	return ro
+	return true
 }
 
 // guestCacheRoot is the guest directory every setup.cache_dir must lie under,

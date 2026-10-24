@@ -616,34 +616,44 @@ func TestSetupPlanValidation(t *testing.T) {
 	}
 }
 
-func TestClaudeDirsResolveIntoReadonlyMounts(t *testing.T) {
+func TestClaudeDirsHaveNoLinksBelowTheirMount(t *testing.T) {
 	r, ws := testResolver(t, "", errors.New("no remote"))
 	real, err := filepath.EvalSymlinks(ws)
 	if err != nil {
 		t.Fatal(err)
 	}
 	ro := t.TempDir()
-	if err := os.Mkdir(filepath.Join(ro, "skills"), 0o755); err != nil {
-		t.Fatal(err)
+	for _, d := range []string{filepath.Join(ro, "skills"), filepath.Join(real, "writable")} {
+		if err := os.Mkdir(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
 	}
-	if err := os.Mkdir(filepath.Join(real, "writable"), 0o755); err != nil {
-		t.Fatal(err)
+	alias := filepath.Join(t.TempDir(), "alias")
+	links := map[string]string{
+		filepath.Join(ro, "agents"):           filepath.Join(real, "writable"),
+		filepath.Join(ro, "dangling"):         filepath.Join(real, "later"),
+		filepath.Join(real, "repo", "skills"): filepath.Join(ro, "skills"),
+		alias:                                 ro,
 	}
-	if err := os.Symlink(filepath.Join(real, "writable"), filepath.Join(ro, "agents")); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink(filepath.Join(ro, "skills"), filepath.Join(real, "repo", "skills")); err != nil {
-		t.Fatal(err)
+	for link, target := range links {
+		if err := os.Symlink(target, link); err != nil {
+			t.Fatal(err)
+		}
 	}
 	for _, tc := range []struct {
-		name, key, path, wantErr string
+		name, mount, path, wantErr string
 	}{
-		{"real directory in a read-only mount", "skills", filepath.Join(ro, "skills"), ""},
-		{"link in a read-only mount into the rw workspace", "agents", filepath.Join(ro, "agents"), "claude.agents"},
-		{"link in a read-only subpath to a read-only mount", "skills", filepath.Join(real, "repo", "skills"), ""},
+		{"real directory in a read-only mount", ro, filepath.Join(ro, "skills"), ""},
+		{"missing directory in a read-only mount", ro, filepath.Join(ro, "none", "skills"), ""},
+		{"read-only mount reached through a link", alias, filepath.Join(alias, "skills"), ""},
+		{"link into the rw workspace", ro, filepath.Join(ro, "agents"), "not under a read-only mount"},
+		{"path below a link into the rw workspace", ro, filepath.Join(ro, "agents", "x"), "not under a read-only mount"},
+		{"dangling link into the rw workspace", ro, filepath.Join(ro, "dangling"), "not under a read-only mount"},
+		{"link in a read-only subpath", ro, filepath.Join(real, "repo", "skills"), "not under a read-only mount"},
+		{"rw workspace", ro, filepath.Join(real, "writable"), "not under a read-only mount"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			useProfile(t, r, fmt.Sprintf("[workspace]\nmode = \"rw\"\nreadonly = [\"repo\"]\n[mounts]\nreadonly = [%q]\n[claude]\n%s = %q\n", ro, tc.key, tc.path))
+			useProfile(t, r, fmt.Sprintf("[workspace]\nmode = \"rw\"\nreadonly = [\"repo\"]\n[mounts]\nreadonly = [%q]\n[claude]\nskills = %q\n", tc.mount, tc.path))
 			_, err := r.Resolve(Options{Profile: "p", Spec: "afresh"})
 			if tc.wantErr == "" {
 				if err != nil {
@@ -651,8 +661,8 @@ func TestClaudeDirsResolveIntoReadonlyMounts(t *testing.T) {
 				}
 				return
 			}
-			if err == nil || !strings.Contains(err.Error(), tc.wantErr) || !strings.Contains(err.Error(), "not under a read-only mount") {
-				t.Fatalf("err = %v, want a %s read-only mount error", err, tc.wantErr)
+			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("err = %v, want one containing %q", err, tc.wantErr)
 			}
 		})
 	}

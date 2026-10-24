@@ -171,7 +171,7 @@ func TestResolveErrors(t *testing.T) {
 		{"setup phase without setup command", Options{Spec: "afresh", Phase: "setup"}, "fixer", "no [setup] command"},
 		{"setup with a read-only workspace", Options{Spec: "afresh/scanner", Phase: "setup"}, "rowsro", "setup needs a read-write workspace; profile \"rowsro\" workspace.mode is ro"},
 		{"setup with caller argv", Options{Spec: "afresh/scanner", Phase: "setup", Argv: []string{"sh"}}, "rows", "do not pass a command"},
-		{"workspace is a file", Options{Spec: "afresh", Workspace: "FILE"}, "fixer", "not a directory"},
+		{"workspace is a file", Options{Spec: "afresh", Workspace: "FILE"}, "fixer", "is not a directory"},
 		{"bad phase", Options{Spec: "afresh", Phase: "build"}, "fixer", "phase"},
 		{"profile env collides with spec env", Options{Spec: "afresh"}, "envclash", "both the profile and the spec chain"},
 		{"workspace readonly escapes", Options{Spec: "afresh"}, "wsescape", "inside the workspace"},

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -369,6 +370,9 @@ func TestSetupPhaseDropsCredentials(t *testing.T) {
 	}
 	if !strings.Contains(names(setup), "MODE") {
 		t.Errorf("setup env lost literals: %s", names(setup))
+	}
+	if !slices.Contains(setup.Env, plan.EnvVar{Name: "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", Source: plan.SourceLiteral, Value: "1"}) {
+		t.Errorf("setup env lost the spec env: %+v", setup.Env)
 	}
 }
 

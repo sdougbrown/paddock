@@ -38,14 +38,18 @@ func ParseOrigin(raw string) (string, bool) {
 }
 
 // redactOrigin returns a form of a git remote URL that is safe to print: URL
-// forms lose their userinfo, query, and fragment, scp-style remotes print only
-// the parsed owner/repo, and any other form prints a placeholder.
+// forms with a host lose their userinfo, query, and fragment, scp-style
+// remotes print only the parsed owner/repo, and any other form, opaque URLs
+// such as helper::<url> included, prints a placeholder.
 func redactOrigin(raw string) string {
 	raw = strings.TrimSpace(raw)
 	if strings.Contains(raw, "://") {
 		u, err := url.Parse(raw)
 		if err != nil {
 			return "(unparseable URL)"
+		}
+		if u.Opaque != "" || u.Host == "" {
+			return "(unrecognized remote)"
 		}
 		u.User = nil
 		u.RawQuery, u.Fragment, u.RawFragment = "", "", ""

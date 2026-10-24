@@ -174,23 +174,32 @@ func TestLaunchServesPassedListener(t *testing.T) {
 	_ = tls.Client(c, &tls.Config{ServerName: "denied.test"}).Handshake()
 	c.Close()
 
+	waitDenial(t, o, `"sni":"denied.test"`)
+	if err := syscall.Kill(cmd.Process.Pid, 0); err != nil {
+		t.Errorf("child not running: %v", err)
+	}
+}
+
+// waitDenial waits up to 3s for a line containing want in o.DenyLog.
+func waitDenial(t *testing.T, o sniproxy.LaunchOptions, want string) {
+	t.Helper()
 	deadline := time.Now().Add(3 * time.Second)
 	for {
 		b, err := os.ReadFile(o.DenyLog.Name())
 		if err != nil {
 			t.Fatal(err)
 		}
-		if strings.Contains(string(b), `"sni":"denied.test"`) {
-			break
+		if strings.Contains(string(b), want) {
+			return
 		}
 		if time.Now().After(deadline) {
-			eb, _ := os.ReadFile(errLog.Name())
-			t.Fatalf("no denial for denied.test in %q; error log: %q", b, eb)
+			var eb []byte
+			if o.ErrorLog != nil {
+				eb, _ = os.ReadFile(o.ErrorLog.Name())
+			}
+			t.Fatalf("no denial with %s in %q; error log: %q", want, b, eb)
 		}
 		time.Sleep(20 * time.Millisecond)
-	}
-	if err := syscall.Kill(cmd.Process.Pid, 0); err != nil {
-		t.Errorf("child not running: %v", err)
 	}
 }
 

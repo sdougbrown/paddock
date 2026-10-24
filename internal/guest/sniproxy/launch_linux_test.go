@@ -128,6 +128,8 @@ func ioctl(fd int, req uintptr, arg unsafe.Pointer) error {
 // through its own DNS client, at the configured resolver, and splices a TLS
 // session to the upstream it names. The resolver is not on 127.0.0.1, where
 // the system resolver's default or a local nameserver would also find it.
+// An allowlisted name that resolves to the resolver itself is refused: the
+// child never dials its resolvers as an upstream.
 func TestLaunchAllowedNameEndToEnd(t *testing.T) {
 	requireRootLinux(t)
 	if !inNetNS(t) {
@@ -136,7 +138,10 @@ func TestLaunchAllowedNameEndToEnd(t *testing.T) {
 	upstream := netip.MustParseAddr("203.0.113.10")
 	resolver := netip.MustParseAddr("198.51.100.53")
 	upLoopback(t, upstream, resolver)
-	queries := sniproxy.ServeDNSAt(t, netip.AddrPortFrom(resolver, 53), map[string]netip.Addr{"allowed.test.": upstream})
+	queries := sniproxy.ServeDNSAt(t, netip.AddrPortFrom(resolver, 53), map[string]netip.Addr{
+		"allowed.test.":  upstream,
+		"resolver.test.": resolver,
+	})
 
 	cert, pool := guesttest.SelfSigned(t, "allowed.test")
 	up, err := tls.Listen("tcp4", netip.AddrPortFrom(upstream, 443).String(), &tls.Config{Certificates: []tls.Certificate{cert}})
@@ -158,7 +163,14 @@ func TestLaunchAllowedNameEndToEnd(t *testing.T) {
 	o := launchOpts(t)
 	o.Path = exePath(t)
 	o.Args = []string{childArg}
+	o.Config.Allow = []string{"allowed.test", "resolver.test"}
 	o.Config.Resolvers = []netip.Addr{resolver}
+	errLog, err := os.CreateTemp(t.TempDir(), "err")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer errLog.Close()
+	o.ErrorLog = errLog
 	cmd, err := sniproxy.Launch(o)
 	if err != nil {
 		t.Fatal(err)
@@ -183,4 +195,21 @@ func TestLaunchAllowedNameEndToEnd(t *testing.T) {
 	if !slices.Contains(queries(), "allowed.test. TypeA") {
 		t.Errorf("resolver saw %q; want the child's A query for allowed.test", queries())
 	}
+
+	// A dial to the resolver's :443 would succeed through this listener's
+	// backlog and splice, so the upstream denial comes only from the child
+	// excluding its resolver.
+	trap, err := net.Listen("tcp4", netip.AddrPortFrom(resolver, 443).String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { trap.Close() })
+	raw2, err := net.DialTimeout("tcp", o.Listener.Addr().String(), 2*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer raw2.Close()
+	_ = raw2.SetDeadline(time.Now().Add(5 * time.Second))
+	_ = tls.Client(raw2, &tls.Config{ServerName: "resolver.test"}).Handshake()
+	waitDenial(t, o, `"sni":"resolver.test","reason":"upstream"`)
 }

@@ -14,7 +14,9 @@ const (
 	recordTypeHandshake      = 0x16
 	handshakeTypeClientHello = 0x01
 	extensionServerName      = 0x0000
-	serverNameTypeHostName   = 0x00
+	// extensionEncryptedClientHello is the ECH extension (RFC 9849).
+	extensionEncryptedClientHello = 0xfe0d
+	serverNameTypeHostName        = 0x00
 
 	recordHeaderLen = 5
 	maxRecordLen    = 1 << 14 // plaintext TLS record limit
@@ -72,6 +74,9 @@ func readClientHello(r io.Reader) (raw []byte, sni string, err error) {
 		if len(hs) < 4+msgLen {
 			continue
 		}
+		if len(hs) > 4+msgLen {
+			return raw, "", refuse(ReasonMalformed, "%d bytes after the ClientHello in its record", len(hs)-4-msgLen)
+		}
 		sni, err := parseSNI(hs[4 : 4+msgLen])
 		return raw, sni, err
 	}
@@ -121,8 +126,13 @@ func (c *cursor) u16() int {
 	return int(binary.BigEndian.Uint16(b))
 }
 
-// parseSNI returns the first host_name in the server_name extension of a
-// ClientHello body (the handshake message without its 4-byte header).
+// parseSNI returns the host_name in the server_name extension of a
+// ClientHello body (the handshake message without its 4-byte header). Every
+// length-prefixed field must be consumed exactly, no extension may appear
+// twice, and the server_name extension may hold only one host_name, so the
+// proxy and the upstream cannot read different names from one ClientHello.
+// A ClientHello carrying encrypted_client_hello is refused with its outer
+// name: ECH hides the name the client is really asking for.
 func parseSNI(body []byte) (string, error) {
 	c := &cursor{b: body}
 	c.take(2)  // legacy_version
@@ -140,36 +150,67 @@ func parseSNI(body []byte) (string, error) {
 	if c.bad {
 		return "", refuse(ReasonMalformed, "extensions length exceeds ClientHello")
 	}
+	if len(c.b) != 0 {
+		return "", refuse(ReasonMalformed, "%d bytes after the extensions", len(c.b))
+	}
+	seen := map[int]bool{}
+	var host string
+	var hasHost bool
 	for len(exts.b) > 0 {
 		typ := exts.u16()
 		data := exts.take(exts.u16())
 		if exts.bad {
 			return "", refuse(ReasonMalformed, "extension length exceeds extensions block")
 		}
-		if typ != extensionServerName {
-			continue
+		if seen[typ] {
+			return "", refuse(ReasonMalformed, "extension %#04x appears twice", typ)
 		}
-		sn := &cursor{b: data}
-		list := &cursor{b: sn.take(sn.u16())}
-		if sn.bad {
-			return "", refuse(ReasonMalformed, "server_name list length")
+		seen[typ] = true
+		if typ == extensionServerName {
+			var err error
+			if host, hasHost, err = parseServerName(data); err != nil {
+				return "", err
+			}
 		}
-		for len(list.b) > 0 {
-			nameType := list.u8()
-			name := list.take(list.u16())
-			if list.bad {
-				return "", refuse(ReasonMalformed, "server_name entry length")
-			}
-			if nameType != serverNameTypeHostName {
-				continue
-			}
-			host := egresshost.Normalize(string(name))
-			if !egresshost.Valid(host) {
-				return "", refuse(ReasonMalformed, "server_name is not a hostname")
-			}
-			return host, nil
-		}
+	}
+	if seen[extensionEncryptedClientHello] {
+		return host, refuse(ReasonECH, "ClientHello carries encrypted_client_hello")
+	}
+	if !seen[extensionServerName] {
+		return "", refuse(ReasonNoSNI, "ClientHello has no server_name extension")
+	}
+	if !hasHost {
 		return "", refuse(ReasonNoSNI, "server_name extension has no host_name")
 	}
-	return "", refuse(ReasonNoSNI, "ClientHello has no server_name extension")
+	return host, nil
+}
+
+// parseServerName returns the host_name in a server_name extension's data,
+// lowercased without a trailing dot. ok is false when the list holds no
+// host_name entry.
+func parseServerName(data []byte) (host string, ok bool, err error) {
+	sn := &cursor{b: data}
+	list := &cursor{b: sn.take(sn.u16())}
+	if sn.bad || len(sn.b) != 0 {
+		return "", false, refuse(ReasonMalformed, "server_name list length")
+	}
+	for len(list.b) > 0 {
+		nameType := list.u8()
+		name := list.take(list.u16())
+		if list.bad {
+			return "", false, refuse(ReasonMalformed, "server_name entry length")
+		}
+		if nameType != serverNameTypeHostName {
+			continue
+		}
+		if ok {
+			return "", false, refuse(ReasonMalformed, "server_name has two host_names")
+		}
+		host = egresshost.Normalize(string(name))
+		if !egresshost.Valid(host) {
+			return "", false, refuse(ReasonMalformed, "server_name is not a hostname")
+		}
+		ok = true
+	}
+	return host, ok, nil
 }

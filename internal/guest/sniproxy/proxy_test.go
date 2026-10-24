@@ -488,6 +488,9 @@ func TestProxyRefusals(t *testing.T) {
 		// the lifeline's denied host relies on a ReasonDenied line naming it.
 		{"reserved name", tlsHello("paddock-lifeline-denied.invalid"), "paddock-lifeline-denied.invalid", sniproxy.ReasonDenied, nil},
 		{"no sni", tlsHello(""), "", sniproxy.ReasonNoSNI, nil},
+		// ECH is refused even under an allowlisted outer name.
+		{"ech", func(t *testing.T, c net.Conn, _ *harness) { _, _ = c.Write(sniproxy.ECHHello(t, "allowed.test")) },
+			"allowed.test", sniproxy.ReasonECH, nil},
 		{"ip literal", tlsHello("203.0.113.10"), "", sniproxy.ReasonNoSNI, nil},
 		{"http", writeBytes("GET / HTTP/1.1\r\nHost: allowed.test\r\n\r\n"), "", sniproxy.ReasonNotTLS, nil},
 		{"silent client", func(*testing.T, net.Conn, *harness) {}, "", sniproxy.ReasonTimeout, nil},

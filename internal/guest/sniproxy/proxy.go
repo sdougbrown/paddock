@@ -17,6 +17,17 @@
 // the denial log. The denial is written before the client connection
 // closes.
 //
+// The ClientHello is parsed strictly: every length-prefixed field must be
+// consumed exactly, no extension may appear twice, and there must be one
+// host_name, so the proxy and the upstream cannot read different names.
+// A ClientHello carrying encrypted_client_hello (ECH) is refused with
+// ReasonECH, because ECH hides the name the client is really asking for
+// behind an outer name the proxy would check instead. Chromium sends
+// ECH-GREASE by default, so a Chromium-based browser (including headless
+// Chrome under Playwright) is refused under the allowlist policy; browsers
+// belong on an open-egress profile. curl and the Go, Node, and Python TLS
+// stacks do not send ECH unless configured to.
+//
 // An allowed name's addresses are filtered before dialing: loopback,
 // link-local, multicast, private (RFC 1918, ULA), shared (RFC 6598), and
 // the pinned resolvers' addresses are never dialed, so a name whose DNS
@@ -50,6 +61,7 @@ const (
 	ReasonNoSNI     Reason = "no-sni"    // ClientHello without a server_name host name
 	ReasonMalformed Reason = "malformed" // unparseable record or ClientHello
 	ReasonDenied    Reason = "denied"    // server name not allowlisted
+	ReasonECH       Reason = "ech"       // ClientHello carries encrypted_client_hello
 	ReasonTimeout   Reason = "timeout"   // ClientHello not complete within HelloTimeout
 	ReasonTruncated Reason = "truncated" // client closed before a complete ClientHello
 	ReasonUpstream  Reason = "upstream"  // allowed name, but no usable address or the dial failed

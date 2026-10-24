@@ -56,9 +56,23 @@ func refragment(t *testing.T, rec []byte, size int) []byte {
 
 // sniExt builds a server_name extension with one entry.
 func sniExt(nameType byte, name string) []byte {
-	entry := append([]byte{nameType, byte(len(name) >> 8), byte(len(name))}, name...)
-	list := append([]byte{byte(len(entry) >> 8), byte(len(entry))}, entry...)
-	return append([]byte{0x00, 0x00, byte(len(list) >> 8), byte(len(list))}, list...)
+	return sniExtHosts(nameType, name)
+}
+
+// sniExtHosts builds a server_name extension with one entry per name.
+func sniExtHosts(nameType byte, names ...string) []byte {
+	var entries []byte
+	for _, name := range names {
+		entries = append(entries, nameType, byte(len(name)>>8), byte(len(name)))
+		entries = append(entries, name...)
+	}
+	list := append([]byte{byte(len(entries) >> 8), byte(len(entries))}, entries...)
+	return ext(extensionServerName, list)
+}
+
+// ext builds one extension of type typ around data.
+func ext(typ int, data []byte) []byte {
+	return append([]byte{byte(typ >> 8), byte(typ), byte(len(data) >> 8), byte(len(data))}, data...)
 }
 
 // handBuiltHello wraps exts in a minimal ClientHello record. extLen
@@ -109,6 +123,22 @@ func TestReadClientHello(t *testing.T) {
 		byte(overCap >> 16), byte(overCap >> 8), byte(overCap)}
 	shortHello := []byte{recordTypeHandshake, 0x03, 0x01, 0x00, 0x08, handshakeTypeClientHello, 0x00, 0x00, 0x04, 0x03, 0x03, 0x00, 0x00}
 
+	pub := sniExt(serverNameTypeHostName, "public.example.test")
+	// An ECH payload is opaque here; Chromium's ECH-GREASE is random bytes
+	// under the same extension type.
+	echPayload := ext(extensionEncryptedClientHello, []byte{0x00, 0x00, 0x01, 0x00, 0x01, 0x07, 0x00, 0x00, 0x00})
+	echAfterSNI := handBuiltHello(t, append(append([]byte(nil), pub...), echPayload...), -1)
+	echBeforeSNI := handBuiltHello(t, append(append([]byte(nil), echPayload...), pub...), -1)
+	twoSNIExts := handBuiltHello(t, append(append([]byte(nil), pub...), sniExt(serverNameTypeHostName, "other.example.test")...), -1)
+	twoHostNames := handBuiltHello(t, sniExtHosts(serverNameTypeHostName, "public.example.test", "other.example.test"), -1)
+	groups := ext(0x000a, []byte{0x00, 0x02, 0x00, 0x1d})
+	twoOtherExts := handBuiltHello(t, append(append(append([]byte(nil), groups...), groups...), pub...), -1)
+	sniTrailing := ext(extensionServerName, append(pub[4:], 0x00))
+	sniDataTrailing := handBuiltHello(t, sniTrailing, -1)
+	bodyTrailing := handBuiltHello(t, append(append([]byte(nil), pub...), 0x00), len(pub))
+	recordTrailing := append(handBuiltHello(t, pub, -1), 0x00)
+	recordTrailing[3], recordTrailing[4] = byte((len(recordTrailing)-recordHeaderLen)>>8), byte(len(recordTrailing)-recordHeaderLen)
+
 	tests := []struct {
 		name       string
 		in         []byte
@@ -135,6 +165,14 @@ func TestReadClientHello(t *testing.T) {
 		{"server_name without host_name", otherNameType, "", ReasonNoSNI},
 		{"server_name not a hostname", badChars, "", ReasonMalformed},
 		{"hand-built", handOK, "hand.example.test", ""},
+		{"ech after sni", echAfterSNI, "public.example.test", ReasonECH},
+		{"ech before sni", echBeforeSNI, "public.example.test", ReasonECH},
+		{"two server_name extensions", twoSNIExts, "", ReasonMalformed},
+		{"two host_names", twoHostNames, "", ReasonMalformed},
+		{"duplicate extension", twoOtherExts, "", ReasonMalformed},
+		{"server_name data past its list", sniDataTrailing, "", ReasonMalformed},
+		{"bytes past the extensions", bodyTrailing, "", ReasonMalformed},
+		{"bytes past the ClientHello in its record", recordTrailing, "", ReasonMalformed},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

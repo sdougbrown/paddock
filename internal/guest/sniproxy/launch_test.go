@@ -246,6 +246,25 @@ func TestLaunchKillsChildThatNeverReports(t *testing.T) {
 	}
 }
 
+func TestLaunchRejectsChildThatPrintsAnotherLine(t *testing.T) {
+	requireRootLinux(t)
+	o := launchOpts(t)
+	o.Path = "/bin/sh"
+	o.Args = []string{"-c", "echo wrong; exec sleep 30"}
+	start := time.Now()
+	cmd, err := sniproxy.Launch(o)
+	if err == nil {
+		_ = cmd.Process.Kill()
+		t.Fatal("Launch succeeded for a child that printed another line")
+	}
+	if !strings.Contains(err.Error(), `unexpected output "wrong\n"`) {
+		t.Errorf("err = %v", err)
+	}
+	if d := time.Since(start); d > 5*time.Second {
+		t.Errorf("Launch took %v; want the child killed at once", d)
+	}
+}
+
 func TestLaunchReportsChildThatExitsBeforeReady(t *testing.T) {
 	requireRootLinux(t)
 	o := launchOpts(t)

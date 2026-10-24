@@ -41,6 +41,10 @@ type SpecClaude struct {
 	ManagedSettings string `toml:"managed_settings"`
 }
 
+// Validate applies the rules every loaded spec satisfies. LoadSpec runs it,
+// and the resolver runs it again for spec sources that do not.
+func (s *Spec) Validate() error { return s.validate() }
+
 func (s *Spec) validate() error {
 	if s.Hooks != nil {
 		return fmt.Errorf("[hooks]: host hooks are not supported in v1")

@@ -12,7 +12,6 @@ import (
 	"strings"
 
 	"github.com/sdougbrown/paddock/internal/config"
-	"github.com/sdougbrown/paddock/internal/egresshost"
 )
 
 // Trust is the provenance level of a spec.
@@ -104,9 +103,10 @@ func LoadChain(src SpecSource, ref string) ([]LoadedSpec, error) {
 	return chain, nil
 }
 
-// checkSpec applies the rules that hold for a spec on its own: no env
-// credentials, and repository specs define no egress or managed settings and
-// extend an operator parent.
+// checkSpec applies the rules that hold for a spec on its own: the config
+// rules (config.Spec.Validate, run again because a SpecSource need not
+// validate), no env credentials, and repository specs define no egress or
+// managed settings and extend an operator parent.
 //
 // A repository-trust spec may still declare context.readonly mounts, setup
 // fields, and an image Dockerfile, and Merge takes them. No SpecSource in v1
@@ -125,6 +125,9 @@ func checkSpec(ls LoadedSpec, parent *LoadedSpec) error {
 			}
 			return fmt.Errorf("spec %q: env.%s: specs may only set literal env values, not %s %s source", ls.Ref, name, article, kind)
 		}
+	}
+	if err := ls.Spec.Validate(); err != nil {
+		return fmt.Errorf("spec %q: %w", ls.Ref, err)
 	}
 	if ls.Trust == TrustRepository {
 		if len(ls.Spec.Egress) > 0 {
@@ -160,8 +163,8 @@ type Merged struct {
 	ManagedSettings []byte
 }
 
-// Merge combines a chain root first. A child adds contents and never
-// redefines a parent's egress set, env name, or setup field.
+// Merge combines a chain from LoadChain, root first. A child adds contents
+// and never redefines a parent's egress set, env name, or setup field.
 func Merge(src SpecSource, chain []LoadedSpec) (*Merged, error) {
 	m := &Merged{Egress: map[string][]string{}, Env: map[string]string{}}
 	var settings map[string]any
@@ -183,11 +186,6 @@ func Merge(src SpecSource, chain []LoadedSpec) (*Merged, error) {
 		for _, name := range sortedKeys(s.Egress) {
 			if _, dup := m.Egress[name]; dup {
 				return nil, fmt.Errorf("spec %q: egress.%s: already defined by a parent spec", ls.Ref, name)
-			}
-			for _, host := range s.Egress[name] {
-				if err := egresshost.Validate(host); err != nil {
-					return nil, fmt.Errorf("spec %q: egress.%s: %w", ls.Ref, name, err)
-				}
 			}
 			m.Egress[name] = s.Egress[name]
 		}

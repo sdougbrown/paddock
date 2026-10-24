@@ -1,6 +1,7 @@
 package resolve
 
 import (
+	"errors"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -51,7 +52,6 @@ func repo(t string) fakeSpec { return fakeSpec{TrustRepository, t} }
 
 func TestChainRules(t *testing.T) {
 	base := op("[egress]\nanthropic = [\"api.anthropic.com\"]\n[env]\nA = \"1\"\n[setup]\ncommand = [\"make\"]\n")
-	cached := op("[setup]\ncommand = [\"make\"]\ncache_key = \"yarn.lock\"\ncache_dir = \"/var/cache/x\"\n")
 	tests := []struct {
 		name    string
 		root    string
@@ -69,12 +69,12 @@ func TestChainRules(t *testing.T) {
 		{"cycle", "a", map[string]fakeSpec{"a": op("extends = \"b\"\n"), "b": op("extends = \"c\"\n"), "c": op("extends = \"a\"\n")}, "a -> b -> c -> a"},
 		{"self cycle", "a", map[string]fakeSpec{"a": op("extends = \"a\"\n")}, "a -> a"},
 		{"missing parent", "", map[string]fakeSpec{"leaf": op("extends = \"ghost\"\n")}, "extends \"ghost\""},
+		{"invalid egress set name", "", map[string]fakeSpec{"leaf": op("[egress]\n\"-bad\" = [\"api.anthropic.com\"]\n")}, "egress.-bad: invalid set name"},
+		{"child adds cache to a parent's setup command", "", map[string]fakeSpec{"base": base, "leaf": op("extends = \"base\"\n[setup]\ncache_key = \"yarn.lock\"\ncache_dir = \"/var/cache/x\"\n")}, "setup: cache_key/cache_dir set without command"},
 		{"invalid egress pattern", "", map[string]fakeSpec{"leaf": op("[egress]\nbad = [\"api.anthropic.com\", \"*.com\"]\n")}, "egress.bad"},
 		{"redefined egress set", "", map[string]fakeSpec{"base": base, "leaf": op("extends = \"base\"\n[egress]\nanthropic = [\"evil.example.com\"]\n")}, "egress.anthropic"},
 		{"redefined env name", "", map[string]fakeSpec{"base": base, "leaf": op("extends = \"base\"\n[env]\nA = \"2\"\n")}, "env.A"},
 		{"redefined setup command", "", map[string]fakeSpec{"base": base, "leaf": op("extends = \"base\"\n[setup]\ncommand = [\"other\"]\n")}, "setup.command"},
-		{"redefined setup cache_key", "", map[string]fakeSpec{"base": cached, "leaf": op("extends = \"base\"\n[setup]\ncache_key = \"other.lock\"\n")}, "setup.cache_key: already defined"},
-		{"redefined setup cache_dir", "", map[string]fakeSpec{"base": cached, "leaf": op("extends = \"base\"\n[setup]\ncache_dir = \"/var/cache/y\"\n")}, "setup.cache_dir: already defined"},
 		{"child adds egress set, env, context path", "", map[string]fakeSpec{"base": base, "leaf": op("extends = \"base\"\n[egress]\nmore = [\"m.example.com\"]\n[env]\nB = \"2\"\n[context]\nreadonly = [\"/notes\"]\n")}, ""},
 	}
 	for _, tc := range tests {
@@ -98,6 +98,25 @@ func TestChainRules(t *testing.T) {
 				t.Fatalf("want error containing %q, got %v", tc.wantErr, err)
 			}
 		})
+	}
+}
+
+// A spec that sets cache_key or cache_dir must also set command, so through
+// LoadChain the command guard fires first; the cache guards are checked here.
+func TestMergeSetupRejectsRedefinition(t *testing.T) {
+	parent := Setup{Command: []string{"make"}, CacheKey: "yarn.lock", CacheDir: "/var/cache/x"}
+	for _, tc := range []struct {
+		child config.SpecSetup
+		want  string
+	}{
+		{config.SpecSetup{Command: []string{"other"}}, "setup.command: already defined"},
+		{config.SpecSetup{CacheKey: "other.lock"}, "setup.cache_key: already defined"},
+		{config.SpecSetup{CacheDir: "/var/cache/y"}, "setup.cache_dir: already defined"},
+	} {
+		dst := parent
+		if err := mergeSetup(&dst, tc.child, "leaf"); err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("mergeSetup(%+v) = %v; want %q", tc.child, err, tc.want)
+		}
 	}
 }
 
@@ -191,6 +210,10 @@ func TestManagedSettingsMerge(t *testing.T) {
 		{"conflicting scalar", `{"k":"v"}`, `{"k":"w"}`, "", "k: scalar already set"},
 		{"nested conflicting scalar", `{"a":{"k":1}}`, `{"a":{"k":2}}`, "", "a.k"},
 		{"type conflict", `{"a":[1]}`, `{"a":"x"}`, "", "a: type conflict"},
+		{"object vs array", `{"a":{"x":1}}`, `{"a":[1]}`, "", "a: type conflict with parent (object"},
+		{"array vs object", `{"a":[1]}`, `{"a":{"x":1}}`, "", "a: type conflict with parent (array"},
+		{"object vs scalar", `{"a":{"x":1}}`, `{"a":1}`, "", "a: type conflict with parent (object"},
+		{"scalar vs object", `{"a":1}`, `{"a":{"x":1}}`, "", "a: scalar already set"},
 		{"not an object", `{}`, `[1]`, "", "JSON object"},
 		{"concatenated objects", `{"a":1}{"b":2}`, `{}`, "", "after the JSON object"},
 		{"trailing garbage", `{"a":1} x`, `{}`, "", "after the JSON object"},
@@ -222,6 +245,20 @@ func TestManagedSettingsMerge(t *testing.T) {
 				t.Fatalf("got %s want %s", m.ManagedSettings, tc.want)
 			}
 		})
+	}
+}
+
+func TestManagedSettingsMissingFile(t *testing.T) {
+	src := fakeSource{specs: map[string]fakeSpec{
+		"p": op("[claude]\nmanaged_settings = \"p.json\"\n"),
+		"c": op("extends = \"p\"\n"),
+	}}
+	chain, err := LoadChain(src, "c")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Merge(src, chain); err == nil || !strings.Contains(err.Error(), `spec "p": claude.managed_settings`) || !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("want a not-exist error naming spec p, got %v", err)
 	}
 }
 

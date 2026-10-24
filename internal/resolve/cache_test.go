@@ -56,12 +56,18 @@ func TestSetupCacheHitAndMiss(t *testing.T) {
 
 func TestSetupCachePrepareClearsMarker(t *testing.T) {
 	s := &plan.SetupPlan{CacheHost: filepath.Join(t.TempDir(), "c")}
-	_, release, _ := PrepareSetupCache(s)
+	_, release, err := PrepareSetupCache(s)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := CompleteSetupCache(s); err != nil {
 		t.Fatal(err)
 	}
 	release()
-	hit, release, _ := PrepareSetupCache(s)
+	hit, release, err := PrepareSetupCache(s)
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer release()
 	if !hit {
 		t.Fatal("want a hit")

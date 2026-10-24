@@ -48,8 +48,8 @@ func hashKeyFile(workdir, keyFile string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	rel, err := filepath.Rel(dir, real)
-	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+	rel, ok := relInside(dir, real)
+	if !ok {
 		return nil, fmt.Errorf("%q resolves outside the workdir", keyFile)
 	}
 	root, err := os.OpenRoot(dir)

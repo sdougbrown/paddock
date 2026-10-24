@@ -137,8 +137,7 @@ func (r *Resolver) workdir(ws string) string {
 	if err != nil {
 		return ws
 	}
-	rel, err := filepath.Rel(ws, real)
-	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+	if _, ok := relInside(ws, real); !ok {
 		return ws
 	}
 	return real
@@ -213,7 +212,7 @@ func (r *Resolver) mounts(prof *config.Profile, m *Merged, ws, phase string) ([]
 	mounts := []plan.Mount{{Host: ws, Guest: ws, ReadOnly: prof.Workspace.Mode != "rw"}}
 	for _, sub := range prof.Workspace.Readonly {
 		clean := filepath.Clean(sub)
-		if filepath.IsAbs(sub) || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
+		if _, ok := relInside(".", sub); !ok {
 			return nil, fmt.Errorf("workspace.readonly: %q must be a relative path inside the workspace", sub)
 		}
 		p, err := readonlySubpath(ws, clean)
@@ -252,14 +251,26 @@ func (r *Resolver) mounts(prof *config.Profile, m *Merged, ws, phase string) ([]
 	return mounts, nil
 }
 
+// relInside returns p relative to base when p is base or lies below it. The
+// comparison is lexical; callers resolve symlinks first where that matters. A
+// relative p against base "." is inside when it is not absolute and does not
+// climb out with "..".
+func relInside(base, p string) (string, bool) {
+	rel, err := filepath.Rel(base, p)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", false
+	}
+	return rel, true
+}
+
 // containsPath reports whether dir equals or is an ancestor of target. A dir
 // that exists is compared through its symlink-resolved form.
 func containsPath(dir, target string) bool {
 	if real, err := filepath.EvalSymlinks(dir); err == nil {
 		dir = real
 	}
-	rel, err := filepath.Rel(dir, target)
-	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+	_, ok := relInside(dir, target)
+	return ok
 }
 
 // readonlySubpath resolves ws/rel through symlinks and requires an existing
@@ -273,8 +284,7 @@ func readonlySubpath(ws, rel string) (string, error) {
 	if st, err := os.Stat(p); err != nil || !st.IsDir() {
 		return "", errors.New("is not a directory")
 	}
-	back, err := filepath.Rel(ws, p)
-	if err != nil || back == ".." || strings.HasPrefix(back, ".."+string(filepath.Separator)) {
+	if _, ok := relInside(ws, p); !ok {
 		return "", errors.New("resolves outside the workspace")
 	}
 	return p, nil
@@ -437,8 +447,7 @@ func setupPlan(ref string, s Setup) (*plan.SetupPlan, error) {
 		return nil, fmt.Errorf("spec %q: setup.cache_dir: %q must be a clean absolute path strictly under %s", ref, d, guestCacheRoot)
 	}
 	if s.CacheKey != "" {
-		clean := filepath.Clean(s.CacheKey)
-		if filepath.IsAbs(s.CacheKey) || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
+		if _, ok := relInside(".", s.CacheKey); !ok {
 			return nil, fmt.Errorf("spec %q: setup.cache_key: %q must be a relative path inside the workspace", ref, s.CacheKey)
 		}
 	}

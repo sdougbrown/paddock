@@ -397,6 +397,31 @@ func TestDNSResolverMixedAnswers(t *testing.T) {
 	}
 }
 
+// TestDNSResolverReadsLargeUDPAnswer: a UDP answer larger than the
+// EDNS-sized 1232 bytes, sent without the truncated bit, is read whole.
+func TestDNSResolverReadsLargeUDPAnswer(t *testing.T) {
+	var want []netip.Addr
+	var records []dnsmessage.Resource
+	for i := range 100 {
+		a := netip.AddrFrom4([4]byte{203, 0, 113, byte(i)})
+		want = append(want, a)
+		records = append(records, rr("many.test.", &dnsmessage.AResource{A: a.As4()}))
+	}
+	s := startDNS(t, func(q dnsmessage.Question, tcp bool) (dnsmessage.Header, []dnsmessage.Resource) {
+		if tcp {
+			t.Error("asked over TCP; the UDP answer was not truncated")
+		}
+		return dnsmessage.Header{}, records
+	})
+	got, err := lookup(t, []netip.AddrPort{s.addr}, "ip4", "many.test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(got, want) {
+		t.Errorf("got %d addresses, want %d", len(got), len(want))
+	}
+}
+
 // TestDNSResolverIgnoresStrayResponses: a UDP datagram that does not
 // answer the query, by ID or by question, is skipped, and the answer that
 // follows it is used.

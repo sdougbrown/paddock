@@ -179,7 +179,9 @@ func exchange(ctx context.Context, d Dialer, network string, server netip.AddrPo
 		if _, err := c.Write(query); err != nil {
 			return nil, err
 		}
-		buf := make([]byte, 1232)
+		// A datagram longer than buf is cut short without an error, so buf
+		// holds the largest DNS message.
+		buf := make([]byte, 65535)
 		for {
 			n, err := c.Read(buf)
 			if err != nil {

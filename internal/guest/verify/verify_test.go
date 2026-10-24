@@ -3,6 +3,7 @@ package verify
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"net"
 	"net/netip"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/sdougbrown/paddock/internal/guest/guesttest"
 	"github.com/sdougbrown/paddock/internal/guest/netpolicy"
+	"github.com/sdougbrown/paddock/internal/guest/sniproxy"
 )
 
 func TestRunAndWrite(t *testing.T) {
@@ -283,6 +285,44 @@ func TestDeniedHostNeedsLogEntry(t *testing.T) {
 	}
 }
 
+// A denial entry from before the probe ran does not corroborate its refusal.
+func TestDenialMustBeRecent(t *testing.T) {
+	g := guesttest.StartGuest(t, "allowed.test", testResolver())
+	stale := filepath.Join(t.TempDir(), "stale.jsonl")
+	appendDenial := func(d sniproxy.Denial) {
+		b, err := json.Marshal(d)
+		if err != nil {
+			t.Fatal(err)
+		}
+		f, err := os.OpenFile(stale, os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0o644)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer f.Close()
+		if _, err := f.Write(append(b, '\n')); err != nil {
+			t.Fatal(err)
+		}
+	}
+	old := time.Now().Add(-5 * time.Second)
+	appendDenial(sniproxy.Denial{Time: old, SNI: "denied.test", Reason: sniproxy.ReasonDenied})
+	// The raw-IP entry needs the probe's own local address, so the dialer
+	// writes it, backdated, as soon as the connection exists.
+	dialer := dialFunc(func(ctx context.Context, network, addr string) (net.Conn, error) {
+		c, err := g.Net.DialContext(ctx, network, addr)
+		if err == nil {
+			appendDenial(sniproxy.Denial{Time: old, Peer: c.LocalAddr().String(), Reason: sniproxy.ReasonNoSNI})
+		}
+		return c, err
+	})
+	o := NetworkOptions{DeniedHost: "denied.test", RawIPTarget: "198.51.100.10", DenyLog: stale, Timeout: 3 * time.Second, Dialer: dialer}.withDefaults()
+	if d, err := o.deniedHostRefused(context.Background()); err == nil || !strings.Contains(err.Error(), " in "+stale) {
+		t.Errorf("denied host with a stale entry: %s: err = %v; want no denial", d, err)
+	}
+	if d, err := o.rawIPRefused(context.Background()); err == nil || !strings.Contains(err.Error(), " in "+stale) {
+		t.Errorf("raw IP with a stale entry: %s: err = %v; want no denial", d, err)
+	}
+}
+
 func TestProxyKillRefused(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("root may signal any process")
@@ -340,6 +380,14 @@ func TestRefusalProbesTimeoutIsInconclusive(t *testing.T) {
 	o.Dialer = refuse
 	if d, err := o.connectRefused(context.Background(), "198.51.100.10:80"); err != nil {
 		t.Errorf("refused connect: %s: %v", d, err)
+	}
+	// A socket deadline, as when a dropped SYN is never answered, is a
+	// net.Error timeout that wraps no context error.
+	o.Dialer = dialFunc(func(context.Context, string, string) (net.Conn, error) {
+		return nil, &net.OpError{Op: "dial", Net: "tcp", Err: os.ErrDeadlineExceeded}
+	})
+	if _, err := o.connectRefused(context.Background(), "198.51.100.10:80"); !errors.Is(err, errInconclusive) {
+		t.Errorf("connect past its deadline: err = %v; want inconclusive", err)
 	}
 
 	// A UDP server that never answers: the query is sent and times out.

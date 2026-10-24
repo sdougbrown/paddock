@@ -2,6 +2,7 @@ package verify
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -70,30 +71,44 @@ func TestLocalChecks(t *testing.T) {
 	}
 }
 
+// A write refused for any reason but EROFS fails the read-only mount check.
 func TestWriteRefusedNotEROFS(t *testing.T) {
-	if os.Geteuid() == 0 {
-		t.Skip("root bypasses file permissions")
-	}
-	dir := t.TempDir()
-	if err := os.Chmod(dir, 0o555); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { os.Chmod(dir, 0o755) })
-	results := Run(context.Background(), LocalChecks(LocalOptions{
-		UID:        501,
-		StatusPath: filepath.Join(dir, "status"),
-		ReadOnly:   []string{dir},
-	}))
-	for _, r := range results {
-		if r.Name == "readonly-mount "+dir {
-			if r.Pass {
-				t.Fatalf("permission-denied directory passed as read-only mount: %s", r.Detail)
-			}
-			if !strings.Contains(r.Detail, "refused, but not with EROFS") {
-				t.Errorf("detail = %q; want the not-EROFS failure", r.Detail)
-			}
-			return
+	t.Run("exists", func(t *testing.T) {
+		// The exclusive create fails with EEXIST, which root gets too.
+		dir := t.TempDir()
+		probe := filepath.Join(dir, fmt.Sprintf(".paddock-verify-%d", os.Getpid()))
+		if err := os.WriteFile(probe, nil, 0o600); err != nil {
+			t.Fatal(err)
 		}
-	}
-	t.Fatal("no readonly-mount result")
+		if d, err := writeRefused(dir); err == nil || !strings.Contains(err.Error(), "refused, but not with EROFS") {
+			t.Errorf("%s: err = %v; want the not-EROFS failure", d, err)
+		}
+	})
+	t.Run("permission", func(t *testing.T) {
+		if os.Geteuid() == 0 {
+			t.Skip("root bypasses file permissions")
+		}
+		dir := t.TempDir()
+		if err := os.Chmod(dir, 0o555); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { os.Chmod(dir, 0o755) })
+		results := Run(context.Background(), LocalChecks(LocalOptions{
+			UID:        501,
+			StatusPath: filepath.Join(dir, "status"),
+			ReadOnly:   []string{dir},
+		}))
+		for _, r := range results {
+			if r.Name == "readonly-mount "+dir {
+				if r.Pass {
+					t.Fatalf("permission-denied directory passed as read-only mount: %s", r.Detail)
+				}
+				if !strings.Contains(r.Detail, "refused, but not with EROFS") {
+					t.Errorf("detail = %q; want the not-EROFS failure", r.Detail)
+				}
+				return
+			}
+		}
+		t.Fatal("no readonly-mount result")
+	})
 }

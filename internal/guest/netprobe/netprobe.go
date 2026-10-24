@@ -1,5 +1,6 @@
-// Package netprobe holds the connection probes shared by the netpolicy
-// lifeline and the in-guest verify checks.
+// Package netprobe holds connection probes: TLS handshakes with or without
+// a certificate check, and a UDP DNS query. Each takes a Dialer so callers
+// can substitute the network.
 package netprobe
 
 import (
@@ -12,6 +13,8 @@ import (
 	"net/netip"
 	"strings"
 	"syscall"
+
+	"golang.org/x/net/dns/dnsmessage"
 )
 
 // ErrClosedInHandshake reports that the peer closed the connection during
@@ -82,23 +85,6 @@ type Resolver interface {
 	LookupNetIP(ctx context.Context, network, host string) ([]netip.Addr, error)
 }
 
-// LookupIPv4 returns the first IPv4 address host resolves to.
-func LookupIPv4(ctx context.Context, r Resolver, host string) (netip.Addr, error) {
-	if r == nil {
-		r = net.DefaultResolver
-	}
-	addrs, err := r.LookupNetIP(ctx, "ip4", host)
-	if err != nil {
-		return netip.Addr{}, fmt.Errorf("resolve %s: %w", host, err)
-	}
-	for _, a := range addrs {
-		if a.Unmap().Is4() {
-			return a.Unmap(), nil
-		}
-	}
-	return netip.Addr{}, fmt.Errorf("resolve %s: no IPv4 address", host)
-}
-
 // DNSQuery sends a recursive query for name's A record to the DNS server at
 // addr over UDP and returns the size of the first datagram that comes back.
 // An error means no answer arrived. ctx must carry a deadline: it bounds the
@@ -115,7 +101,11 @@ func DNSQuery(ctx context.Context, d Dialer, addr, name string) (int, error) {
 	if dl, ok := ctx.Deadline(); ok {
 		_ = c.SetDeadline(dl)
 	}
-	if _, err := c.Write(dnsQuery(name)); err != nil {
+	q, err := dnsQuery(name)
+	if err != nil {
+		return 0, err
+	}
+	if _, err := c.Write(q); err != nil {
 		return 0, err
 	}
 	buf := make([]byte, 512)
@@ -123,11 +113,15 @@ func DNSQuery(ctx context.Context, d Dialer, addr, name string) (int, error) {
 }
 
 // dnsQuery builds a recursive DNS query for name's A record.
-func dnsQuery(name string) []byte {
-	q := []byte{0x70, 0x64, 0x01, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}
-	for _, label := range strings.Split(name, ".") {
-		q = append(q, byte(len(label)))
-		q = append(q, label...)
+func dnsQuery(name string) ([]byte, error) {
+	n, err := dnsmessage.NewName(strings.TrimSuffix(name, ".") + ".")
+	if err != nil {
+		return nil, fmt.Errorf("dns name %q: %w", name, err)
 	}
-	return append(q, 0x00, 0x00, 0x01, 0x00, 0x01)
+	return (&dnsmessage.Message{
+		Header: dnsmessage.Header{ID: 0x7064, RecursionDesired: true},
+		Questions: []dnsmessage.Question{{
+			Name: n, Type: dnsmessage.TypeA, Class: dnsmessage.ClassINET,
+		}},
+	}).Pack()
 }

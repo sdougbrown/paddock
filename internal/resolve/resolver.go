@@ -81,7 +81,7 @@ func (r *Resolver) Resolve(o Options) (*plan.Plan, error) {
 	for _, l := range merged.Layers {
 		p.Image.Layers = append(p.Image.Layers, plan.ImageLayer{Spec: l.Spec, Dockerfile: l.Dockerfile, Context: l.Context})
 	}
-	if p.Mounts, err = r.mounts(prof, merged, ws, phase); err != nil {
+	if p.Mounts, err = r.mounts(prof, merged, ws); err != nil {
 		return nil, err
 	}
 	if p.Env, err = r.env(prof, merged, phase); err != nil {
@@ -202,7 +202,7 @@ func modeName(m string) string {
 
 // mounts lists the plan's bind mounts. The workspace mount follows the
 // profile's mode in both phases; its readonly subpaths stay read-only.
-func (r *Resolver) mounts(prof *config.Profile, m *Merged, ws, phase string) ([]plan.Mount, error) {
+func (r *Resolver) mounts(prof *config.Profile, m *Merged, ws string) ([]plan.Mount, error) {
 	mounts := []plan.Mount{{Host: ws, Guest: ws, ReadOnly: prof.Workspace.Mode != "rw"}}
 	for _, sub := range prof.Workspace.Readonly {
 		clean := filepath.Clean(sub)

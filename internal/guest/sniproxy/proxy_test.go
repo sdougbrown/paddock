@@ -36,6 +36,9 @@ type routeDialer struct {
 	// failWrite makes every successful dial return a connection whose
 	// Write fails.
 	failWrite bool
+	// stall makes every dial return a connection that nothing reads, so
+	// writes to it block until their deadline.
+	stall bool
 }
 
 func (d *routeDialer) DialContext(ctx context.Context, network, addr string) (net.Conn, error) {
@@ -43,13 +46,17 @@ func (d *routeDialer) DialContext(ctx context.Context, network, addr string) (ne
 	d.dialed = append(d.dialed, addr)
 	deadline, _ := ctx.Deadline()
 	d.deadlines = append(d.deadlines, deadline)
-	fail := d.failWrite
+	fail, stall := d.failWrite, d.stall
 	d.mu.Unlock()
 	if d.refuse[addr] {
 		return nil, errors.New("connection refused")
 	}
 	if d.timeout[addr] {
 		return nil, context.DeadlineExceeded
+	}
+	if stall {
+		c, _ := net.Pipe()
+		return c, nil
 	}
 	var nd net.Dialer
 	c, err := nd.DialContext(ctx, network, d.target)
@@ -300,6 +307,33 @@ func TestProxyReplayWriteFailureClosesClient(t *testing.T) {
 	}
 	if calls := h.dialer.calls(); len(calls) != 1 {
 		t.Fatalf("dialed %v; want one dial", calls)
+	}
+}
+
+// An upstream that accepts the connection but never reads cannot hold the
+// ClientHello replay, and with it the client, open past DialTimeout.
+func TestProxyReplayStallClosesClient(t *testing.T) {
+	h := startProxy(t, func(c *sniproxy.Config) { c.DialTimeout = 300 * time.Millisecond })
+	h.dialer.mu.Lock()
+	h.dialer.stall = true
+	h.dialer.mu.Unlock()
+	c, err := net.Dial("tcp", h.addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	_ = c.SetDeadline(time.Now().Add(5 * time.Second))
+	go tlsHello("allowed.test")(t, c, h)
+	n, err := io.Copy(io.Discard, c)
+	var ne net.Error
+	if errors.As(err, &ne) && ne.Timeout() {
+		t.Fatal("client read timed out; the stalled replay held the connection open")
+	}
+	if n != 0 {
+		t.Fatalf("proxy sent %d bytes after a stalled replay", n)
+	}
+	if d := h.log.denials(t); len(d) != 0 {
+		t.Fatalf("denials = %v; want none for an allowed connection", d)
 	}
 }
 

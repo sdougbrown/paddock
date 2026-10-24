@@ -33,9 +33,10 @@
 // the pinned resolvers' addresses are never dialed, so a name whose DNS
 // points inside the guest's network cannot steer the proxy there.
 //
-// The only timeouts are the ClientHello read and the upstream dial. A
-// spliced connection has no idle timeout: an API response stream can stay
-// quiet for long stretches and must not be cut.
+// The only timeouts are the ClientHello read, the upstream dial, and the
+// ClientHello replay to the upstream. A spliced connection has no idle
+// timeout: an API response stream can stay quiet for long stretches and must
+// not be cut.
 package sniproxy
 
 import (
@@ -100,7 +101,8 @@ type Config struct {
 	UpstreamPort uint16
 	// HelloTimeout bounds reading the ClientHello; default 5s.
 	HelloTimeout time.Duration
-	// DialTimeout bounds resolving and dialing upstream; default 10s.
+	// DialTimeout bounds resolving and dialing upstream, and separately the
+	// ClientHello replay once connected; default 10s.
 	// Each address gets an equal share of what remains after the lookup,
 	// so one address that drops SYNs cannot use up the whole budget.
 	DialTimeout time.Duration
@@ -197,10 +199,12 @@ func (p *Proxy) handle(client net.Conn) {
 		return
 	}
 	defer upstream.Close()
+	_ = upstream.SetWriteDeadline(time.Now().Add(p.cfg.DialTimeout))
 	if _, err := upstream.Write(hello); err != nil {
 		p.cfg.ErrorLog.Printf("%s %s: replay ClientHello: %v", peer, sni, err)
 		return
 	}
+	_ = upstream.SetWriteDeadline(time.Time{})
 	splice(client, upstream)
 }
 

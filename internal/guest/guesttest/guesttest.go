@@ -132,7 +132,9 @@ func (r Resolver) LookupNetIP(_ context.Context, network, host string) ([]netip.
 // and udp to UDPUpstream.
 //
 // Net mirrors the allowlist ruleset in netpolicy (ruleset.go). A change to
-// what that ruleset lets the agent reach must change Net with it.
+// what that ruleset lets the agent reach, or to how it refuses, must change
+// Net with it, and a change to the refusal errors must also change verify's
+// connectRefusals and sendRefusals.
 type Net struct {
 	Resolver    Resolver
 	Proxy       string
@@ -213,7 +215,7 @@ func StartGuest(t testing.TB, allowed string, resolver Resolver) *Guest {
 	proxy := ServeProxy(t, sniproxy.Config{
 		Allowlist: allow,
 		Resolver:  resolver,
-		Dialer: dialFunc(func(ctx context.Context, _, _ string) (net.Conn, error) {
+		Dialer: DialFunc(func(ctx context.Context, _, _ string) (net.Conn, error) {
 			var d net.Dialer
 			return d.DialContext(ctx, "tcp", upstream)
 		}),
@@ -275,9 +277,12 @@ func HasCaps(t testing.TB, caps ...uint) bool {
 	return false
 }
 
-type dialFunc func(ctx context.Context, network, addr string) (net.Conn, error)
+// DialFunc adapts a function to a dialer such as sniproxy.Dialer or
+// netprobe.Dialer.
+type DialFunc func(ctx context.Context, network, addr string) (net.Conn, error)
 
-func (f dialFunc) DialContext(ctx context.Context, network, addr string) (net.Conn, error) {
+// DialContext calls f.
+func (f DialFunc) DialContext(ctx context.Context, network, addr string) (net.Conn, error) {
 	return f(ctx, network, addr)
 }
 

@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 )
 
 const droppedStatus = `Name:	sh
@@ -169,5 +170,26 @@ func TestReplaceDirsFollowsLinks(t *testing.T) {
 	}
 	if want := []string{linkDir, realHop, real}; !slices.Equal(got, want) {
 		t.Errorf("replaceDirs(chain) = %v; want %v", got, want)
+	}
+}
+
+// A symlink loop ends in an error instead of walking forever.
+func TestReplaceDirsStopsOnLoop(t *testing.T) {
+	loop := filepath.Join(t.TempDir(), "loop")
+	if err := os.Symlink("loop", loop); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() {
+		_, err := replaceDirs(loop)
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if err == nil || !strings.Contains(err.Error(), "too many levels of symbolic links") {
+			t.Errorf("err = %v; want too many levels of symbolic links", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("replaceDirs did not stop on a symlink loop")
 	}
 }

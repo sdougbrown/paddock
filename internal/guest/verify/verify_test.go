@@ -344,7 +344,7 @@ func TestDenialMustBeRecent(t *testing.T) {
 	appendDenial(sniproxy.Denial{Time: old, SNI: "denied.test", Reason: sniproxy.ReasonDenied})
 	// The raw-IP entry needs the probe's own local address, so the dialer
 	// writes it, backdated, as soon as the connection exists.
-	dialer := dialFunc(func(ctx context.Context, network, addr string) (net.Conn, error) {
+	dialer := guesttest.DialFunc(func(ctx context.Context, network, addr string) (net.Conn, error) {
 		c, err := g.Net.DialContext(ctx, network, addr)
 		if err == nil {
 			appendDenial(sniproxy.Denial{Time: old, Peer: c.LocalAddr().String(), Reason: sniproxy.ReasonNoSNI})
@@ -357,6 +357,24 @@ func TestDenialMustBeRecent(t *testing.T) {
 	}
 	if d, err := o.rawIPRefused(context.Background()); err == nil || !strings.Contains(err.Error(), " in "+stale) {
 		t.Errorf("raw IP with a stale entry: %s: err = %v; want no denial", d, err)
+	}
+}
+
+// A recent no-SNI entry for another connection does not corroborate this
+// probe's refusal.
+func TestRawIPDenialMustMatchPeer(t *testing.T) {
+	g := guesttest.StartGuest(t, "allowed.test", testResolver())
+	other := filepath.Join(t.TempDir(), "other.jsonl")
+	b, err := json.Marshal(sniproxy.Denial{Time: time.Now(), Peer: "192.0.2.99:40000", Reason: sniproxy.ReasonNoSNI})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(other, append(b, '\n'), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	o := NetworkOptions{RawIPTarget: "198.51.100.10", DenyLog: other, Timeout: 3 * time.Second, Dialer: g.Net}.withDefaults()
+	if d, err := o.rawIPRefused(context.Background()); err == nil || !strings.Contains(err.Error(), " in "+other) {
+		t.Errorf("entry for another peer: %s: err = %v; want no denial", d, err)
 	}
 }
 
@@ -395,19 +413,13 @@ func TestRawIPNeedsLogEntry(t *testing.T) {
 	}
 }
 
-type dialFunc func(ctx context.Context, network, addr string) (net.Conn, error)
-
-func (f dialFunc) DialContext(ctx context.Context, network, addr string) (net.Conn, error) {
-	return f(ctx, network, addr)
-}
-
 // A probe that times out was never refused, so it cannot pass.
 func TestRefusalProbesTimeoutIsInconclusive(t *testing.T) {
-	hang := dialFunc(func(ctx context.Context, _, _ string) (net.Conn, error) {
+	hang := guesttest.DialFunc(func(ctx context.Context, _, _ string) (net.Conn, error) {
 		<-ctx.Done()
 		return nil, &net.OpError{Op: "dial", Net: "tcp", Err: ctx.Err()}
 	})
-	refuse := dialFunc(func(context.Context, string, string) (net.Conn, error) {
+	refuse := guesttest.DialFunc(func(context.Context, string, string) (net.Conn, error) {
 		return nil, &net.OpError{Op: "dial", Net: "tcp", Err: syscall.EHOSTUNREACH}
 	})
 	o := NetworkOptions{DeniedHost: "denied.test", Timeout: 100 * time.Millisecond, Dialer: hang}.withDefaults()
@@ -420,7 +432,7 @@ func TestRefusalProbesTimeoutIsInconclusive(t *testing.T) {
 	}
 	// A socket deadline, as when a dropped SYN is never answered, is a
 	// net.Error timeout that wraps no context error.
-	o.Dialer = dialFunc(func(context.Context, string, string) (net.Conn, error) {
+	o.Dialer = guesttest.DialFunc(func(context.Context, string, string) (net.Conn, error) {
 		return nil, &net.OpError{Op: "dial", Net: "tcp", Err: os.ErrDeadlineExceeded}
 	})
 	if _, err := o.connectRefused(context.Background(), "198.51.100.10:80"); !errors.Is(err, errInconclusive) {
@@ -513,7 +525,7 @@ func TestFlushRefused(t *testing.T) {
 // refusal from the far end, or a failure unrelated to the network, means
 // the packet may have left or the probe never ran.
 func TestRefusalNeedsLocalError(t *testing.T) {
-	failWith := func(errno syscall.Errno) dialFunc {
+	failWith := func(errno syscall.Errno) guesttest.DialFunc {
 		return func(_ context.Context, network, _ string) (net.Conn, error) {
 			return nil, &net.OpError{Op: "dial", Net: network, Err: errno}
 		}
@@ -547,7 +559,7 @@ func TestRefusalNeedsLocalError(t *testing.T) {
 
 	// An error on the read after a successful send came back as an ICMP
 	// error, which a remote router sends too.
-	o := NetworkOptions{Timeout: time.Second, Dialer: dialFunc(func(context.Context, string, string) (net.Conn, error) {
+	o := NetworkOptions{Timeout: time.Second, Dialer: guesttest.DialFunc(func(context.Context, string, string) (net.Conn, error) {
 		c, peer := net.Pipe()
 		t.Cleanup(func() { peer.Close() })
 		go func() { _, _ = io.Copy(io.Discard, peer) }()
@@ -609,7 +621,7 @@ func TestHandshakeRefusalNeedsClose(t *testing.T) {
 		buf := make([]byte, 4096)
 		_, _ = c.Read(buf)
 	})
-	to := func(addr string) dialFunc {
+	to := func(addr string) guesttest.DialFunc {
 		return func(ctx context.Context, network, _ string) (net.Conn, error) {
 			var d net.Dialer
 			return d.DialContext(ctx, network, addr)

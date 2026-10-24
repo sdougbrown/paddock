@@ -10,7 +10,7 @@ import (
 )
 
 // A read-only mount passes the read-only mount check, for a directory and
-// for a file on it.
+// for a file on it, and the protected-file check for that file.
 func TestWriteRefusedReadOnlyMount(t *testing.T) {
 	if os.Geteuid() != 0 || !guesttest.HasCaps(t, guesttest.CapSysAdmin) {
 		t.Skip("mounting needs root with CAP_SYS_ADMIN")
@@ -31,5 +31,10 @@ func TestWriteRefusedReadOnlyMount(t *testing.T) {
 		if d, err := writeRefused(p); err != nil {
 			t.Errorf("%s: %s: %v", p, d, err)
 		}
+	}
+	// The caller owns the file and the directory, but a read-only mount
+	// refuses its owner too.
+	if d, err := writeDenied(file); err != nil {
+		t.Errorf("writeDenied(%s): %s: %v", file, d, err)
 	}
 }

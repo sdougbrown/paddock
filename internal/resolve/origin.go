@@ -38,8 +38,8 @@ func ParseOrigin(raw string) (string, bool) {
 }
 
 // redactOrigin returns a form of a git remote URL that is safe to print: URL
-// forms lose their userinfo, and scp-style remotes print only the parsed
-// owner/repo.
+// forms lose their userinfo, query, and fragment, scp-style remotes print only
+// the parsed owner/repo, and any other form prints a placeholder.
 func redactOrigin(raw string) string {
 	raw = strings.TrimSpace(raw)
 	if strings.Contains(raw, "://") {
@@ -48,6 +48,7 @@ func redactOrigin(raw string) string {
 			return "(unparseable URL)"
 		}
 		u.User = nil
+		u.RawQuery, u.Fragment, u.RawFragment = "", "", ""
 		return u.String()
 	}
 	if i := strings.Index(raw, ":"); i > 0 && !strings.Contains(raw[:i], "/") {
@@ -56,7 +57,7 @@ func redactOrigin(raw string) string {
 		}
 		return "(scp-style remote)"
 	}
-	return raw
+	return "(unrecognized remote)"
 }
 
 // GitOrigin returns the origin remote URL of the repository containing dir.

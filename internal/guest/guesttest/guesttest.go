@@ -128,6 +128,9 @@ func (r Resolver) LookupNetIP(_ context.Context, network, host string) ([]netip.
 // goes to Proxy, and every other connection, IPv6 tcp/443 included, is
 // refused. With Open true (a missing firewall) tcp goes straight to Upstream
 // and udp to UDPUpstream.
+//
+// Net mirrors the allowlist ruleset in netpolicy (ruleset.go). A change to
+// what that ruleset lets the agent reach must change Net with it.
 type Net struct {
 	Resolver    Resolver
 	Proxy       string

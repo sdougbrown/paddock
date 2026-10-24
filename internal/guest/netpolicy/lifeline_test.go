@@ -3,6 +3,7 @@ package netpolicy
 import (
 	"context"
 	"errors"
+	"net"
 	"net/netip"
 	"strings"
 	"testing"
@@ -79,5 +80,40 @@ func TestLifelineRefusedAllowedHostIsDiagnosable(t *testing.T) {
 	err := Lifeline{AllowedHost: "allowed.test", DeniedHost: "other.test", Resolvers: testResolvers, Timeout: 3 * time.Second, Dialer: g.Net}.Check(context.Background())
 	if !errors.Is(err, netprobe.ErrClosedInHandshake) || !strings.Contains(err.Error(), "proxy uid") {
 		t.Fatalf("err = %v; want a closed-in-handshake error naming the proxy uid", err)
+	}
+}
+
+// cancelAfter cancels the check's context on its n-th dial, so the probes
+// from that one on run against a dead context.
+type cancelAfter struct {
+	d      netprobe.Dialer
+	n      int
+	cancel context.CancelFunc
+}
+
+func (c *cancelAfter) DialContext(ctx context.Context, network, addr string) (net.Conn, error) {
+	if c.n--; c.n == 0 {
+		c.cancel()
+	}
+	return c.d.DialContext(ctx, network, addr)
+}
+
+// A refused probe proves nothing once the context is cancelled: every dial
+// fails then, so Check must report the cancellation instead of passing.
+func TestLifelineCancelledAfterAllowedHostFails(t *testing.T) {
+	resolver := guesttest.Resolver{"allowed.test": {HostsAddr}}
+	g := guesttest.StartGuest(t, "allowed.test", resolver)
+	g.Net.Open = true
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	err := Lifeline{
+		AllowedHost: "allowed.test",
+		DeniedHost:  "denied.test",
+		Resolvers:   testResolvers,
+		Timeout:     3 * time.Second,
+		Dialer:      &cancelAfter{d: g.Net, n: 2, cancel: cancel},
+	}.Check(ctx)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v; want the cancellation", err)
 	}
 }

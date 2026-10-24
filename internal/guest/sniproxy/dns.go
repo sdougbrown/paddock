@@ -141,7 +141,9 @@ func (r *DNSResolver) query(ctx context.Context, server netip.AddrPort, name dns
 	if err != nil {
 		return nil, err
 	}
-	resp, err := exchange(ctx, d, "udp", server, packed)
+	resp, err := exchange(ctx, d, "udp", server, packed, func(resp []byte) bool {
+		return answersQuery(resp, id, q)
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -149,7 +151,7 @@ func (r *DNSResolver) query(ctx context.Context, server netip.AddrPort, name dns
 	if !truncated {
 		return addrs, err
 	}
-	if resp, err = exchange(ctx, d, "tcp", server, packed); err != nil {
+	if resp, err = exchange(ctx, d, "tcp", server, packed, nil); err != nil {
 		return nil, err
 	}
 	// A truncated answer over TCP is incomplete, not empty: an error, so
@@ -161,8 +163,10 @@ func (r *DNSResolver) query(ctx context.Context, server netip.AddrPort, name dns
 }
 
 // exchange sends one query and reads one response. Over TCP both carry the
-// two-byte length prefix.
-func exchange(ctx context.Context, d Dialer, network string, server netip.AddrPort, query []byte) ([]byte, error) {
+// two-byte length prefix. Over UDP, as in the net package's resolver, a
+// datagram that matches rejects is skipped: a stray or forged datagram does
+// not fail the query, which waits for its answer until the deadline.
+func exchange(ctx context.Context, d Dialer, network string, server netip.AddrPort, query []byte, matches func([]byte) bool) ([]byte, error) {
 	c, err := d.DialContext(ctx, network, server.String())
 	if err != nil {
 		return nil, err
@@ -176,11 +180,15 @@ func exchange(ctx context.Context, d Dialer, network string, server netip.AddrPo
 			return nil, err
 		}
 		buf := make([]byte, 1232)
-		n, err := c.Read(buf)
-		if err != nil {
-			return nil, err
+		for {
+			n, err := c.Read(buf)
+			if err != nil {
+				return nil, err
+			}
+			if matches(buf[:n]) {
+				return buf[:n], nil
+			}
 		}
-		return buf[:n], nil
 	}
 	framed := binary.BigEndian.AppendUint16(nil, uint16(len(query)))
 	if _, err := c.Write(append(framed, query...)); err != nil {
@@ -195,6 +203,21 @@ func exchange(ctx context.Context, d Dialer, network string, server netip.AddrPo
 		return nil, err
 	}
 	return buf, nil
+}
+
+// answersQuery reports whether resp is a response to q under id.
+func answersQuery(resp []byte, id uint16, q dnsmessage.Question) bool {
+	var p dnsmessage.Parser
+	h, err := p.Start(resp)
+	if err != nil || h.ID != id || !h.Response {
+		return false
+	}
+	qs, err := p.AllQuestions()
+	return err == nil && len(qs) == 1 && sameQuestion(qs[0], q)
+}
+
+func sameQuestion(a, b dnsmessage.Question) bool {
+	return strings.EqualFold(a.Name.String(), b.Name.String()) && a.Type == b.Type && a.Class == b.Class
 }
 
 // parseAnswer checks that resp answers q under id and returns the addresses
@@ -215,7 +238,7 @@ func parseAnswer(resp []byte, id uint16, q dnsmessage.Question) (addrs []netip.A
 	if err != nil {
 		return nil, false, fmt.Errorf("parse response: %w", err)
 	}
-	if len(qs) != 1 || !strings.EqualFold(qs[0].Name.String(), q.Name.String()) || qs[0].Type != q.Type || qs[0].Class != q.Class {
+	if len(qs) != 1 || !sameQuestion(qs[0], q) {
 		return nil, false, errors.New("response question does not match the query")
 	}
 	switch h.RCode {

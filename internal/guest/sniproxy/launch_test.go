@@ -95,18 +95,22 @@ func requireRootLinux(t *testing.T) {
 	}
 }
 
-// exePath copies the test binary somewhere the child's uid can execute it.
+// exePath copies the test binary somewhere the child's uid can execute it:
+// a directory of its own directly under os.TempDir, since t.TempDir's
+// parents are private to the test's uid.
 func exePath(t *testing.T) string {
 	t.Helper()
 	src, err := os.Executable()
 	if err != nil {
 		t.Fatal(err)
 	}
-	dir := t.TempDir()
-	for d := dir; d != "/" && d != "."; d = filepath.Dir(d) {
-		if err := os.Chmod(d, 0o755); err != nil {
-			t.Fatal(err)
-		}
+	dir, err := os.MkdirTemp("", "sniproxy-child-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(dir) })
+	if err := os.Chmod(dir, 0o755); err != nil {
+		t.Fatal(err)
 	}
 	dst := filepath.Join(dir, "child")
 	in, err := os.Open(src)

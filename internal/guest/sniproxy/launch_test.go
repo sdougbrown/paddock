@@ -142,6 +142,16 @@ func TestLaunchServesPassedListener(t *testing.T) {
 	}
 	defer errLog.Close()
 	o.ErrorLog = errLog
+	// A supplementary group the child must not inherit, so the empty
+	// Groups check holds even where the test runs with none.
+	groups, err := syscall.Getgroups()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := syscall.Setgroups([]int{4242}); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = syscall.Setgroups(groups) })
 
 	cmd, err := sniproxy.Launch(o)
 	if err != nil {

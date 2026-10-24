@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -610,6 +611,48 @@ func TestSetupPlanValidation(t *testing.T) {
 			}
 			if err == nil || !strings.Contains(err.Error(), tc.want) || !strings.Contains(err.Error(), `"a/b"`) {
 				t.Fatalf("err = %v, want one naming spec and %s", err, tc.want)
+			}
+		})
+	}
+}
+
+func TestClaudeDirsResolveIntoReadonlyMounts(t *testing.T) {
+	r, ws := testResolver(t, "", errors.New("no remote"))
+	real, err := filepath.EvalSymlinks(ws)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ro := t.TempDir()
+	if err := os.Mkdir(filepath.Join(ro, "skills"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(real, "writable"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(real, "writable"), filepath.Join(ro, "agents")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(ro, "skills"), filepath.Join(real, "repo", "skills")); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name, key, path, wantErr string
+	}{
+		{"real directory in a read-only mount", "skills", filepath.Join(ro, "skills"), ""},
+		{"link in a read-only mount into the rw workspace", "agents", filepath.Join(ro, "agents"), "claude.agents"},
+		{"link in a read-only subpath to a read-only mount", "skills", filepath.Join(real, "repo", "skills"), ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			useProfile(t, r, fmt.Sprintf("[workspace]\nmode = \"rw\"\nreadonly = [\"repo\"]\n[mounts]\nreadonly = [%q]\n[claude]\n%s = %q\n", ro, tc.key, tc.path))
+			_, err := r.Resolve(Options{Profile: "p", Spec: "afresh"})
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Fatal(err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.wantErr) || !strings.Contains(err.Error(), "not under a read-only mount") {
+				t.Fatalf("err = %v, want a %s read-only mount error", err, tc.wantErr)
 			}
 		})
 	}

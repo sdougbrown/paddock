@@ -391,13 +391,38 @@ func (r *Resolver) claude(prof *config.Profile, m *Merged, mounts []plan.Mount) 
 	return c, nil
 }
 
+// underReadonlyMount reports whether the deepest mount holding p is
+// read-only, both for p as written and for p with its symlinks resolved, so a
+// link inside a read-only mount cannot lead into a writable one. Mounts are
+// same-path, so resolving on the host matches what the guest sees.
 func underReadonlyMount(mounts []plan.Mount, p string) bool {
+	if !deepestMountReadonly(mounts, p, func(s string) string { return s }) {
+		return false
+	}
+	real, err := filepath.EvalSymlinks(p)
+	if err != nil {
+		return true
+	}
+	resolve := func(s string) string {
+		if r, err := filepath.EvalSymlinks(s); err == nil {
+			return r
+		}
+		return s
+	}
+	return deepestMountReadonly(mounts, real, resolve)
+}
+
+// deepestMountReadonly reports whether the longest mount path holding p, after
+// passing each mount's host path through form, is read-only.
+func deepestMountReadonly(mounts []plan.Mount, p string, form func(string) string) bool {
+	best, ro := -1, false
 	for _, m := range mounts {
-		if m.ReadOnly && (p == m.Guest || strings.HasPrefix(p, m.Guest+string(filepath.Separator))) {
-			return true
+		g := form(m.Host)
+		if (p == g || strings.HasPrefix(p, g+string(filepath.Separator))) && len(g) > best {
+			best, ro = len(g), m.ReadOnly
 		}
 	}
-	return false
+	return ro
 }
 
 // guestCacheRoot is the guest directory every setup.cache_dir must lie under,

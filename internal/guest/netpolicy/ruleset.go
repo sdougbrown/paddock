@@ -45,16 +45,17 @@ import (
 	"strings"
 
 	"github.com/sdougbrown/paddock/internal/guest/sniproxy"
+	"github.com/sdougbrown/paddock/internal/initcfg"
 )
 
 // Mode is a network policy mode.
 type Mode string
 
-// Policy modes, matching the profile's network.policy values.
+// Policy modes: the network policies initcfg defines.
 const (
-	ModeAllowlist Mode = "allowlist"
-	ModeNone      Mode = "none"
-	ModeHost      Mode = "host"
+	ModeAllowlist Mode = initcfg.PolicyAllowlist
+	ModeNone      Mode = initcfg.PolicyNone
+	ModeHost      Mode = initcfg.PolicyHost
 )
 
 // TableName is the nftables table paddock owns.
@@ -92,7 +93,7 @@ func Ruleset(p Policy) (string, error) {
 	case ModeAllowlist:
 		return allowlist(p)
 	}
-	return "", fmt.Errorf("netpolicy: unknown policy mode %q (want allowlist, none, or host)", p.Mode)
+	return "", fmt.Errorf("netpolicy: unknown policy mode %q (want one of %q)", p.Mode, initcfg.Policies())
 }
 
 // DenyAll returns the loopback-only ruleset. It is both policy "none" and

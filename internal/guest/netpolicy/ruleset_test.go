@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/sdougbrown/paddock/internal/initcfg"
 )
 
 var update = flag.Bool("update", false, "rewrite golden files")
@@ -17,6 +19,16 @@ func basePolicy() Policy {
 		ProxyUID:  970,
 		ProxyAddr: netip.MustParseAddrPort("192.168.64.48:15443"),
 		Resolvers: []netip.Addr{netip.MustParseAddr("192.168.64.1")},
+	}
+}
+
+func TestRulesetHandlesEveryPolicy(t *testing.T) {
+	for _, name := range initcfg.Policies() {
+		p := basePolicy()
+		p.Mode = Mode(name)
+		if _, err := Ruleset(p); err != nil {
+			t.Errorf("policy %q: %v", name, err)
+		}
 	}
 }
 

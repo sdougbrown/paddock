@@ -7,6 +7,7 @@ import (
 	"slices"
 
 	"github.com/sdougbrown/paddock/internal/envname"
+	"github.com/sdougbrown/paddock/internal/initcfg"
 )
 
 // Profile is a role profile: what a command may access.
@@ -65,10 +66,8 @@ func (p *Profile) validate() error {
 	default:
 		return fmt.Errorf("workspace.mode: %q must be \"rw\" or \"ro\"", p.Workspace.Mode)
 	}
-	switch p.Network.Policy {
-	case "", "allowlist", "none", "host":
-	default:
-		return fmt.Errorf("network.policy: %q must be \"allowlist\", \"none\", or \"host\"", p.Network.Policy)
+	if p.Network.Policy != "" && !initcfg.ValidPolicy(p.Network.Policy) {
+		return fmt.Errorf("network.policy: %q must be one of %q", p.Network.Policy, initcfg.Policies())
 	}
 	if err := validateSetNames("network.run", p.Network.Run); err != nil {
 		return err

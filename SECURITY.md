@@ -41,9 +41,10 @@ runs the allowlist proxy as a separate uid, and installs a firewall the agent ca
    advisory: `git -C repo push -f` or `git push origin +HEAD:main` can get past a pattern, and
    `python3` with `urllib` gets past a `curl` deny. The mounts, credentials, and egress allowlist
    are the boundary.
-6. **Repository-trust specs are not loaded in v1.** Before they are, `checkSpec` must also block
-   `context.readonly` host mounts, `setup.command`, `setup.cache_dir`/`setup.cache_key`,
-   managed-settings allow rules and hooks, and image Dockerfiles.
+6. **Repository-trust specs are not loaded in v1.** `checkSpec` already rejects egress sets and
+   managed settings (and with them allow rules and hooks) from them. Before they are loaded, it must
+   also block `context.readonly` host mounts, `setup.command`, `setup.cache_dir`/`setup.cache_key`,
+   and image Dockerfiles.
 
 ## Notes on the network policy
 

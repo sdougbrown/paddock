@@ -80,6 +80,18 @@ type Mount struct {
 	ReadOnly bool   `json:"read_only"`
 }
 
+// Reserved reports whether guest path p equals or lies under a guest
+// directory paddock manages (BinDir, StateDir, SecretsDir, LogDir).
+func Reserved(p string) bool {
+	p = path.Clean(p)
+	for _, d := range []string{BinDir, StateDir, SecretsDir, LogDir} {
+		if p == d || strings.HasPrefix(p, d+"/") {
+			return true
+		}
+	}
+	return false
+}
+
 // Validate reports whether the config is internally consistent.
 func (c *Config) Validate() error {
 	if c.Version != Version {
@@ -99,6 +111,15 @@ func (c *Config) Validate() error {
 	}
 	if !path.IsAbs(c.Workdir) {
 		return fmt.Errorf("initcfg: workdir %q is not absolute", c.Workdir)
+	}
+	for _, f := range []struct{ name, val string }{
+		{"claude skills", c.Claude.Skills},
+		{"claude agents", c.Claude.Agents},
+		{"claude transcript dir", c.Claude.TranscriptDir},
+	} {
+		if f.val != "" && !path.IsAbs(f.val) {
+			return fmt.Errorf("initcfg: %s %q is not absolute", f.name, f.val)
+		}
 	}
 	if len(c.Argv) == 0 && !c.Verify {
 		return fmt.Errorf("initcfg: argv is empty and verify is off")

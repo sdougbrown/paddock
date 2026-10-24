@@ -195,6 +195,17 @@ func TestCommitNoneAndHost(t *testing.T) {
 	}
 }
 
+// Mode none is only deny-all, so a failed load must reach the caller.
+func TestCommitNoneReportsFailedDenyAll(t *testing.T) {
+	r := &recorder{failOn: "apply deny-all"}
+	p := basePolicy()
+	p.Mode = ModeNone
+	err := Commit(context.Background(), p, CommitOptions{Apply: r.apply})
+	if err == nil || !strings.Contains(err.Error(), "apply deny-all: nft failed") {
+		t.Fatalf("err = %v; want the failed deny-all load", err)
+	}
+}
+
 // An unknown mode has no ruleset, so Commit must load deny-all and fail.
 func TestCommitUnknownModeDeniesAll(t *testing.T) {
 	t.Run("open", func(t *testing.T) {

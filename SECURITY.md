@@ -52,5 +52,9 @@ runs the allowlist proxy as a separate uid, and installs a firewall the agent ca
   to a proxy address, and the proxy resolves the SNI name itself through the pinned resolver.
 - The allowlist is exact host names. There are no wildcards, IP literals, or `.invalid` and
   `.localhost` names, because a wildcard would let the agent make the proxy look up names of its choosing.
+- The proxy refuses a ClientHello that carries Encrypted Client Hello (ECH), because ECH hides the name
+  the client is really asking for behind an outer name. Chromium sends ECH-GREASE by default, so a
+  Chromium-based browser, including headless Chrome under Playwright, is refused under the allowlist
+  policy. Run browsers on an open-egress profile instead.
 - The proxy's denial log is diagnostic, not tamper-evident. It lives on a read-write mount that any
   guest uid can write, so the agent can alter or fill it. Do not use it as an audit record.

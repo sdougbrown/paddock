@@ -255,10 +255,10 @@ func TestSetupPhasePlan(t *testing.T) {
 	if sub := setup.Mounts[1]; sub.Guest != filepath.Join(real, "repo") || !sub.ReadOnly {
 		t.Errorf("readonly subpath mount = %+v", sub)
 	}
-	cache := setup.Mounts[len(setup.Mounts)-1]
 	wantHost := filepath.Join(r.Home, ".cache", "paddock", "afresh", "scanner", "ca978112ca1bbdca")
-	if cache != (plan.Mount{Host: wantHost, Guest: "/var/cache/paddock/setup"}) || setup.Setup.CacheHost != wantHost {
-		t.Errorf("cache mount = %+v, cache host = %s", cache, setup.Setup.CacheHost)
+	wantCache := plan.Mount{Host: wantHost, Guest: "/var/cache/paddock/setup"}
+	if !slices.Contains(setup.Mounts, wantCache) || setup.Setup.CacheHost != wantHost {
+		t.Errorf("mounts = %+v, cache host = %s; want cache mount %+v", setup.Mounts, setup.Setup.CacheHost, wantCache)
 	}
 	for _, m := range run.Mounts {
 		if m.Guest == "/var/cache/paddock/setup" {

@@ -1,0 +1,29 @@
+flush ruleset
+table inet paddock {
+	chain input {
+		type filter hook input priority filter; policy drop;
+		iif "lo" accept
+		ct state established,related accept
+	}
+	chain forward {
+		type filter hook forward priority filter; policy drop;
+	}
+	chain output {
+		type filter hook output priority filter; policy drop;
+		oif "lo" accept
+		meta skuid != 970 udp dport 53 reject with icmpx admin-prohibited
+		meta skuid != 970 tcp dport 53 reject with icmpx admin-prohibited
+		ct state established,related accept
+		meta skuid 970 ip daddr 192.168.64.1 udp dport 53 accept
+		meta skuid 970 ip daddr 192.168.64.1 tcp dport 53 accept
+		ip daddr 192.168.64.48 tcp dport 15443 accept
+		meta skuid 970 tcp dport 443 accept
+		reject with icmpx admin-prohibited
+	}
+	chain nat_output {
+		type nat hook output priority -100; policy accept;
+		oif "lo" accept
+		meta skuid 970 accept
+		tcp dport 443 dnat ip to 192.168.64.48:15443
+	}
+}

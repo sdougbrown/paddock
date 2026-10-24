@@ -1,0 +1,15 @@
+flush ruleset
+table inet paddock {
+	chain input {
+		type filter hook input priority filter; policy drop;
+		iif "lo" accept
+	}
+	chain forward {
+		type filter hook forward priority filter; policy drop;
+	}
+	chain output {
+		type filter hook output priority filter; policy drop;
+		oif "lo" accept
+		reject with icmpx admin-prohibited
+	}
+}

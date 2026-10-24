@@ -9,7 +9,6 @@ import (
 	"os"
 	"os/exec"
 	"slices"
-	"strconv"
 	"strings"
 	"syscall"
 	"testing"
@@ -31,7 +30,7 @@ func inNetNS(t *testing.T) bool {
 	if os.Getenv(netnsEnv) == "1" {
 		return true
 	}
-	if !hasCaps(t, capNetAdmin, capSysAdmin) {
+	if !guesttest.HasCaps(t, guesttest.CapNetAdmin, guesttest.CapSysAdmin) {
 		t.Skip("needs CAP_SYS_ADMIN and CAP_NET_ADMIN for a network namespace")
 	}
 	cmd := exec.Command(os.Args[0], "-test.run=^"+t.Name()+"$", "-test.v")
@@ -41,37 +40,6 @@ func inNetNS(t *testing.T) bool {
 	if err != nil || !strings.Contains(string(out), "--- PASS: "+t.Name()) {
 		t.Fatalf("run in a new network namespace: %v\n%s", err, out)
 	}
-	return false
-}
-
-const (
-	capNetAdmin = 12
-	capSysAdmin = 21
-)
-
-// hasCaps reports whether the process's effective capability set holds
-// every one of caps.
-func hasCaps(t *testing.T, caps ...uint) bool {
-	t.Helper()
-	b, err := os.ReadFile("/proc/self/status")
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, line := range strings.Split(string(b), "\n") {
-		if v, ok := strings.CutPrefix(line, "CapEff:"); ok {
-			eff, err := strconv.ParseUint(strings.TrimSpace(v), 16, 64)
-			if err != nil {
-				t.Fatal(err)
-			}
-			for _, c := range caps {
-				if eff&(1<<c) == 0 {
-					return false
-				}
-			}
-			return true
-		}
-	}
-	t.Fatal("no CapEff line in /proc/self/status")
 	return false
 }
 

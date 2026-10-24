@@ -204,22 +204,67 @@ func TestDNSResolverNXDomain(t *testing.T) {
 	}
 }
 
-func TestDNSResolverKeepsAddressesWhenOneTypeFails(t *testing.T) {
+// TestDNSResolverNXDomainOutranksFailure: with no addresses, a not-found
+// answer for one type is the result even when the other type failed.
+func TestDNSResolverNXDomainOutranksFailure(t *testing.T) {
 	s := startDNS(t, func(q dnsmessage.Question, _ bool) (dnsmessage.Header, []dnsmessage.Resource) {
-		if q.Type == dnsmessage.TypeAAAA {
+		if q.Type == dnsmessage.TypeA {
 			return dnsmessage.Header{RCode: dnsmessage.RCodeServerFailure}, nil
 		}
-		return dnsmessage.Header{}, []dnsmessage.Resource{rr(q.Name.String(), a4("203.0.113.6"))}
+		return dnsmessage.Header{RCode: dnsmessage.RCodeNameError}, nil
 	})
-	got, err := lookup(t, []netip.AddrPort{s.addr}, "ip", "v4only.test")
-	if err != nil {
-		t.Fatal(err)
+	_, err := lookup(t, []netip.AddrPort{s.addr}, "ip", "missing.test")
+	var de *net.DNSError
+	if !errors.As(err, &de) || !de.IsNotFound {
+		t.Fatalf("err = %v; want a not-found DNSError", err)
 	}
-	if want := []netip.Addr{netip.MustParseAddr("203.0.113.6")}; !slices.Equal(got, want) {
-		t.Errorf("got %v, want %v", got, want)
+}
+
+func TestDNSResolverKeepsAddressesWhenOneTypeFails(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		rcode   dnsmessage.RCode
+		checkV6 func(error) bool
+	}{
+		{"server failure", dnsmessage.RCodeServerFailure, func(err error) bool {
+			return err != nil && strings.Contains(err.Error(), "ServerFailure")
+		}},
+		{"name error", dnsmessage.RCodeNameError, func(err error) bool {
+			var de *net.DNSError
+			return errors.As(err, &de) && de.IsNotFound
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := startDNS(t, func(q dnsmessage.Question, _ bool) (dnsmessage.Header, []dnsmessage.Resource) {
+				if q.Type == dnsmessage.TypeAAAA {
+					return dnsmessage.Header{RCode: tc.rcode}, nil
+				}
+				return dnsmessage.Header{}, []dnsmessage.Resource{rr(q.Name.String(), a4("203.0.113.6"))}
+			})
+			got, err := lookup(t, []netip.AddrPort{s.addr}, "ip", "v4only.test")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if want := []netip.Addr{netip.MustParseAddr("203.0.113.6")}; !slices.Equal(got, want) {
+				t.Errorf("got %v, want %v", got, want)
+			}
+			if _, err := lookup(t, []netip.AddrPort{s.addr}, "ip6", "v4only.test"); !tc.checkV6(err) {
+				t.Errorf("AAAA only: err = %v; want the AAAA failure", err)
+			}
+		})
 	}
-	if _, err := lookup(t, []netip.AddrPort{s.addr}, "ip6", "v4only.test"); err == nil || !strings.Contains(err.Error(), "ServerFailure") {
-		t.Errorf("AAAA only: err = %v; want the server failure", err)
+}
+
+// TestDNSResolverNoAddress: a name that exists but has no A or AAAA records
+// is not found, not an empty success.
+func TestDNSResolverNoAddress(t *testing.T) {
+	s := startDNS(t, func(dnsmessage.Question, bool) (dnsmessage.Header, []dnsmessage.Resource) {
+		return dnsmessage.Header{}, nil
+	})
+	got, err := lookup(t, []netip.AddrPort{s.addr}, "ip", "empty.test")
+	var de *net.DNSError
+	if !errors.As(err, &de) || !de.IsNotFound {
+		t.Fatalf("got %v, %v; want a not-found DNSError", got, err)
 	}
 }
 

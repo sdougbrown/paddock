@@ -52,10 +52,11 @@ func (r *DNSResolver) LookupNetIP(ctx context.Context, network, host string) ([]
 	if err != nil {
 		return nil, fmt.Errorf("sniproxy: dns: %q: %w", host, err)
 	}
-	// As with the net package's resolver, one record type failing does not
-	// discard the addresses of the other; a name that does not exist ends
-	// the lookup. The types are queried concurrently and combined in the
-	// order of types.
+	// As with the net package's resolver, one record type failing, even as
+	// not found, does not discard the addresses of the other. With no
+	// addresses, a not-found answer outranks other failures: the name does
+	// not exist, so retrying cannot help. The types are queried concurrently
+	// and combined in the order of types.
 	type result struct {
 		addrs []netip.Addr
 		err   error
@@ -71,13 +72,14 @@ func (r *DNSResolver) LookupNetIP(ctx context.Context, network, host string) ([]
 	}
 	wg.Wait()
 	var out []netip.Addr
+	var notFound error
 	var errs []error
 	for _, res := range results {
 		var de *net.DNSError
-		if errors.As(res.err, &de) && de.IsNotFound {
-			return nil, res.err
-		}
-		if res.err != nil {
+		switch {
+		case errors.As(res.err, &de) && de.IsNotFound:
+			notFound = res.err
+		case res.err != nil:
 			errs = append(errs, res.err)
 		}
 		out = append(out, res.addrs...)
@@ -85,6 +87,8 @@ func (r *DNSResolver) LookupNetIP(ctx context.Context, network, host string) ([]
 	switch {
 	case len(out) > 0:
 		return out, nil
+	case notFound != nil:
+		return nil, notFound
 	case len(errs) > 0:
 		return nil, errors.Join(errs...)
 	}

@@ -499,7 +499,7 @@ func TestAllowlistPhaseNeedsEgressSets(t *testing.T) {
 		wantErr    string
 	}{
 		{"run empty", "[network]\npolicy = \"allowlist\"\nsetup = [\"anthropic\"]\n", "", "network.run"},
-		{"setup empty", "[network]\npolicy = \"allowlist\"\nrun = [\"anthropic\"]\n", PhaseSetup, "network.setup"},
+		{"setup empty", "[network]\npolicy = \"allowlist\"\nrun = [\"anthropic\"]\n", plan.PhaseSetup, "network.setup"},
 		{"setup empty is fine in run phase", "[network]\npolicy = \"allowlist\"\nrun = [\"anthropic\"]\n", "", ""},
 		{"sets with no hosts", "[network]\npolicy = \"allowlist\"\nrun = [\"empty\"]\n", "", "define no hosts"},
 	}
@@ -539,7 +539,7 @@ func TestSetupPhaseHasNoClaudeState(t *testing.T) {
 	if len(run.Claude.SeedFiles) == 0 || run.Claude.ManagedSettings == nil || run.Claude.Skills == "" || run.Claude.Agents == "" {
 		t.Fatalf("run claude plan unexpectedly empty: %+v", run.Claude)
 	}
-	setup, err := r.Resolve(Options{Profile: "fixer", Spec: "afresh/scanner", Phase: PhaseSetup})
+	setup, err := r.Resolve(Options{Profile: "fixer", Spec: "afresh/scanner", Phase: plan.PhaseSetup})
 	if err != nil {
 		t.Fatal(err)
 	}

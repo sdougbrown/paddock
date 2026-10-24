@@ -215,7 +215,7 @@ func TestSetupCacheGuards(t *testing.T) {
 		"onlydir": op("[setup]\ncommand = [\"true\"]\ncache_dir = \"/var/cache/paddock/x\"\n"),
 		"onlykey": op("[setup]\ncommand = [\"true\"]\ncache_key = \"yarn.lock\"\n"),
 	}}
-	p, err := r.Resolve(Options{Profile: "p", Spec: "nocache", Phase: PhaseSetup})
+	p, err := r.Resolve(Options{Profile: "p", Spec: "nocache", Phase: plan.PhaseSetup})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -223,7 +223,7 @@ func TestSetupCacheGuards(t *testing.T) {
 		t.Errorf("no cache fields: host %q, mounts %+v", p.Setup.CacheHost, p.Mounts)
 	}
 	for _, spec := range []string{"onlydir", "onlykey"} {
-		_, err := r.Resolve(Options{Profile: "p", Spec: spec, Phase: PhaseSetup})
+		_, err := r.Resolve(Options{Profile: "p", Spec: spec, Phase: plan.PhaseSetup})
 		if err == nil || !strings.Contains(err.Error(), "must be set together") {
 			t.Errorf("%s: err = %v", spec, err)
 		}

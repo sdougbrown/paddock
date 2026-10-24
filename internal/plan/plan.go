@@ -4,13 +4,19 @@ package plan
 
 import "encoding/json"
 
+// Phases a command runs in.
+const (
+	PhaseRun   = "run"
+	PhaseSetup = "setup"
+)
+
 // Plan is the output of resolve and the input of engines.
 type Plan struct {
 	Profile   string     `json:"profile"`
 	Spec      string     `json:"spec"`
 	SpecChain []string   `json:"spec_chain"`
 	Engine    string     `json:"engine"`
-	Phase     string     `json:"phase"`
+	Phase     string     `json:"phase"` // PhaseRun or PhaseSetup
 	Workspace string     `json:"workspace"`
 	Workdir   string     `json:"workdir"`
 	Image     ImagePlan  `json:"image"`

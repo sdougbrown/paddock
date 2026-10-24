@@ -16,18 +16,12 @@ import (
 	"github.com/sdougbrown/paddock/internal/plan"
 )
 
-// Phases a command runs in.
-const (
-	PhaseRun   = "run"
-	PhaseSetup = "setup"
-)
-
 // Options selects what to resolve.
 type Options struct {
 	Profile   string
 	Spec      string // explicit spec ref; empty selects automatically
 	Workspace string // empty means the current directory
-	Phase     string // empty means PhaseRun
+	Phase     string // empty means plan.PhaseRun
 	Argv      []string
 }
 
@@ -49,16 +43,16 @@ func New(root config.Root, home string) *Resolver {
 func (r *Resolver) Resolve(o Options) (*plan.Plan, error) {
 	phase := o.Phase
 	if phase == "" {
-		phase = PhaseRun
+		phase = plan.PhaseRun
 	}
-	if phase != PhaseRun && phase != PhaseSetup {
-		return nil, fmt.Errorf("phase %q must be %q or %q", phase, PhaseRun, PhaseSetup)
+	if phase != plan.PhaseRun && phase != plan.PhaseSetup {
+		return nil, fmt.Errorf("phase %q must be %q or %q", phase, plan.PhaseRun, plan.PhaseSetup)
 	}
 	prof, err := r.Root.LoadProfile(o.Profile)
 	if err != nil {
 		return nil, fmt.Errorf("profile %q: %w", o.Profile, err)
 	}
-	if phase == PhaseSetup && prof.Workspace.Mode != "rw" {
+	if phase == plan.PhaseSetup && prof.Workspace.Mode != "rw" {
 		return nil, fmt.Errorf("phase setup: setup needs a read-write workspace; profile %q workspace.mode is %s", o.Profile, modeName(prof.Workspace.Mode))
 	}
 	ws, err := r.workspace(o.Workspace)
@@ -98,7 +92,7 @@ func (r *Resolver) Resolve(o Options) (*plan.Plan, error) {
 	}
 	p.Limits = plan.Limits{CPUs: prof.Limits.CPUs, Memory: prof.Limits.Memory}
 	p.Claude = plan.ClaudePlan{SeedFiles: []string{}}
-	if phase == PhaseRun {
+	if phase == plan.PhaseRun {
 		if p.Claude, err = r.claude(prof, merged, p.Mounts); err != nil {
 			return nil, err
 		}
@@ -109,7 +103,7 @@ func (r *Resolver) Resolve(o Options) (*plan.Plan, error) {
 		}
 	}
 	switch phase {
-	case PhaseSetup:
+	case plan.PhaseSetup:
 		if p.Setup == nil {
 			return nil, fmt.Errorf("phase setup: spec %q defines no [setup] command", ref)
 		}
@@ -308,7 +302,7 @@ func (r *Resolver) env(prof *config.Profile, m *Merged, phase string) ([]plan.En
 		if err != nil {
 			return nil, fmt.Errorf("env.%s: %w", name, err)
 		}
-		if phase == PhaseSetup && kind != plan.SourceLiteral {
+		if phase == plan.PhaseSetup && kind != plan.SourceLiteral {
 			continue
 		}
 		v := plan.EnvVar{Name: name, Source: kind}
@@ -347,7 +341,7 @@ func network(prof *config.Profile, m *Merged, phase string) (plan.Network, error
 		return n, nil
 	}
 	names, key := prof.Network.Run, "network.run"
-	if phase == PhaseSetup {
+	if phase == plan.PhaseSetup {
 		names, key = prof.Network.Setup, "network.setup"
 	}
 	if len(names) == 0 {

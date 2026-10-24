@@ -297,3 +297,43 @@ func TestCacheDirKeyFileSizeLimit(t *testing.T) {
 		t.Errorf("file over the limit: %v", err)
 	}
 }
+
+func TestPrepareSetupCacheErrorsAfterLockingReleaseTheLock(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		setup func(t *testing.T, s *plan.SetupPlan)
+	}{
+		{"cache path is a file", func(t *testing.T, s *plan.SetupPlan) {
+			if err := os.WriteFile(s.CacheHost, nil, 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{"marker is a non-empty directory", func(t *testing.T, s *plan.SetupPlan) {
+			if err := os.MkdirAll(filepath.Join(completionMarker(s), "x"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := &plan.SetupPlan{CacheHost: filepath.Join(t.TempDir(), "c")}
+			tc.setup(t, s)
+			hit, release, err := PrepareSetupCache(s)
+			if err == nil {
+				release()
+				t.Fatal("want an error")
+			}
+			if hit || release == nil {
+				t.Fatalf("hit %v, release nil %v", hit, release == nil)
+			}
+			release()
+			lf, err := os.OpenFile(lockFile(s), os.O_RDWR, 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer lf.Close()
+			if err := syscall.Flock(int(lf.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+				t.Errorf("lock still held after the error: %v", err)
+			}
+		})
+	}
+}

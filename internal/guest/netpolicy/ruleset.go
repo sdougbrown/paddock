@@ -115,6 +115,10 @@ func DenyAll() string {
 	return b.String()
 }
 
+// allowlist returns the allowlist ruleset. guesttest.Net simulates what it
+// lets the agent reach, for tests that run without nft: IPv4 tcp/443 goes to
+// the proxy and every other connection is refused. A change to that routing
+// must change guesttest.Net with it.
 func allowlist(p Policy) (string, error) {
 	if err := p.validateAllowlist(); err != nil {
 		return "", err

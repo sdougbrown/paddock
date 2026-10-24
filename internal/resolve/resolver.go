@@ -353,10 +353,10 @@ func network(prof *config.Profile, m *Merged, phase string) (plan.Network, error
 			hosts[h] = true
 		}
 	}
-	n.Hosts = sortedKeys(hosts)
-	if n.Hosts == nil {
-		n.Hosts = []string{}
+	if len(hosts) == 0 {
+		return n, fmt.Errorf("%s: egress sets %s define no hosts", key, strings.Join(names, ", "))
 	}
+	n.Hosts = sortedKeys(hosts)
 	return n, nil
 }
 

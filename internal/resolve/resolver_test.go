@@ -496,6 +496,7 @@ func TestAllowlistPhaseNeedsEgressSets(t *testing.T) {
 		{"run empty", "[network]\npolicy = \"allowlist\"\nsetup = [\"anthropic\"]\n", "", "network.run"},
 		{"setup empty", "[network]\npolicy = \"allowlist\"\nrun = [\"anthropic\"]\n", PhaseSetup, "network.setup"},
 		{"setup empty is fine in run phase", "[network]\npolicy = \"allowlist\"\nrun = [\"anthropic\"]\n", "", ""},
+		{"sets with no hosts", "[network]\npolicy = \"allowlist\"\nrun = [\"empty\"]\n", "", "define no hosts"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -504,7 +505,10 @@ func TestAllowlistPhaseNeedsEgressSets(t *testing.T) {
 			if err := os.WriteFile(filepath.Join(ws, "yarn.lock"), []byte("a"), 0o644); err != nil {
 				t.Fatal(err)
 			}
-			_, err := r.Resolve(Options{Profile: "p", Spec: "afresh/scanner", Phase: tc.phase})
+			r.Source = fakeSource{specs: map[string]fakeSpec{
+				"s": op("[egress]\nanthropic = [\"api.anthropic.com\"]\nempty = []\n"),
+			}}
+			_, err := r.Resolve(Options{Profile: "p", Spec: "s", Phase: tc.phase})
 			if tc.wantErr == "" {
 				if err != nil {
 					t.Fatal(err)

@@ -99,6 +99,9 @@ func TestResolvePlan(t *testing.T) {
 	if strings.Join(p.Argv, " ") != "claude" {
 		t.Errorf("argv = %q", p.Argv)
 	}
+	if p.Profile != "fixer" || p.Engine != "apple-container" || p.Limits != (plan.Limits{CPUs: 4, Memory: "6G"}) {
+		t.Errorf("profile %q engine %q limits %+v", p.Profile, p.Engine, p.Limits)
+	}
 	absRoot, err := filepath.Abs(filepath.Join("testdata", "root"))
 	if err != nil {
 		t.Fatal(err)
@@ -645,19 +648,21 @@ func TestClaudeDirsHaveNoLinksBelowTheirMount(t *testing.T) {
 		}
 	}
 	for _, tc := range []struct {
-		name, mount, path, wantErr string
+		name, key, mount, path, wantErr string
 	}{
-		{"real directory in a read-only mount", ro, filepath.Join(ro, "skills"), ""},
-		{"missing directory in a read-only mount", ro, filepath.Join(ro, "none", "skills"), ""},
-		{"read-only mount reached through a link", alias, filepath.Join(alias, "skills"), ""},
-		{"link into the rw workspace", ro, filepath.Join(ro, "agents"), "not under a read-only mount"},
-		{"path below a link into the rw workspace", ro, filepath.Join(ro, "agents", "x"), "not under a read-only mount"},
-		{"dangling link into the rw workspace", ro, filepath.Join(ro, "dangling"), "not under a read-only mount"},
-		{"link in a read-only subpath", ro, filepath.Join(real, "repo", "skills"), "not under a read-only mount"},
-		{"rw workspace", ro, filepath.Join(real, "writable"), "not under a read-only mount"},
+		{"real directory in a read-only mount", "skills", ro, filepath.Join(ro, "skills"), ""},
+		{"missing directory in a read-only mount", "skills", ro, filepath.Join(ro, "none", "skills"), ""},
+		{"read-only mount reached through a link", "skills", alias, filepath.Join(alias, "skills"), ""},
+		{"link into the rw workspace", "skills", ro, filepath.Join(ro, "agents"), "not under a read-only mount"},
+		{"path below a link into the rw workspace", "skills", ro, filepath.Join(ro, "agents", "x"), "not under a read-only mount"},
+		{"dangling link into the rw workspace", "skills", ro, filepath.Join(ro, "dangling"), "not under a read-only mount"},
+		{"link in a read-only subpath", "skills", ro, filepath.Join(real, "repo", "skills"), "not under a read-only mount"},
+		{"rw workspace", "skills", ro, filepath.Join(real, "writable"), "not under a read-only mount"},
+		{"agents real directory in a read-only mount", "agents", ro, filepath.Join(ro, "skills"), ""},
+		{"agents link into the rw workspace", "agents", ro, filepath.Join(ro, "agents"), "claude.agents"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			useProfile(t, r, fmt.Sprintf("[workspace]\nmode = \"rw\"\nreadonly = [\"repo\"]\n[mounts]\nreadonly = [%q]\n[claude]\nskills = %q\n", tc.mount, tc.path))
+			useProfile(t, r, fmt.Sprintf("[workspace]\nmode = \"rw\"\nreadonly = [\"repo\"]\n[mounts]\nreadonly = [%q]\n[claude]\n%s = %q\n", tc.mount, tc.key, tc.path))
 			_, err := r.Resolve(Options{Profile: "p", Spec: "afresh"})
 			if tc.wantErr == "" {
 				if err != nil {
@@ -669,5 +674,21 @@ func TestClaudeDirsHaveNoLinksBelowTheirMount(t *testing.T) {
 				t.Fatalf("err = %v, want one containing %q", err, tc.wantErr)
 			}
 		})
+	}
+}
+
+func TestWorkspaceModeDefaultsToReadonly(t *testing.T) {
+	r, ws := testResolver(t, "", errors.New("no remote"))
+	real, err := filepath.EvalSymlinks(ws)
+	if err != nil {
+		t.Fatal(err)
+	}
+	useProfile(t, r, "[workspace]\nreadonly = [\"repo\"]\n")
+	p, err := r.Resolve(Options{Profile: "p", Spec: "afresh"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Mounts[0] != (plan.Mount{Host: real, Guest: real, ReadOnly: true}) {
+		t.Errorf("workspace mount = %+v, want read-only", p.Mounts[0])
 	}
 }

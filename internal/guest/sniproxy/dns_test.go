@@ -253,6 +253,52 @@ func TestDNSResolverFollowsCNAMEChainOnly(t *testing.T) {
 	}
 }
 
+// TestDNSResolverCNAMEChains: a chain of several hops is followed whatever
+// the order of its records, and a chain that does not start at the queried
+// name yields nothing.
+func TestDNSResolverCNAMEChains(t *testing.T) {
+	cname := func(from, to string) dnsmessage.Resource {
+		return rr(from, &dnsmessage.CNAMEResource{CNAME: dnsmessage.MustNewName(to)})
+	}
+	for _, tc := range []struct {
+		name    string
+		answers []dnsmessage.Resource
+		want    []netip.Addr
+	}{
+		{"three hops, last hop first", []dnsmessage.Resource{
+			rr("d.test.", a4("203.0.113.8")),
+			cname("c.test.", "d.test."),
+			cname("b.test.", "c.test."),
+			cname("a.test.", "b.test."),
+		}, []netip.Addr{netip.MustParseAddr("203.0.113.8")}},
+		{"chain from another name", []dnsmessage.Resource{
+			rr("d.test.", a4("203.0.113.8")),
+			cname("y.test.", "d.test."),
+			cname("x.test.", "y.test."),
+		}, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := startDNS(t, func(dnsmessage.Question, bool) (dnsmessage.Header, []dnsmessage.Resource) {
+				return dnsmessage.Header{}, tc.answers
+			})
+			got, err := lookup(t, []netip.AddrPort{s.addr}, "ip4", "a.test")
+			if tc.want == nil {
+				var de *net.DNSError
+				if !errors.As(err, &de) || !de.IsNotFound {
+					t.Fatalf("got %v, %v; want a not-found DNSError", got, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !slices.Equal(got, tc.want) {
+				t.Errorf("got %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestDNSResolverNXDomain(t *testing.T) {
 	s := startDNS(t, func(dnsmessage.Question, bool) (dnsmessage.Header, []dnsmessage.Resource) {
 		return dnsmessage.Header{RCode: dnsmessage.RCodeNameError}, nil

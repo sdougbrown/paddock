@@ -116,7 +116,9 @@ func writeRefused(p string) (string, error) {
 
 // writeDenied passes when the file p refuses to open for writing and its
 // directory refuses a new file, so p can be neither edited nor replaced by
-// a rename. It never truncates p.
+// a rename. A refusal for permission counts only when the caller does not
+// own the file or directory, since an owner can chmod it writable again. It
+// never truncates p.
 func writeDenied(p string) (string, error) {
 	if _, err := os.Stat(p); err != nil {
 		return "", err
@@ -129,6 +131,9 @@ func writeDenied(p string) (string, error) {
 	if !denied(err) {
 		return "open " + p + " for writing", fmt.Errorf("refused, but not for permission: %w", err)
 	}
+	if err := notOwned(p, err); err != nil {
+		return "open " + p + " for writing", err
+	}
 	dir := filepath.Dir(p)
 	probe := filepath.Join(dir, fmt.Sprintf(".paddock-verify-%d", os.Getpid()))
 	d, derr := os.OpenFile(probe, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
@@ -140,7 +145,27 @@ func writeDenied(p string) (string, error) {
 	if !denied(derr) {
 		return "create a file in " + dir, fmt.Errorf("refused, but not for permission: %w", derr)
 	}
+	if err := notOwned(dir, derr); err != nil {
+		return "create a file in " + dir, err
+	}
 	return fmt.Sprintf("open for writing: %v; create in %s: %v", unwrapPath(err), dir, unwrapPath(derr)), nil
+}
+
+// notOwned returns an error when refused, a write refusal for p, came from
+// permissions that the caller, as p's owner, could change. A read-only
+// file system refuses its owner too.
+func notOwned(p string, refused error) error {
+	if errors.Is(refused, syscall.EROFS) {
+		return nil
+	}
+	st, err := os.Stat(p)
+	if err != nil {
+		return err
+	}
+	if uid := st.Sys().(*syscall.Stat_t).Uid; int(uid) == os.Geteuid() {
+		return fmt.Errorf("refused, but %s is owned by uid %d, which can chmod it", p, uid)
+	}
+	return nil
 }
 
 func denied(err error) bool {

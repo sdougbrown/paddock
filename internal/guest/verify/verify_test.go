@@ -246,21 +246,53 @@ func TestWriteDenied(t *testing.T) {
 	if err := os.WriteFile(ro, []byte("x"), 0o444); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := writeDenied(ro); err == nil || !strings.Contains(err.Error(), "boundary is open") {
-		t.Errorf("replaceable file: err = %v", err)
+	if _, err := writeDenied(ro); err == nil {
+		t.Error("replaceable file passed")
 	}
 	if err := os.Chmod(dir, 0o555); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { os.Chmod(dir, 0o755) })
-	if d, err := writeDenied(ro); err != nil {
-		t.Errorf("protected file failed: %s: %v", d, err)
+	// Its owner can chmod the file or the directory back to writable.
+	if d, err := writeDenied(ro); err == nil || !strings.Contains(err.Error(), "owned by uid") {
+		t.Errorf("file and directory owned by the caller: %s: err = %v", d, err)
 	}
 	if got := readFileString(t, ro); got != "x" {
 		t.Errorf("file changed: %q", got)
 	}
 	if _, err := writeDenied(filepath.Join(dir, "missing")); err == nil {
 		t.Error("missing file passed")
+	}
+}
+
+func TestWriteDeniedNotOwned(t *testing.T) {
+	const hosts = "/etc/hosts"
+	st, err := os.Stat(hosts)
+	if err != nil {
+		t.Skip(err)
+	}
+	if uid := st.Sys().(*syscall.Stat_t).Uid; os.Geteuid() == 0 || int(uid) == os.Geteuid() {
+		t.Skip("needs a non-root caller that does not own " + hosts)
+	}
+	if d, err := writeDenied(hosts); err != nil {
+		t.Errorf("%s: %s: %v", hosts, d, err)
+	}
+	// A link to it in the caller's directory can be replaced: by a new
+	// file while the directory is writable, and after a chmod once not.
+	dir := t.TempDir()
+	link := filepath.Join(dir, "hosts")
+	if err := os.Symlink(hosts, link); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := writeDenied(link); !errors.Is(err, errUnexpectedSuccess) {
+		t.Errorf("writable directory: err = %v; want %v", err, errUnexpectedSuccess)
+	}
+	if err := os.Chmod(dir, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(dir, 0o755) })
+	if _, err := writeDenied(link); err == nil || !strings.Contains(err.Error(), "owned by uid") {
+		t.Errorf("directory owned by the caller: err = %v", err)
 	}
 }
 

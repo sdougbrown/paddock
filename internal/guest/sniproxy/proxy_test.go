@@ -379,8 +379,9 @@ func TestProxyClientHalfCloseKeepsReply(t *testing.T) {
 }
 
 // replyAfterEOFUpstream serves one TLS connection: it reads until the client
-// ends its stream, then replies with the byte count and closes. It returns
-// its address.
+// ends its stream with close_notify and its TCP connection then reaches EOF,
+// and only then replies with the byte count and closes. It returns its
+// address.
 func replyAfterEOFUpstream(t *testing.T, cert tls.Certificate) string {
 	t.Helper()
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
@@ -396,7 +397,15 @@ func replyAfterEOFUpstream(t *testing.T, cert tls.Certificate) string {
 		defer raw.Close()
 		_ = raw.SetDeadline(time.Now().Add(5 * time.Second))
 		tc := tls.Server(raw, &tls.Config{Certificates: []tls.Certificate{cert}})
-		n, _ := io.Copy(io.Discard, tc)
+		n, err := io.Copy(io.Discard, tc)
+		if err != nil {
+			return
+		}
+		// close_notify ends the TLS stream; the half-close must still reach
+		// the TCP connection.
+		if _, err := raw.Read(make([]byte, 1)); err != io.EOF {
+			return
+		}
 		_, _ = fmt.Fprintf(tc, "got %d bytes\n", n)
 		_ = tc.Close()
 	}()

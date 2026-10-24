@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/netip"
 	"strings"
+	"sync"
 	"time"
 
 	"golang.org/x/net/dns/dnsmessage"
@@ -53,19 +54,33 @@ func (r *DNSResolver) LookupNetIP(ctx context.Context, network, host string) ([]
 	}
 	// As with the net package's resolver, one record type failing does not
 	// discard the addresses of the other; a name that does not exist ends
-	// the lookup.
+	// the lookup. The types are queried concurrently and combined in the
+	// order of types.
+	type result struct {
+		addrs []netip.Addr
+		err   error
+	}
+	results := make([]result, len(types))
+	var wg sync.WaitGroup
+	for i, t := range types {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			results[i].addrs, results[i].err = r.lookup(ctx, name, t)
+		}()
+	}
+	wg.Wait()
 	var out []netip.Addr
 	var errs []error
-	for _, t := range types {
-		addrs, err := r.lookup(ctx, name, t)
+	for _, res := range results {
 		var de *net.DNSError
-		if errors.As(err, &de) && de.IsNotFound {
-			return nil, err
+		if errors.As(res.err, &de) && de.IsNotFound {
+			return nil, res.err
 		}
-		if err != nil {
-			errs = append(errs, err)
+		if res.err != nil {
+			errs = append(errs, res.err)
 		}
-		out = append(out, addrs...)
+		out = append(out, res.addrs...)
 	}
 	switch {
 	case len(out) > 0:

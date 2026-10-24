@@ -61,6 +61,7 @@ func TestLaunchValidation(t *testing.T) {
 		wantErr string
 	}{
 		{"uid 0", func(o *sniproxy.LaunchOptions) { o.UID = 0 }, "as root"},
+		{"gid 0", func(o *sniproxy.LaunchOptions) { o.GID = 0 }, "group root"},
 		{"nil listener", func(o *sniproxy.LaunchOptions) { o.Listener = nil }, "listener"},
 		{"nil denial log", func(o *sniproxy.LaunchOptions) { o.DenyLog = nil }, "denial log"},
 		{"invalid allowlist", func(o *sniproxy.LaunchOptions) { o.Config.Allow = []string{"bad host/x"} }, ""},

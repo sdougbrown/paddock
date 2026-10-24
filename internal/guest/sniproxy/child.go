@@ -71,7 +71,8 @@ type LaunchOptions struct {
 	// Args excludes argv[0], which is set to Path.
 	Path string
 	Args []string
-	// UID and GID the child runs as. Supplementary groups are cleared.
+	// UID and GID the child runs as; neither may be 0. Supplementary
+	// groups are cleared.
 	UID, GID uint32
 	// Listener is the bound listening socket the child serves.
 	Listener *net.TCPListener
@@ -99,6 +100,9 @@ func Launch(o LaunchOptions) (*exec.Cmd, error) {
 	}
 	if o.UID == 0 {
 		return nil, errors.New("sniproxy: refusing to run the proxy as root")
+	}
+	if o.GID == 0 {
+		return nil, errors.New("sniproxy: refusing to run the proxy in group root")
 	}
 	lf, err := o.Listener.File()
 	if err != nil {

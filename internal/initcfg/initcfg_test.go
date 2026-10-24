@@ -71,6 +71,18 @@ func TestValidate(t *testing.T) {
 		{name: "relative workdir", wantErr: true, mutate: func(c *Config) {
 			c.Workdir = "workspace"
 		}},
+		{name: "valid absolute claude paths", mutate: func(c *Config) {
+			c.Claude.Skills, c.Claude.Agents, c.Claude.TranscriptDir = "/s", "/a", "/t"
+		}},
+		{name: "relative claude skills", wantErr: true, mutate: func(c *Config) {
+			c.Claude.Skills = "skills"
+		}},
+		{name: "relative claude agents", wantErr: true, mutate: func(c *Config) {
+			c.Claude.Agents = "agents"
+		}},
+		{name: "relative claude transcript dir", wantErr: true, mutate: func(c *Config) {
+			c.Claude.TranscriptDir = "t"
+		}},
 		{name: "empty argv without verify", wantErr: true, mutate: func(c *Config) {
 			c.Argv = nil
 		}},

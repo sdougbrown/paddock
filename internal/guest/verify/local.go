@@ -114,11 +114,11 @@ func writeRefused(p string) (string, error) {
 	return "write to " + p, fmt.Errorf("refused, but not with EROFS: %w", err)
 }
 
-// writeDenied passes when the file p refuses to open for writing and its
-// directory refuses a new file, so p can be neither edited nor replaced by
-// a rename. A refusal for permission counts only when the caller does not
-// own the file or directory, since an owner can chmod it writable again. It
-// never truncates p.
+// writeDenied passes when the file p refuses to open for writing and every
+// directory from replaceDirs refuses a new file, so p can be neither edited
+// nor replaced or redirected by a rename. A refusal for permission counts
+// only when the caller does not own the file or directory, since an owner
+// can chmod it writable again. It never truncates p.
 func writeDenied(p string) (string, error) {
 	if _, err := os.Stat(p); err != nil {
 		return "", err
@@ -134,21 +134,28 @@ func writeDenied(p string) (string, error) {
 	if err := notOwned(p, err); err != nil {
 		return "open " + p + " for writing", err
 	}
-	dir := filepath.Dir(p)
-	probe := filepath.Join(dir, fmt.Sprintf(".paddock-verify-%d", os.Getpid()))
-	d, derr := os.OpenFile(probe, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
-	if derr == nil {
-		d.Close()
-		os.Remove(probe)
-		return "create a file in " + dir, errUnexpectedSuccess
+	dirs, derr := replaceDirs(p)
+	if derr != nil {
+		return "", derr
 	}
-	if !denied(derr) {
-		return "create a file in " + dir, fmt.Errorf("refused, but not for permission: %w", derr)
+	details := []string{fmt.Sprintf("open for writing: %v", unwrapPath(err))}
+	for _, dir := range dirs {
+		probe := filepath.Join(dir, fmt.Sprintf(".paddock-verify-%d", os.Getpid()))
+		d, derr := os.OpenFile(probe, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+		if derr == nil {
+			d.Close()
+			os.Remove(probe)
+			return "create a file in " + dir, errUnexpectedSuccess
+		}
+		if !denied(derr) {
+			return "create a file in " + dir, fmt.Errorf("refused, but not for permission: %w", derr)
+		}
+		if err := notOwned(dir, derr); err != nil {
+			return "create a file in " + dir, err
+		}
+		details = append(details, fmt.Sprintf("create in %s: %v", dir, unwrapPath(derr)))
 	}
-	if err := notOwned(dir, derr); err != nil {
-		return "create a file in " + dir, err
-	}
-	return fmt.Sprintf("open for writing: %v; create in %s: %v", unwrapPath(err), dir, unwrapPath(derr)), nil
+	return strings.Join(details, "; "), nil
 }
 
 // notOwned returns an error when refused, a write refusal for p, came from
@@ -193,4 +200,42 @@ func ClosedNetworkChecks(o NetworkOptions) []Check {
 		{"external-dns-refused", o.externalDNSRefused},
 	}
 	return append(checks, o.dnsChecks()...)
+}
+
+// replaceDirs returns the directories in which a new entry would replace
+// p or redirect it: its own and, when p is a symlink, the directory of each
+// link in the chain and of the file it ends at.
+func replaceDirs(p string) ([]string, error) {
+	dirs := []string{filepath.Dir(p)}
+	seen := map[string]bool{}
+	for hop := 0; ; hop++ {
+		dir, err := filepath.EvalSymlinks(filepath.Dir(p))
+		if err != nil {
+			return nil, err
+		}
+		if !seen[dir] {
+			seen[dir] = true
+			if hop > 0 {
+				dirs = append(dirs, dir)
+			}
+		}
+		st, err := os.Lstat(p)
+		if err != nil {
+			return nil, err
+		}
+		if st.Mode()&os.ModeSymlink == 0 {
+			return dirs, nil
+		}
+		if hop == 40 {
+			return nil, fmt.Errorf("%s: too many levels of symbolic links", p)
+		}
+		target, err := os.Readlink(p)
+		if err != nil {
+			return nil, err
+		}
+		if !filepath.IsAbs(target) {
+			target = filepath.Join(dir, target)
+		}
+		p = target
+	}
 }

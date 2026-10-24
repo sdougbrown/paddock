@@ -515,11 +515,12 @@ func (l *localAddrDialer) DialContext(ctx context.Context, network, addr string)
 // denialLogLimit caps how much of the denial log hasDenial reads.
 const denialLogLimit = 4 << 20
 
-// hasDenial reports whether the first denialLogLimit bytes of the denial log
-// at path hold an entry match accepts. Entries past the cap are not read.
-// The log is guest-writable, so a match corroborates a refusal the probe
-// already observed; it does not prove one. The path may have been replaced
-// by anything, so it is opened without blocking and must be a regular file.
+// hasDenial reports whether the last denialLogLimit bytes of the denial log
+// at path hold an entry match accepts. The log is append-only, so a probe's
+// own entry is at its end; entries before the cap are not read. The log is
+// guest-writable, so a match corroborates a refusal the probe already
+// observed; it does not prove one. The path may have been replaced by
+// anything, so it is opened without blocking and must be a regular file.
 func hasDenial(path string, match func(sniproxy.Denial) bool) (bool, error) {
 	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK, 0)
 	if err != nil {
@@ -533,7 +534,30 @@ func hasDenial(path string, match func(sniproxy.Denial) bool) (bool, error) {
 	if !st.Mode().IsRegular() {
 		return false, fmt.Errorf("%s is not a regular file", path)
 	}
-	sc := bufio.NewScanner(io.LimitReader(f, denialLogLimit))
+	var r io.Reader = f
+	if off := st.Size() - denialLogLimit; off > 0 {
+		// Start one byte early and drop everything through the first
+		// newline: the entry the cap cuts, or only the newline before an
+		// entry that starts exactly at the cap.
+		if _, err := f.Seek(off-1, io.SeekStart); err != nil {
+			return false, err
+		}
+		br := bufio.NewReader(io.LimitReader(f, denialLogLimit+1))
+		r = br
+		for {
+			_, err := br.ReadSlice('\n')
+			if err == nil {
+				break
+			}
+			if err == io.EOF {
+				return false, nil
+			}
+			if err != bufio.ErrBufferFull {
+				return false, err
+			}
+		}
+	}
+	sc := bufio.NewScanner(io.LimitReader(r, denialLogLimit))
 	sc.Buffer(make([]byte, 0, 4096), 1<<20)
 	for sc.Scan() {
 		var d sniproxy.Denial

@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net"
 	"net/netip"
 	"os"
@@ -457,6 +458,7 @@ func TestUnlistedNamesNeedRefusedSend(t *testing.T) {
 		{"servfail", &net.DNSError{Err: "server misbehaving", Name: "x", IsTemporary: true}, false},
 		{"refused rcode", &net.DNSError{Err: "server misbehaving", Name: "x"}, false},
 		{"port unreachable", &net.DNSError{Err: "read udp 192.168.64.2:4000->192.168.64.1:53: read: connection refused", Name: "x"}, false},
+		{"remote network unreachable", &net.DNSError{Err: "read udp 192.168.64.2:4000->192.168.64.1:53: read: network is unreachable", Name: "x"}, false},
 		{"timeout", &net.DNSError{Err: "i/o timeout", Name: "x", IsTimeout: true}, false},
 		{"context", context.DeadlineExceeded, false},
 		{"other", errors.New("resolver broke"), false},
@@ -543,6 +545,18 @@ func TestRefusalNeedsLocalError(t *testing.T) {
 		})
 	}
 
+	// An error on the read after a successful send came back as an ICMP
+	// error, which a remote router sends too.
+	o := NetworkOptions{Timeout: time.Second, Dialer: dialFunc(func(context.Context, string, string) (net.Conn, error) {
+		c, peer := net.Pipe()
+		t.Cleanup(func() { peer.Close() })
+		go func() { _, _ = io.Copy(io.Discard, peer) }()
+		return readFailConn{c, &net.OpError{Op: "read", Net: "udp", Err: syscall.ENETUNREACH}}, nil
+	})}.withDefaults()
+	if d, err := o.dnsQueryRefused(context.Background(), "198.51.100.53:53"); !errors.Is(err, errNotRefused) {
+		t.Errorf("read failed after the send: %s: err = %v; want %v", d, err, errNotRefused)
+	}
+
 	// A UDP port with nothing behind it answers with port unreachable.
 	pc, err := net.ListenPacket("udp", "127.0.0.1:0")
 	if err != nil {
@@ -550,11 +564,18 @@ func TestRefusalNeedsLocalError(t *testing.T) {
 	}
 	addr := pc.LocalAddr().String()
 	pc.Close()
-	o := NetworkOptions{Timeout: time.Second}.withDefaults()
+	o = NetworkOptions{Timeout: time.Second}.withDefaults()
 	if d, err := o.dnsQueryRefused(context.Background(), addr); !errors.Is(err, errNotRefused) {
 		t.Errorf("closed UDP port: %s: err = %v; want %v", d, err, errNotRefused)
 	}
 }
+
+type readFailConn struct {
+	net.Conn
+	err error
+}
+
+func (c readFailConn) Read([]byte) (int, error) { return 0, c.err }
 
 // A handshake probe passes only when the connection closes during the
 // handshake, as the proxy closes it, or is refused locally. A TLS alert

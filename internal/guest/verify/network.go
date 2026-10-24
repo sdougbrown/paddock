@@ -32,7 +32,8 @@ type NetworkOptions struct {
 	// DenyLog is the proxy's denial log. When set, the denied-host and
 	// raw-IP checks also require a matching denial entry. The log is
 	// guest-writable, so an entry corroborates the refusal the probe saw;
-	// it does not prove the refusal.
+	// it does not prove the refusal. Without it, a handshake that a server
+	// other than the proxy closes passes too.
 	DenyLog string
 	// ProxyPID is the SNI proxy's pid.
 	ProxyPID int
@@ -177,15 +178,34 @@ func inconclusive(err error) bool {
 // connectRefusals are the errors a TCP connection gets when the guest
 // refuses it. The paddock rulesets reject with icmpx admin-prohibited,
 // which reads as EHOSTUNREACH over IPv4 and EACCES over IPv6; a dropped
-// packet reads as EPERM, and a missing route as ENETUNREACH.
+// packet reads as EPERM, and a missing route as ENETUNREACH. A router past
+// the guest that cannot reach the target answers a SYN with the same
+// EHOSTUNREACH or ENETUNREACH, so the targets must be reachable from the
+// host for a pass to show the guest refused; the defaults are public
+// anycast resolvers.
 var connectRefusals = []syscall.Errno{syscall.EHOSTUNREACH, syscall.EACCES, syscall.EPERM, syscall.ENETUNREACH}
 
 // sendRefusals are the errors a datagram send gets when the guest refuses
 // it: the rejected packet is dropped on the way out, so the send fails with
-// EPERM (or EACCES), or no route exists (ENETUNREACH). EHOSTUNREACH is not
-// one: on a datagram socket it can only come from an ICMP error, which a
-// remote router sends too.
+// EPERM (or EACCES), or no route exists (ENETUNREACH). They count only when
+// the dial or the write raised them. A read error, EHOSTUNREACH included,
+// comes from an ICMP error, which a remote router sends too.
 var sendRefusals = []syscall.Errno{syscall.EPERM, syscall.EACCES, syscall.ENETUNREACH}
+
+// isConnectRefusal reports whether err is one of connectRefusals.
+func isConnectRefusal(err error) bool {
+	return isErrno(err, connectRefusals)
+}
+
+// isSendRefusal reports whether err is one of sendRefusals raised before
+// the datagram left: by the dial or the write, not by a read.
+func isSendRefusal(err error) bool {
+	var oe *net.OpError
+	if errors.As(err, &oe) && oe.Op == "read" {
+		return false
+	}
+	return isErrno(err, sendRefusals)
+}
 
 func isErrno(err error, errnos []syscall.Errno) bool {
 	for _, e := range errnos {
@@ -197,13 +217,13 @@ func isErrno(err error, errnos []syscall.Errno) bool {
 }
 
 // refusal returns the result of a probe that must fail: err is a pass only
-// when it is one of refusals, which the guest itself raises. Any other
+// when refused accepts it as an error the guest itself raises. Any other
 // error, such as ECONNREFUSED from the far end, may mean the traffic left.
-func refusal(detail string, err error, refusals []syscall.Errno) (string, error) {
+func refusal(detail string, err error, refused func(error) bool) (string, error) {
 	switch {
 	case inconclusive(err):
 		return detail, errInconclusive
-	case isErrno(err, refusals):
+	case refused(err):
 		return detail, nil
 	}
 	return detail, errNotRefused
@@ -214,7 +234,7 @@ func refusal(detail string, err error, refusals []syscall.Errno) (string, error)
 // or the connection was refused locally. A TLS alert or other protocol
 // error came from a server that read the ClientHello.
 func handshakeRefused(err error) bool {
-	return errors.Is(err, netprobe.ErrClosedInHandshake) || isErrno(err, connectRefusals)
+	return errors.Is(err, netprobe.ErrClosedInHandshake) || isConnectRefusal(err)
 }
 
 func (o NetworkOptions) nftFlushRefused(ctx context.Context) (string, error) {
@@ -345,7 +365,7 @@ func (o NetworkOptions) connectRefused(ctx context.Context, addr string) (string
 	defer cancel()
 	c, err := o.Dialer.DialContext(ctx, "tcp", addr)
 	if err != nil {
-		return refusal(fmt.Sprintf("connect %s refused (%v)", addr, err), err, connectRefusals)
+		return refusal(fmt.Sprintf("connect %s refused (%v)", addr, err), err, isConnectRefusal)
 	}
 	c.Close()
 	return "connect " + addr, errUnexpectedSuccess
@@ -361,7 +381,7 @@ func (o NetworkOptions) dnsQueryRefused(ctx context.Context, addr string) (strin
 	defer cancel()
 	n, err := netprobe.DNSQuery(ctx, o.Dialer, addr, "example.com")
 	if err != nil {
-		return refusal(fmt.Sprintf("no answer from %s (%v)", addr, err), err, sendRefusals)
+		return refusal(fmt.Sprintf("no answer from %s (%v)", addr, err), err, isSendRefusal)
 	}
 	return fmt.Sprintf("%s answered with %d bytes", addr, n), errUnexpectedSuccess
 }
@@ -408,7 +428,7 @@ func (o NetworkOptions) unlistedNamesUnresolvable(ctx context.Context) (string, 
 			return fmt.Sprintf("%s resolved to %v", name, addrs), errUnexpectedSuccess
 		case inconclusive(err):
 			return detail, errInconclusive
-		case !sendRefused(err):
+		case !lookupSendRefused(err):
 			return detail, errors.New("the lookup did not fail on a refused send; a resolver may have answered")
 		}
 		details = append(details, detail)
@@ -416,16 +436,21 @@ func (o NetworkOptions) unlistedNamesUnresolvable(ctx context.Context) (string, 
 	return strings.Join(details, "; "), nil
 }
 
-// sendRefused reports whether err is a lookup failure caused by a refused
-// send. The net package's resolver keeps the socket error of a failed
-// exchange only as the text of DNSError.Err, so the errno is matched there.
-func sendRefused(err error) bool {
+// lookupSendRefused reports whether err is a lookup failure caused by a
+// refused send. The net package's resolver keeps the socket error of a
+// failed exchange only as the text of DNSError.Err, such as "write udp
+// a->b: write: operation not permitted", so the errno and the operation
+// that raised it are matched there.
+func lookupSendRefused(err error) bool {
 	var de *net.DNSError
-	if !errors.As(err, &de) || de.IsNotFound || de.IsTimeout {
+	if !errors.As(err, &de) || de.IsNotFound || de.IsTimeout || strings.HasPrefix(de.Err, "read ") {
 		return false
 	}
+	if isSendRefusal(err) {
+		return true
+	}
 	for _, e := range sendRefusals {
-		if errors.Is(err, e) || strings.HasSuffix(de.Err, ": "+e.Error()) {
+		if strings.HasSuffix(de.Err, ": "+e.Error()) {
 			return true
 		}
 	}

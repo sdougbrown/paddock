@@ -7,6 +7,8 @@ import (
 	"errors"
 	"io"
 	"net"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 )
@@ -118,6 +120,8 @@ func TestReadClientHello(t *testing.T) {
 	// U+0130 lowercases to an ASCII "i", so this would match api.example.test
 	// while the upstream reads a different name.
 	nonASCII := handBuiltHello(t, sniExt(serverNameTypeHostName, "ap\u0130.example.test"), -1)
+	// U+212A (Kelvin sign) lowercases to an ASCII "k".
+	kelvin := handBuiltHello(t, sniExt(serverNameTypeHostName, "\u212Aey.example.test"), -1)
 	handOK := handBuiltHello(t, sniExt(serverNameTypeHostName, "Hand.Example.Test."), -1)
 	// One record holding only a handshake header that announces a
 	// ClientHello one byte over the cap; the body is never sent.
@@ -127,6 +131,11 @@ func TestReadClientHello(t *testing.T) {
 	shortHello := []byte{recordTypeHandshake, 0x03, 0x01, 0x00, 0x08, handshakeTypeClientHello, 0x00, 0x00, 0x04, 0x03, 0x03, 0x00, 0x00}
 
 	pub := sniExt(serverNameTypeHostName, "public.example.test")
+	// BoringSSL-style GREASE: two different reserved extension types, plus
+	// a padding extension.
+	greased := append(append(ext(0x0a0a, nil), pub...), ext(0x0015, make([]byte, 40))...)
+	greased = append(greased, ext(0x1a1a, []byte{0x00})...)
+	greasedHello := handBuiltHello(t, greased, -1)
 	// An ECH payload is opaque here; Chromium's ECH-GREASE is random bytes
 	// under the same extension type.
 	echPayload := ext(extensionEncryptedClientHello, []byte{0x00, 0x00, 0x01, 0x00, 0x01, 0x07, 0x00, 0x00, 0x00})
@@ -168,7 +177,9 @@ func TestReadClientHello(t *testing.T) {
 		{"server_name without host_name", otherNameType, "", ReasonNoSNI},
 		{"server_name not a hostname", badChars, "", ReasonMalformed},
 		{"server_name not ascii", nonASCII, "", ReasonMalformed},
+		{"server_name with a kelvin sign", kelvin, "", ReasonMalformed},
 		{"hand-built", handOK, "hand.example.test", ""},
+		{"grease and padding", greasedHello, "public.example.test", ""},
 		{"ech after sni", echAfterSNI, "public.example.test", ReasonECH},
 		{"ech before sni", echBeforeSNI, "public.example.test", ReasonECH},
 		{"two server_name extensions", twoSNIExts, "", ReasonMalformed},
@@ -189,6 +200,30 @@ func TestReadClientHello(t *testing.T) {
 			}
 			if err == nil && !bytes.Equal(raw, tt.in) {
 				t.Fatalf("raw replay differs from input (%d vs %d bytes)", len(raw), len(tt.in))
+			}
+		})
+	}
+}
+
+// TestReadClientHelloCapturedClients parses ClientHellos captured from other
+// TLS stacks, each sent to api.example.test: curl 8.7 with LibreSSL 3.3,
+// Python 3 with OpenSSL 3.5, and Node.js 22.
+func TestReadClientHelloCapturedClients(t *testing.T) {
+	for _, name := range []string{"curl-libressl", "python-openssl", "node"} {
+		t.Run(name, func(t *testing.T) {
+			in, err := os.ReadFile(filepath.Join("testdata", "hello-"+name+".bin"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			raw, sni, err := readClientHello(bytes.NewReader(in))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if sni != "api.example.test" {
+				t.Fatalf("sni = %q", sni)
+			}
+			if !bytes.Equal(raw, in) {
+				t.Fatalf("raw replay differs from input (%d vs %d bytes)", len(raw), len(in))
 			}
 		})
 	}

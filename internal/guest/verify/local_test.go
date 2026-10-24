@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -111,4 +112,62 @@ func TestWriteRefusedNotEROFS(t *testing.T) {
 		}
 		t.Fatal("no readonly-mount result")
 	})
+}
+
+// A protected file reached through a symlink can be replaced in the
+// directory of the link or of the file it resolves to.
+func TestReplaceDirsFollowsLinks(t *testing.T) {
+	root := t.TempDir()
+	linkDir, fileDir := filepath.Join(root, "link"), filepath.Join(root, "real")
+	for _, d := range []string{linkDir, fileDir} {
+		if err := os.Mkdir(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	file := filepath.Join(fileDir, "resolv.conf")
+	if err := os.WriteFile(file, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(linkDir, "resolv.conf")
+	if err := os.Symlink(file, link); err != nil {
+		t.Fatal(err)
+	}
+	real, err := filepath.EvalSymlinks(fileDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := replaceDirs(link)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{linkDir, real}; !slices.Equal(got, want) {
+		t.Errorf("replaceDirs(link) = %v; want %v", got, want)
+	}
+	if got, err := replaceDirs(file); err != nil || len(got) != 1 {
+		t.Errorf("replaceDirs(file) = %v, %v; want one directory", got, err)
+	}
+
+	// Every link in a chain can be replaced, so each one's directory counts.
+	hopDir := filepath.Join(root, "hop")
+	if err := os.Mkdir(hopDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(file, filepath.Join(hopDir, "resolv.conf")); err != nil {
+		t.Fatal(err)
+	}
+	chain := filepath.Join(linkDir, "chain")
+	if err := os.Symlink("../hop/resolv.conf", chain); err != nil {
+		t.Fatal(err)
+	}
+	realHop, err := filepath.EvalSymlinks(hopDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err = replaceDirs(chain)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{linkDir, realHop, real}; !slices.Equal(got, want) {
+		t.Errorf("replaceDirs(chain) = %v; want %v", got, want)
+	}
 }

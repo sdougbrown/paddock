@@ -28,6 +28,8 @@ Agent-specific behavior (what to run, which prompt, which skills) belongs to the
 - `internal/config`: strict TOML types and loaders for profiles and specs, config root
 - `internal/resolve`: extends chain, trust rules, value sources, spec selection, mounts
 - `internal/plan`: the Plan struct produced by resolve and consumed by engines
+- `internal/initcfg`: the init config the host writes and paddock-init reads, the guest paths both
+  sides share, and the network policy names
 - `internal/egresshost`: the egress host validator shared by config, resolve, and the guest proxy
 - `internal/guest/...`: in-guest enforcement (netpolicy, sniproxy)
 

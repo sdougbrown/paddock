@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -59,5 +60,27 @@ func TestHasDenialReadsUpToCap(t *testing.T) {
 	}
 	if ok {
 		t.Error("entry past the cap was read")
+	}
+}
+
+// The denial log path is guest-writable, so it may hold a FIFO, which must
+// fail at once instead of blocking the open until a writer appears.
+func TestHasDenialRejectsNonRegularFile(t *testing.T) {
+	fifo := filepath.Join(t.TempDir(), "denials.jsonl")
+	if err := syscall.Mkfifo(fifo, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() {
+		_, err := hasDenial(fifo, func(sniproxy.Denial) bool { return true })
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if err == nil || !strings.Contains(err.Error(), "not a regular file") {
+			t.Errorf("err = %v; want not a regular file", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("hasDenial blocked on a FIFO")
 	}
 }

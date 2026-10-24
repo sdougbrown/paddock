@@ -456,13 +456,21 @@ const denialLogLimit = 4 << 20
 // hasDenial reports whether the first denialLogLimit bytes of the denial log
 // at path hold an entry match accepts. Entries past the cap are not read.
 // The log is guest-writable, so a match corroborates a refusal the probe
-// already observed; it does not prove one.
+// already observed; it does not prove one. The path may have been replaced
+// by anything, so it is opened without blocking and must be a regular file.
 func hasDenial(path string, match func(sniproxy.Denial) bool) (bool, error) {
-	f, err := os.Open(path)
+	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK, 0)
 	if err != nil {
 		return false, err
 	}
 	defer f.Close()
+	st, err := f.Stat()
+	if err != nil {
+		return false, err
+	}
+	if !st.Mode().IsRegular() {
+		return false, fmt.Errorf("%s is not a regular file", path)
+	}
 	sc := bufio.NewScanner(io.LimitReader(f, denialLogLimit))
 	sc.Buffer(make([]byte, 0, 4096), 1<<20)
 	for sc.Scan() {

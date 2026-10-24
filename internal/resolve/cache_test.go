@@ -204,6 +204,16 @@ func TestPrepareSetupCacheWithoutCacheTakesNoLock(t *testing.T) {
 	release()
 }
 
+func TestCompleteSetupCacheWithoutCacheWritesNothing(t *testing.T) {
+	t.Chdir(t.TempDir())
+	if err := CompleteSetupCache(&plan.SetupPlan{}); err != nil {
+		t.Fatal(err)
+	}
+	if entries, err := os.ReadDir("."); err != nil || len(entries) != 0 {
+		t.Errorf("wrote %v, %v", entries, err)
+	}
+}
+
 func TestSetupCacheGuards(t *testing.T) {
 	r, ws := testResolver(t, "", errors.New("no remote"))
 	if err := os.WriteFile(filepath.Join(ws, "yarn.lock"), []byte("a"), 0o644); err != nil {

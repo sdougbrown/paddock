@@ -61,7 +61,10 @@ func planCmd(args []string, stdout io.Writer) error {
 		return fmt.Errorf("--profile is required")
 	}
 	o.Argv = fs.Args()
-	home, _ := os.UserHomeDir()
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return fmt.Errorf("home directory: %w", err)
+	}
 	root, err := config.ResolveRoot(os.Getenv, home)
 	if err != nil {
 		return err

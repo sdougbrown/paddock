@@ -42,3 +42,21 @@ func TestPlanCommand(t *testing.T) {
 		t.Errorf("missing profile: exit %d, stderr %q", code, stderr.String())
 	}
 }
+
+func TestPlanCommandNeedsHome(t *testing.T) {
+	root, err := filepath.Abs(filepath.Join("..", "..", "internal", "resolve", "testdata", "root"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PADDOCK_CONFIG_DIR", root)
+	t.Setenv("HOME", "")
+	ws := t.TempDir()
+	if err := os.Mkdir(filepath.Join(ws, "repo"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"plan", "--profile", "fixer", "--spec", "afresh", "--workspace", ws}, &stdout, &stderr)
+	if code == 0 || !strings.Contains(stderr.String(), "home directory") {
+		t.Errorf("exit %d, stderr %q", code, stderr.String())
+	}
+}

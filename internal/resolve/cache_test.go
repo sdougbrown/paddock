@@ -239,6 +239,9 @@ func TestCacheDirKeyFileRules(t *testing.T) {
 	if err := os.Symlink("real.lock", filepath.Join(ws, "inside.lock")); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.Symlink(filepath.Join(ws, "real.lock"), filepath.Join(ws, "absolute.lock")); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.Symlink(outside, filepath.Join(ws, "outside.lock")); err != nil {
 		t.Fatal(err)
 	}
@@ -253,16 +256,38 @@ func TestCacheDirKeyFileRules(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if d, err := CacheDir("/h", "a", ws, "inside.lock"); err != nil || d != want {
-		t.Errorf("symlink inside the workdir: %q, %v; want %q", d, err, want)
+	for _, key := range []string{"inside.lock", "absolute.lock"} {
+		if d, err := CacheDir("/h", "a", ws, key); err != nil || d != want {
+			t.Errorf("%s: %q, %v; want %q", key, d, err, want)
+		}
 	}
 	for key, wantErr := range map[string]string{
-		"outside.lock": "escapes",
+		"outside.lock": "outside the workdir",
 		"dir.lock":     "not a regular file",
 		"fifo.lock":    "not a regular file",
 	} {
 		if d, err := CacheDir("/h", "a", ws, key); err == nil || !strings.Contains(err.Error(), wantErr) {
 			t.Errorf("%s: %q, %v; want an error containing %q", key, d, err, wantErr)
 		}
+	}
+}
+
+func TestCacheDirKeyFileSizeLimit(t *testing.T) {
+	ws := t.TempDir()
+	for name, size := range map[string]int64{"max.lock": maxKeyFileSize, "over.lock": maxKeyFileSize + 1} {
+		f, err := os.Create(filepath.Join(ws, name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := f.Truncate(size); err != nil {
+			t.Fatal(err)
+		}
+		f.Close()
+	}
+	if _, err := CacheDir("/h", "a", ws, "max.lock"); err != nil {
+		t.Errorf("file at the limit: %v", err)
+	}
+	if _, err := CacheDir("/h", "a", ws, "over.lock"); err == nil || !strings.Contains(err.Error(), "larger than") {
+		t.Errorf("file over the limit: %v", err)
 	}
 }

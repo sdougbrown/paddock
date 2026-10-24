@@ -15,6 +15,8 @@ import (
 	"syscall"
 
 	"golang.org/x/net/dns/dnsmessage"
+
+	"github.com/sdougbrown/paddock/internal/guest/dnsclient"
 )
 
 // ErrClosedInHandshake reports that the peer closed the connection during
@@ -87,29 +89,20 @@ type Resolver interface {
 
 // DNSQuery sends a recursive query for name's A record to the DNS server at
 // addr over UDP and returns the size of the first datagram that comes back.
-// An error means no answer arrived. ctx must carry a deadline: it bounds the
+// An error means no answer arrived. Any datagram counts, whether or not it
+// answers the query: the probe asks whether addr is reachable, and a reply
+// of any kind proves that it is. ctx must carry a deadline: it bounds the
 // wait for the answer.
 func DNSQuery(ctx context.Context, d Dialer, addr, name string) (int, error) {
 	if d == nil {
 		d = &net.Dialer{}
 	}
-	c, err := d.DialContext(ctx, "udp", addr)
-	if err != nil {
-		return 0, err
-	}
-	defer c.Close()
-	if dl, ok := ctx.Deadline(); ok {
-		_ = c.SetDeadline(dl)
-	}
 	q, err := dnsQuery(name)
 	if err != nil {
 		return 0, err
 	}
-	if _, err := c.Write(q); err != nil {
-		return 0, err
-	}
-	buf := make([]byte, 512)
-	return c.Read(buf)
+	resp, err := dnsclient.Exchange(ctx, d, "udp", addr, q, nil)
+	return len(resp), err
 }
 
 // dnsQuery builds a recursive DNS query for name's A record.

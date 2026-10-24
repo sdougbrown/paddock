@@ -6,7 +6,6 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
-	"io"
 	"net"
 	"net/netip"
 	"strings"
@@ -14,6 +13,8 @@ import (
 	"time"
 
 	"golang.org/x/net/dns/dnsmessage"
+
+	"github.com/sdougbrown/paddock/internal/guest/dnsclient"
 )
 
 // DNSResolver resolves names by querying fixed DNS servers directly. It
@@ -141,7 +142,7 @@ func (r *DNSResolver) query(ctx context.Context, server netip.AddrPort, name dns
 	if err != nil {
 		return nil, err
 	}
-	resp, err := exchange(ctx, d, "udp", server, packed, func(resp []byte) bool {
+	resp, err := dnsclient.Exchange(ctx, d, "udp", server.String(), packed, func(resp []byte) bool {
 		return answersQuery(resp, id, q)
 	})
 	if err != nil {
@@ -151,7 +152,7 @@ func (r *DNSResolver) query(ctx context.Context, server netip.AddrPort, name dns
 	if !truncated {
 		return addrs, err
 	}
-	if resp, err = exchange(ctx, d, "tcp", server, packed, nil); err != nil {
+	if resp, err = dnsclient.Exchange(ctx, d, "tcp", server.String(), packed, nil); err != nil {
 		return nil, err
 	}
 	// A truncated answer over TCP is incomplete, not empty: an error, so
@@ -160,49 +161,6 @@ func (r *DNSResolver) query(ctx context.Context, server netip.AddrPort, name dns
 		return nil, errors.New("answer truncated over TCP")
 	}
 	return addrs, err
-}
-
-// exchange sends one query and reads one response. Over TCP both carry the
-// two-byte length prefix. Over UDP, as in the net package's resolver, a
-// datagram that matches rejects is skipped: a stray or forged datagram does
-// not fail the query, which waits for its answer until the deadline.
-func exchange(ctx context.Context, d Dialer, network string, server netip.AddrPort, query []byte, matches func([]byte) bool) ([]byte, error) {
-	c, err := d.DialContext(ctx, network, server.String())
-	if err != nil {
-		return nil, err
-	}
-	defer c.Close()
-	if dl, ok := ctx.Deadline(); ok {
-		_ = c.SetDeadline(dl)
-	}
-	if network == "udp" {
-		if _, err := c.Write(query); err != nil {
-			return nil, err
-		}
-		buf := make([]byte, 1232)
-		for {
-			n, err := c.Read(buf)
-			if err != nil {
-				return nil, err
-			}
-			if matches(buf[:n]) {
-				return buf[:n], nil
-			}
-		}
-	}
-	framed := binary.BigEndian.AppendUint16(nil, uint16(len(query)))
-	if _, err := c.Write(append(framed, query...)); err != nil {
-		return nil, err
-	}
-	var lb [2]byte
-	if _, err := io.ReadFull(c, lb[:]); err != nil {
-		return nil, err
-	}
-	buf := make([]byte, binary.BigEndian.Uint16(lb[:]))
-	if _, err := io.ReadFull(c, buf); err != nil {
-		return nil, err
-	}
-	return buf, nil
 }
 
 // answersQuery reports whether resp is a response to q under id.

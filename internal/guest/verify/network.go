@@ -183,6 +183,10 @@ func inconclusive(err error) bool {
 // EHOSTUNREACH or ENETUNREACH, so the targets must be reachable from the
 // host for a pass to show the guest refused; the defaults are public
 // anycast resolvers.
+//
+// The reject rules are in netpolicy's ruleset.go, and guesttest.Net
+// returns these same errors for what it refuses. A change to how the
+// ruleset refuses traffic must change all three.
 var connectRefusals = []syscall.Errno{syscall.EHOSTUNREACH, syscall.EACCES, syscall.EPERM, syscall.ENETUNREACH}
 
 // sendRefusals are the errors a datagram send gets when the guest refuses

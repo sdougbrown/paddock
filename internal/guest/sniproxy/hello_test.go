@@ -115,6 +115,9 @@ func TestReadClientHello(t *testing.T) {
 	badExt := handBuiltHello(t, []byte{0x00, 0x00, 0x00, 0x10}, 0x0100)
 	otherNameType := handBuiltHello(t, sniExt(0x01, "a.example.test"), -1)
 	badChars := handBuiltHello(t, sniExt(serverNameTypeHostName, "a b.example.test"), -1)
+	// U+0130 lowercases to an ASCII "i", so this would match api.example.test
+	// while the upstream reads a different name.
+	nonASCII := handBuiltHello(t, sniExt(serverNameTypeHostName, "ap\u0130.example.test"), -1)
 	handOK := handBuiltHello(t, sniExt(serverNameTypeHostName, "Hand.Example.Test."), -1)
 	// One record holding only a handshake header that announces a
 	// ClientHello one byte over the cap; the body is never sent.
@@ -164,6 +167,7 @@ func TestReadClientHello(t *testing.T) {
 		{"corrupt extensions", badExt, "", ReasonMalformed},
 		{"server_name without host_name", otherNameType, "", ReasonNoSNI},
 		{"server_name not a hostname", badChars, "", ReasonMalformed},
+		{"server_name not ascii", nonASCII, "", ReasonMalformed},
 		{"hand-built", handOK, "hand.example.test", ""},
 		{"ech after sni", echAfterSNI, "public.example.test", ReasonECH},
 		{"ech before sni", echBeforeSNI, "public.example.test", ReasonECH},

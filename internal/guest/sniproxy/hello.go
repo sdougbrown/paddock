@@ -206,6 +206,12 @@ func parseServerName(data []byte) (host string, ok bool, err error) {
 		if ok {
 			return "", false, refuse(ReasonMalformed, "server_name has two host_names")
 		}
+		// Lowercasing maps some non-ASCII letters (U+0130, U+212A) to ASCII
+		// ones, so a non-ASCII name could match an allowlisted host that the
+		// upstream would not read.
+		if !isASCII(name) {
+			return "", false, refuse(ReasonMalformed, "server_name is not ASCII")
+		}
 		host = egresshost.Normalize(string(name))
 		if !egresshost.Valid(host) {
 			return "", false, refuse(ReasonMalformed, "server_name is not a hostname")
@@ -213,4 +219,13 @@ func parseServerName(data []byte) (host string, ok bool, err error) {
 		ok = true
 	}
 	return host, ok, nil
+}
+
+func isASCII(b []byte) bool {
+	for _, c := range b {
+		if c >= 0x80 {
+			return false
+		}
+	}
+	return true
 }

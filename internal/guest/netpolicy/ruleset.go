@@ -43,6 +43,8 @@ import (
 	"fmt"
 	"net/netip"
 	"strings"
+
+	"github.com/sdougbrown/paddock/internal/guest/sniproxy"
 )
 
 // Mode is a network policy mode.
@@ -188,7 +190,7 @@ func (p Policy) validateAllowlist() error {
 		return fmt.Errorf("netpolicy: allowlist policy needs at least one DNS resolver")
 	}
 	for _, r := range p.Resolvers {
-		if !r.Unmap().Is4() || r.IsUnspecified() {
+		if !sniproxy.UsableResolver(r) {
 			return fmt.Errorf("netpolicy: resolver address %q is not a usable IPv4 address", r)
 		}
 	}

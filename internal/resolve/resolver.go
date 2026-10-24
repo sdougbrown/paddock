@@ -329,10 +329,10 @@ func (r *Resolver) env(prof *config.Profile, m *Merged, phase string) ([]plan.En
 func network(prof *config.Profile, m *Merged, phase string) (plan.Network, error) {
 	policy := prof.Network.Policy
 	if policy == "" {
-		policy = "none"
+		policy = initcfg.PolicyNone
 	}
 	n := plan.Network{Policy: policy, Sets: []string{}, Hosts: []string{}}
-	if policy != "allowlist" {
+	if policy != initcfg.PolicyAllowlist {
 		return n, nil
 	}
 	names, key := prof.Network.Run, "network.run"

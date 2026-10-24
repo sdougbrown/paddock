@@ -111,3 +111,11 @@ func TestPlanCommandSelectsSpecFromOrigin(t *testing.T) {
 		})
 	}
 }
+
+func TestPlanCommandRejectsUnknownFlag(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"plan", "--bogus"}, &stdout, &stderr)
+	if code == 0 || !strings.Contains(stderr.String(), "paddock plan:") || !strings.Contains(stderr.String(), "bogus") || stdout.Len() != 0 {
+		t.Errorf("exit %d, stdout %q, stderr %q", code, stdout.String(), stderr.String())
+	}
+}

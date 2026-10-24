@@ -61,6 +61,15 @@ func TestSpecSelection(t *testing.T) {
 	}
 }
 
+func TestSpecSelectionSurfacesBrokenOriginSpec(t *testing.T) {
+	r, _ := testResolver(t, "https://github.com/o/r.git", nil)
+	r.Source = fakeSource{specs: map[string]fakeSpec{"o/r": op("[env\n")}}
+	_, err := r.Resolve(Options{Profile: "fixer"})
+	if err == nil || !strings.Contains(err.Error(), `spec "o/r"`) || strings.Contains(err.Error(), "no spec selected") {
+		t.Fatalf("want the broken spec's error, got %v", err)
+	}
+}
+
 func TestSpecSelectionNoDefault(t *testing.T) {
 	r, _ := testResolver(t, "", errors.New("no remote"))
 	_, err := r.Resolve(Options{Profile: "nodefault"})
@@ -84,6 +93,18 @@ func TestResolvePlan(t *testing.T) {
 	}
 	if got := strings.Join(p.SpecChain, ","); got != "afresh,afresh/scanner" {
 		t.Errorf("chain = %s", got)
+	}
+	if strings.Join(p.Argv, " ") != "claude" {
+		t.Errorf("argv = %q", p.Argv)
+	}
+	absRoot, err := filepath.Abs(filepath.Join("testdata", "root"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantDF := filepath.Join(absRoot, "images", "afresh", "Dockerfile")
+	wantLayers := []plan.ImageLayer{{Spec: "afresh", Dockerfile: wantDF, Context: filepath.Dir(wantDF)}}
+	if len(p.Image.Layers) != 1 || p.Image.Layers[0] != wantLayers[0] {
+		t.Errorf("layers = %+v, want %+v", p.Image.Layers, wantLayers)
 	}
 	wantMounts := []plan.Mount{
 		{Host: realWS, Guest: realWS, ReadOnly: false},
@@ -148,6 +169,9 @@ func TestResolveErrors(t *testing.T) {
 		{"relative mount", Options{Spec: "afresh"}, "relmount", "must be absolute"},
 		{"skills not under ro mount", Options{Spec: "afresh"}, "skills", "not under a read-only mount"},
 		{"setup phase without setup command", Options{Spec: "afresh", Phase: "setup"}, "fixer", "no [setup] command"},
+		{"setup with a read-only workspace", Options{Spec: "afresh/scanner", Phase: "setup"}, "rowsro", "setup needs a read-write workspace; profile \"rowsro\" workspace.mode is ro"},
+		{"setup with caller argv", Options{Spec: "afresh/scanner", Phase: "setup", Argv: []string{"sh"}}, "rows", "do not pass a command"},
+		{"workspace is a file", Options{Spec: "afresh", Workspace: "FILE"}, "fixer", "not a directory"},
 		{"bad phase", Options{Spec: "afresh", Phase: "build"}, "fixer", "phase"},
 		{"profile env collides with spec env", Options{Spec: "afresh"}, "envclash", "both the profile and the spec chain"},
 		{"workspace readonly escapes", Options{Spec: "afresh"}, "wsescape", "inside the workspace"},
@@ -158,6 +182,13 @@ func TestResolveErrors(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			r, _ := testResolver(t, "", errors.New("none"))
 			tc.opts.Profile = tc.profile
+			if tc.opts.Workspace == "FILE" {
+				f := filepath.Join(t.TempDir(), "f")
+				if err := os.WriteFile(f, nil, 0o644); err != nil {
+					t.Fatal(err)
+				}
+				tc.opts.Workspace = f
+			}
 			_, err := r.Resolve(tc.opts)
 			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
 				t.Fatalf("want error containing %q, got %v", tc.wantErr, err)
@@ -212,11 +243,9 @@ func TestSetupPhasePlan(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if setup.Mounts[0] != (plan.Mount{Host: real, Guest: real}) {
-		t.Errorf("setup workspace mount = %+v, want read-write", setup.Mounts[0])
-	}
-	if !run.Mounts[0].ReadOnly {
-		t.Errorf("run workspace mount = %+v, want read-only", run.Mounts[0])
+	want := plan.Mount{Host: real, Guest: real}
+	if setup.Mounts[0] != want || run.Mounts[0] != want {
+		t.Errorf("workspace mounts: setup %+v, run %+v, want %+v", setup.Mounts[0], run.Mounts[0], want)
 	}
 	if sub := setup.Mounts[1]; sub.Guest != filepath.Join(real, "repo") || !sub.ReadOnly {
 		t.Errorf("readonly subpath mount = %+v", sub)
@@ -466,7 +495,7 @@ func TestAllowlistPhaseNeedsEgressSets(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			r, ws := testResolver(t, "", errors.New("no remote"))
-			useProfile(t, r, tc.body)
+			useProfile(t, r, "[workspace]\nmode = \"rw\"\n"+tc.body)
 			if err := os.WriteFile(filepath.Join(ws, "yarn.lock"), []byte("a"), 0o644); err != nil {
 				t.Fatal(err)
 			}
@@ -523,6 +552,55 @@ func TestOriginErrorsHideCredentials(t *testing.T) {
 			_, err := r.Resolve(Options{Profile: "nodefault"})
 			if err == nil || !strings.Contains(err.Error(), tc.want) || strings.Contains(err.Error(), tc.notWant) {
 				t.Fatalf("want error containing %q and not %q, got %v", tc.want, tc.notWant, err)
+			}
+		})
+	}
+}
+
+func TestImageDockerfileEscapingRootIsRejected(t *testing.T) {
+	r, _ := testResolver(t, "", errors.New("no remote"))
+	r.Source = RootSource{Root: r.Root}
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "projects"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "projects", "esc.toml"), []byte("[image]\ndockerfile = \"../../Dockerfile\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	r.Source = RootSource{Root: config.Root{Dir: dir}}
+	_, err := r.Resolve(Options{Profile: "fixer", Spec: "esc"})
+	if err == nil || !strings.Contains(err.Error(), "image.dockerfile") || !strings.Contains(err.Error(), `"esc"`) {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestSetupPlanValidation(t *testing.T) {
+	tests := []struct {
+		name string
+		s    Setup
+		want string
+	}{
+		{"cache_dir inside root", Setup{CacheDir: "/var/cache/paddock/setup/yarn"}, ""},
+		{"cache_dir shadowing /etc/hosts", Setup{CacheDir: "/etc/hosts"}, "setup.cache_dir"},
+		{"cache_dir is the root itself", Setup{CacheDir: "/var/cache/paddock"}, "setup.cache_dir"},
+		{"cache_dir is the root with slash", Setup{CacheDir: "/var/cache/paddock/"}, "setup.cache_dir"},
+		{"cache_dir escapes with ..", Setup{CacheDir: "/var/cache/paddock/../../../etc"}, "setup.cache_dir"},
+		{"cache_dir sibling prefix", Setup{CacheDir: "/var/cache/paddock-evil/x"}, "setup.cache_dir"},
+		{"cache_dir relative", Setup{CacheDir: "var/cache/paddock/x"}, "setup.cache_dir"},
+		{"cache_key escapes", Setup{CacheKey: "../../lock"}, "setup.cache_key"},
+		{"cache_key absolute", Setup{CacheKey: "/etc/passwd"}, "setup.cache_key"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := setupPlan("a/b", tc.s)
+			if tc.want == "" {
+				if err != nil {
+					t.Fatal(err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.want) || !strings.Contains(err.Error(), `"a/b"`) {
+				t.Fatalf("err = %v, want one naming spec and %s", err, tc.want)
 			}
 		})
 	}

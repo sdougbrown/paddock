@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path"
@@ -24,12 +25,50 @@ func CacheDir(home, ref, workdir, keyFile string) (string, error) {
 	if !filepath.IsAbs(home) {
 		return "", fmt.Errorf("setup cache: home directory %q is not absolute", home)
 	}
-	data, err := os.ReadFile(filepath.Join(workdir, keyFile))
+	sum, err := hashKeyFile(workdir, keyFile)
 	if err != nil {
 		return "", fmt.Errorf("setup.cache_key: %w", err)
 	}
-	sum := sha256.Sum256(data)
-	return filepath.Join(home, ".cache", "paddock", filepath.FromSlash(ref), hex.EncodeToString(sum[:])[:16]), nil
+	return filepath.Join(home, ".cache", "paddock", filepath.FromSlash(ref), hex.EncodeToString(sum)[:16]), nil
+}
+
+// maxKeyFileSize bounds how much of a cache_key file CacheDir reads.
+const maxKeyFileSize = 64 << 20
+
+// hashKeyFile returns the sha256 of workdir's keyFile. The workspace controls
+// that file, so it must resolve to a regular file inside workdir of at most
+// maxKeyFileSize bytes.
+func hashKeyFile(workdir, keyFile string) ([]byte, error) {
+	root, err := filepath.EvalSymlinks(workdir)
+	if err != nil {
+		return nil, err
+	}
+	real, err := filepath.EvalSymlinks(filepath.Join(root, keyFile))
+	if err != nil {
+		return nil, err
+	}
+	if rel, err := filepath.Rel(root, real); err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return nil, fmt.Errorf("%q resolves outside the workdir", keyFile)
+	}
+	f, err := os.OpenFile(real, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	if st, err := f.Stat(); err != nil {
+		return nil, err
+	} else if !st.Mode().IsRegular() {
+		return nil, fmt.Errorf("%q is not a regular file", keyFile)
+	}
+	h := sha256.New()
+	n, err := io.Copy(h, io.LimitReader(f, maxKeyFileSize+1))
+	if err != nil {
+		return nil, err
+	}
+	if n > maxKeyFileSize {
+		return nil, fmt.Errorf("%q is larger than %d bytes", keyFile, maxKeyFileSize)
+	}
+	return h.Sum(nil), nil
 }
 
 // setupCache adds the dependency-cache mount to a setup-phase plan. The

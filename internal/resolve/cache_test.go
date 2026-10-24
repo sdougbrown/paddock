@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -219,6 +220,49 @@ func TestSetupCacheGuards(t *testing.T) {
 		_, err := r.Resolve(Options{Profile: "p", Spec: spec, Phase: PhaseSetup})
 		if err == nil || !strings.Contains(err.Error(), "must be set together") {
 			t.Errorf("%s: err = %v", spec, err)
+		}
+	}
+}
+
+func TestCacheDirKeyFileRules(t *testing.T) {
+	ws, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	outside := filepath.Join(t.TempDir(), "secret")
+	if err := os.WriteFile(outside, []byte("s"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(ws, "real.lock"), []byte("a"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("real.lock", filepath.Join(ws, "inside.lock")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(ws, "outside.lock")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(ws, "dir.lock"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := syscall.Mkfifo(filepath.Join(ws, "fifo.lock"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	want, err := CacheDir("/h", "a", ws, "real.lock")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d, err := CacheDir("/h", "a", ws, "inside.lock"); err != nil || d != want {
+		t.Errorf("symlink inside the workdir: %q, %v; want %q", d, err, want)
+	}
+	for key, wantErr := range map[string]string{
+		"outside.lock": "outside the workdir",
+		"dir.lock":     "not a regular file",
+		"fifo.lock":    "not a regular file",
+	} {
+		if d, err := CacheDir("/h", "a", ws, key); err == nil || !strings.Contains(err.Error(), wantErr) {
+			t.Errorf("%s: %q, %v; want an error containing %q", key, d, err, wantErr)
 		}
 	}
 }

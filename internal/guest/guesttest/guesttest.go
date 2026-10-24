@@ -127,7 +127,8 @@ func (r Resolver) LookupNetIP(_ context.Context, network, host string) ([]netip.
 // Net simulates the agent's view of the guest network. With Open false it
 // follows the allowlist ruleset, which redirects IPv4 only: IPv4 tcp/443
 // goes to Proxy, and every other connection, IPv6 tcp/443 included, is
-// refused. With Open true (a missing firewall) tcp goes straight to Upstream
+// refused with the error the guest kernel returns for the ruleset's reject:
+// EHOSTUNREACH for tcp, and EPERM for udp, whose send fails. With Open true (a missing firewall) tcp goes straight to Upstream
 // and udp to UDPUpstream.
 //
 // Net mirrors the allowlist ruleset in netpolicy (ruleset.go). A change to
@@ -155,7 +156,10 @@ func (n *Net) DialContext(ctx context.Context, network, addr string) (net.Conn, 
 	case network == "tcp" && ap.Port() == 443 && ap.Addr().Is4():
 		return d.DialContext(ctx, "tcp", n.Proxy)
 	}
-	return nil, &net.OpError{Op: "dial", Net: network, Err: syscall.ECONNREFUSED}
+	if network == "udp" {
+		return nil, &net.OpError{Op: "write", Net: network, Err: syscall.EPERM}
+	}
+	return nil, &net.OpError{Op: "dial", Net: network, Err: syscall.EHOSTUNREACH}
 }
 
 func (n *Net) resolve(ctx context.Context, addr string) (netip.AddrPort, error) {

@@ -16,6 +16,7 @@ import (
 
 	"github.com/sdougbrown/paddock/internal/guest/guesttest"
 	"github.com/sdougbrown/paddock/internal/guest/netpolicy"
+	"github.com/sdougbrown/paddock/internal/guest/netprobe"
 	"github.com/sdougbrown/paddock/internal/guest/sniproxy"
 )
 
@@ -141,7 +142,10 @@ func (d closedDialer) DialContext(ctx context.Context, network, addr string) (ne
 	if d.open != nil {
 		return d.open.DialContext(ctx, network, addr)
 	}
-	return nil, &net.OpError{Op: "dial", Net: network, Err: syscall.ECONNREFUSED}
+	if network == "udp" {
+		return nil, &net.OpError{Op: "write", Net: network, Err: syscall.EPERM}
+	}
+	return nil, &net.OpError{Op: "dial", Net: network, Err: syscall.EHOSTUNREACH}
 }
 
 // closedResults runs the closed-network checks that need no real kernel or
@@ -498,6 +502,116 @@ func TestFlushRefused(t *testing.T) {
 			d, err := flushRefused(context.Background(), script(strings.ReplaceAll(tt.name, " ", "-"), tt.body), tt.timeout)
 			if tt.wantErr == nil && err != nil || tt.wantErr != nil && !errors.Is(err, tt.wantErr) {
 				t.Errorf("%s: err = %v; want %v", d, err, tt.wantErr)
+			}
+		})
+	}
+}
+
+// Only an error the guest itself raises shows the traffic was refused. A
+// refusal from the far end, or a failure unrelated to the network, means
+// the packet may have left or the probe never ran.
+func TestRefusalNeedsLocalError(t *testing.T) {
+	failWith := func(errno syscall.Errno) dialFunc {
+		return func(_ context.Context, network, _ string) (net.Conn, error) {
+			return nil, &net.OpError{Op: "dial", Net: network, Err: errno}
+		}
+	}
+	for _, tt := range []struct {
+		errno    syscall.Errno
+		connect  bool
+		dnsQuery bool
+	}{
+		{syscall.EHOSTUNREACH, true, false},
+		{syscall.EACCES, true, true},
+		{syscall.EPERM, true, true},
+		{syscall.ENETUNREACH, true, true},
+		{syscall.ECONNREFUSED, false, false},
+		{syscall.EMFILE, false, false},
+	} {
+		t.Run(tt.errno.Error(), func(t *testing.T) {
+			o := NetworkOptions{Timeout: time.Second, Dialer: failWith(tt.errno)}.withDefaults()
+			check := func(name string, want bool, d string, err error) {
+				t.Helper()
+				if want && err != nil || !want && !errors.Is(err, errNotRefused) {
+					t.Errorf("%s: %s: err = %v; want pass %v", name, d, err, want)
+				}
+			}
+			d, err := o.connectRefused(context.Background(), "198.51.100.10:80")
+			check("connect", tt.connect, d, err)
+			d, err = o.dnsQueryRefused(context.Background(), "198.51.100.53:53")
+			check("dns query", tt.dnsQuery, d, err)
+		})
+	}
+
+	// A UDP port with nothing behind it answers with port unreachable.
+	pc, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := pc.LocalAddr().String()
+	pc.Close()
+	o := NetworkOptions{Timeout: time.Second}.withDefaults()
+	if d, err := o.dnsQueryRefused(context.Background(), addr); !errors.Is(err, errNotRefused) {
+		t.Errorf("closed UDP port: %s: err = %v; want %v", d, err, errNotRefused)
+	}
+}
+
+// A handshake probe passes only when the connection closes during the
+// handshake, as the proxy closes it, or is refused locally. A TLS alert
+// comes from a server that read the ClientHello.
+func TestHandshakeRefusalNeedsClose(t *testing.T) {
+	serve := func(handle func(net.Conn)) string {
+		ln, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { ln.Close() })
+		go func() {
+			for {
+				c, err := ln.Accept()
+				if err != nil {
+					return
+				}
+				handle(c)
+				c.Close()
+			}
+		}()
+		return ln.Addr().String()
+	}
+	alert := serve(func(c net.Conn) {
+		buf := make([]byte, 4096)
+		_, _ = c.Read(buf)
+		// A fatal handshake_failure alert record.
+		_, _ = c.Write([]byte{0x15, 0x03, 0x03, 0x00, 0x02, 0x02, 0x28})
+	})
+	closes := serve(func(c net.Conn) {
+		buf := make([]byte, 4096)
+		_, _ = c.Read(buf)
+	})
+	to := func(addr string) dialFunc {
+		return func(ctx context.Context, network, _ string) (net.Conn, error) {
+			var d net.Dialer
+			return d.DialContext(ctx, network, addr)
+		}
+	}
+	for _, tt := range []struct {
+		name   string
+		dialer netprobe.Dialer
+		pass   bool
+	}{
+		{"alert", to(alert), false},
+		{"closed", to(closes), true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			o := NetworkOptions{DeniedHost: "denied.test", RawIPTarget: "198.51.100.10", Timeout: 3 * time.Second, Dialer: tt.dialer}.withDefaults()
+			for name, probe := range map[string]func(context.Context) (string, error){
+				"denied host": o.deniedHostRefused,
+				"raw ip":      o.rawIPRefused,
+			} {
+				d, err := probe(context.Background())
+				if tt.pass && err != nil || !tt.pass && !errors.Is(err, errNotRefused) {
+					t.Errorf("%s: %s: err = %v; want pass %v", name, d, err, tt.pass)
+				}
 			}
 		})
 	}

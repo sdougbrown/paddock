@@ -161,6 +161,7 @@ func (o NetworkOptions) dnsChecks() []Check {
 var (
 	errUnexpectedSuccess = errors.New("succeeded; the boundary is open")
 	errInconclusive      = errors.New("inconclusive: the probe timed out or was cancelled instead of being refused")
+	errNotRefused        = errors.New("failed without a refusal from the guest; the traffic may have left it")
 )
 
 // inconclusive reports whether err ended a probe by running out of time or
@@ -173,13 +174,47 @@ func inconclusive(err error) bool {
 		errors.As(err, &ne) && ne.Timeout()
 }
 
-// refusal returns the result of a probe that must fail: err is a pass
-// unless it is inconclusive.
-func refusal(detail string, err error) (string, error) {
-	if inconclusive(err) {
-		return detail, errInconclusive
+// connectRefusals are the errors a TCP connection gets when the guest
+// refuses it. The paddock rulesets reject with icmpx admin-prohibited,
+// which reads as EHOSTUNREACH over IPv4 and EACCES over IPv6; a dropped
+// packet reads as EPERM, and a missing route as ENETUNREACH.
+var connectRefusals = []syscall.Errno{syscall.EHOSTUNREACH, syscall.EACCES, syscall.EPERM, syscall.ENETUNREACH}
+
+// sendRefusals are the errors a datagram send gets when the guest refuses
+// it: the rejected packet is dropped on the way out, so the send fails with
+// EPERM (or EACCES), or no route exists (ENETUNREACH). EHOSTUNREACH is not
+// one: on a datagram socket it can only come from an ICMP error, which a
+// remote router sends too.
+var sendRefusals = []syscall.Errno{syscall.EPERM, syscall.EACCES, syscall.ENETUNREACH}
+
+func isErrno(err error, errnos []syscall.Errno) bool {
+	for _, e := range errnos {
+		if errors.Is(err, e) {
+			return true
+		}
 	}
-	return detail, nil
+	return false
+}
+
+// refusal returns the result of a probe that must fail: err is a pass only
+// when it is one of refusals, which the guest itself raises. Any other
+// error, such as ECONNREFUSED from the far end, may mean the traffic left.
+func refusal(detail string, err error, refusals []syscall.Errno) (string, error) {
+	switch {
+	case inconclusive(err):
+		return detail, errInconclusive
+	case isErrno(err, refusals):
+		return detail, nil
+	}
+	return detail, errNotRefused
+}
+
+// handshakeRefused reports whether err ended a handshake probe the way the
+// guest refuses one: the proxy closed the connection during the handshake,
+// or the connection was refused locally. A TLS alert or other protocol
+// error came from a server that read the ClientHello.
+func handshakeRefused(err error) bool {
+	return errors.Is(err, netprobe.ErrClosedInHandshake) || isErrno(err, connectRefusals)
 }
 
 func (o NetworkOptions) nftFlushRefused(ctx context.Context) (string, error) {
@@ -247,6 +282,9 @@ func (o NetworkOptions) deniedHostRefused(ctx context.Context) (string, error) {
 	if inconclusive(err) {
 		return detail, errInconclusive
 	}
+	if !handshakeRefused(err) {
+		return detail, errNotRefused
+	}
 	return o.requireDenial(detail, fmt.Sprintf("%q denial for %s", sniproxy.ReasonDenied, o.DeniedHost), func(d sniproxy.Denial) bool {
 		return d.SNI == o.DeniedHost && d.Reason == sniproxy.ReasonDenied && !d.Time.Before(since)
 	})
@@ -267,6 +305,9 @@ func (o NetworkOptions) rawIPRefused(ctx context.Context) (string, error) {
 	detail := fmt.Sprintf("TLS without SNI to %s refused (%v)", addr, err)
 	if inconclusive(err) {
 		return detail, errInconclusive
+	}
+	if !handshakeRefused(err) {
+		return detail, errNotRefused
 	}
 	return o.requireDenial(detail, fmt.Sprintf("%q denial for %s", sniproxy.ReasonNoSNI, local), func(d sniproxy.Denial) bool {
 		return local != "" && d.Peer == local && d.Reason == sniproxy.ReasonNoSNI && !d.Time.Before(since)
@@ -304,7 +345,7 @@ func (o NetworkOptions) connectRefused(ctx context.Context, addr string) (string
 	defer cancel()
 	c, err := o.Dialer.DialContext(ctx, "tcp", addr)
 	if err != nil {
-		return refusal(fmt.Sprintf("connect %s refused (%v)", addr, err), err)
+		return refusal(fmt.Sprintf("connect %s refused (%v)", addr, err), err, connectRefusals)
 	}
 	c.Close()
 	return "connect " + addr, errUnexpectedSuccess
@@ -320,7 +361,7 @@ func (o NetworkOptions) dnsQueryRefused(ctx context.Context, addr string) (strin
 	defer cancel()
 	n, err := netprobe.DNSQuery(ctx, o.Dialer, addr, "example.com")
 	if err != nil {
-		return refusal(fmt.Sprintf("no answer from %s (%v)", addr, err), err)
+		return refusal(fmt.Sprintf("no answer from %s (%v)", addr, err), err, sendRefusals)
 	}
 	return fmt.Sprintf("%s answered with %d bytes", addr, n), errUnexpectedSuccess
 }
@@ -375,10 +416,6 @@ func (o NetworkOptions) unlistedNamesUnresolvable(ctx context.Context) (string, 
 	return strings.Join(details, "; "), nil
 }
 
-// localRefusals are the errors a DNS query send gets when the guest's
-// firewall rejects it (EPERM, EACCES) or no route exists (ENETUNREACH).
-var localRefusals = []syscall.Errno{syscall.EPERM, syscall.EACCES, syscall.ENETUNREACH}
-
 // sendRefused reports whether err is a lookup failure caused by a refused
 // send. The net package's resolver keeps the socket error of a failed
 // exchange only as the text of DNSError.Err, so the errno is matched there.
@@ -387,7 +424,7 @@ func sendRefused(err error) bool {
 	if !errors.As(err, &de) || de.IsNotFound || de.IsTimeout {
 		return false
 	}
-	for _, e := range localRefusals {
+	for _, e := range sendRefusals {
 		if errors.Is(err, e) || strings.HasSuffix(de.Err, ": "+e.Error()) {
 			return true
 		}

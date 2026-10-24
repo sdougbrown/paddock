@@ -144,6 +144,37 @@ func TestValidate(t *testing.T) {
 	}
 }
 
+func TestReserved(t *testing.T) {
+	tests := []struct {
+		path string
+		want bool
+	}{
+		{BinDir, true},
+		{InitPath, true},
+		{StateDir, true},
+		{ConfigPath, true},
+		{SecretsDir, true},
+		{SecretsPath, true},
+		{LogDir, true},
+		{LogDir + "/" + DenyLogName, true},
+		{"/run/paddock/", true},
+		{"/run/x/../paddock/seed", true},
+		{"/run//paddock-log", true},
+		{"/run/paddock-foo", false},
+		{"/run/paddockx", false},
+		{"/opt/paddock2", false},
+		{"/opt", false},
+		{"/run", false},
+		{"/run/paddock/..", false},
+		{"/workspace", false},
+	}
+	for _, tc := range tests {
+		if got := Reserved(tc.path); got != tc.want {
+			t.Errorf("Reserved(%q) = %v; want %v", tc.path, got, tc.want)
+		}
+	}
+}
+
 func TestWriteReadRoundTrip(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "init.json")
 	want := validConfig()

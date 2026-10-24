@@ -5,9 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"reflect"
 	"runtime"
 	"strings"
+	"syscall"
 	"testing"
 )
 
@@ -325,5 +327,21 @@ func TestProcStatusUIDs(t *testing.T) {
 	}
 	if _, err := procStatusUIDs(-1); err == nil {
 		t.Fatal("procStatusUIDs(-1) succeeded")
+	}
+	if os.Geteuid() != 0 {
+		return
+	}
+	// As root, start a process as another uid and read its uids, not ours.
+	cmd := exec.Command("/bin/sleep", "30")
+	cmd.SysProcAttr = &syscall.SysProcAttr{Credential: &syscall.Credential{Uid: 4242, Gid: 4242}}
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = cmd.Process.Kill(); _ = cmd.Wait() }()
+	if err := checkProxyUIDs(procStatusUIDs, cmd.Process.Pid, 4242); err != nil {
+		t.Errorf("uid 4242 process: %v", err)
+	}
+	if err := checkProxyUIDs(procStatusUIDs, cmd.Process.Pid, 970); err == nil {
+		t.Error("uid 4242 process passed as uid 970")
 	}
 }

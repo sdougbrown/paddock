@@ -8,6 +8,7 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/netip"
@@ -141,6 +142,7 @@ func startProxy(t *testing.T, mutate func(*sniproxy.Config)) *harness {
 	up := guesttest.EchoTLS(t, cert)
 	allow, err := sniproxy.NewAllowlist([]string{
 		"allowed.test", "second.test", "loop.test", "gone.test", "flaky.test", "slow.test", "private.test", "resolver.test", "refused.test",
+		"unspecified.test", "multicast.test", "mapped.test",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -161,8 +163,11 @@ func startProxy(t *testing.T, mutate func(*sniproxy.Config)) *harness {
 				netip.MustParseAddr("10.0.0.5"), netip.MustParseAddr("172.16.0.1"), netip.MustParseAddr("192.168.64.1"),
 				netip.MustParseAddr("fd00::5"), netip.MustParseAddr("100.100.1.1"),
 			},
-			"resolver.test": {netip.MustParseAddr("198.51.100.53")},
-			"refused.test":  {netip.MustParseAddr("203.0.113.50"), netip.MustParseAddr("203.0.113.51")},
+			"resolver.test":    {netip.MustParseAddr("198.51.100.53")},
+			"refused.test":     {netip.MustParseAddr("203.0.113.50"), netip.MustParseAddr("203.0.113.51")},
+			"unspecified.test": {netip.MustParseAddr("0.0.0.0"), netip.MustParseAddr("::")},
+			"multicast.test":   {netip.MustParseAddr("224.0.0.251"), netip.MustParseAddr("ff0e::1")},
+			"mapped.test":      {netip.MustParseAddr("::ffff:100.64.1.1"), netip.MustParseAddr("::ffff:198.51.100.53")},
 		}},
 		log:  &syncBuffer{},
 		pool: pool,
@@ -338,6 +343,66 @@ func TestProxyUpstreamEndClosesClient(t *testing.T) {
 	}
 }
 
+// A client that ends its sending side cleanly still receives the upstream's
+// reply: the proxy half-closes toward the upstream instead of tearing down
+// both directions.
+func TestProxyClientHalfCloseKeepsReply(t *testing.T) {
+	h := startProxy(t, nil)
+	cert, pool := guesttest.SelfSigned(t, "allowed.test")
+	h.dialer.target = replyAfterEOFUpstream(t, cert)
+	raw, err := net.Dial("tcp", h.addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer raw.Close()
+	_ = raw.SetDeadline(time.Now().Add(5 * time.Second))
+	c := tls.Client(raw, &tls.Config{ServerName: "allowed.test", RootCAs: pool})
+	if err := c.Handshake(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.Write([]byte("hello")); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.CloseWrite(); err != nil {
+		t.Fatal(err)
+	}
+	if err := raw.(*net.TCPConn).CloseWrite(); err != nil {
+		t.Fatal(err)
+	}
+	data, err := io.ReadAll(c)
+	if err != nil {
+		t.Fatalf("reading reply: %v", err)
+	}
+	if string(data) != "got 5 bytes\n" {
+		t.Fatalf("client read %q; want the reply sent after the upstream saw EOF", data)
+	}
+}
+
+// replyAfterEOFUpstream serves one TLS connection: it reads until the client
+// ends its stream, then replies with the byte count and closes. It returns
+// its address.
+func replyAfterEOFUpstream(t *testing.T, cert tls.Certificate) string {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { ln.Close() })
+	go func() {
+		raw, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		defer raw.Close()
+		_ = raw.SetDeadline(time.Now().Add(5 * time.Second))
+		tc := tls.Server(raw, &tls.Config{Certificates: []tls.Certificate{cert}})
+		n, _ := io.Copy(io.Discard, tc)
+		_, _ = fmt.Fprintf(tc, "got %d bytes\n", n)
+		_ = tc.Close()
+	}()
+	return ln.Addr().String()
+}
+
 // abruptUpstream serves one TLS connection: it answers the first line and
 // then closes, sending a reset when reset is set. It returns its address.
 func abruptUpstream(t *testing.T, cert tls.Certificate, reset bool) string {
@@ -430,6 +495,9 @@ func TestProxyRefusals(t *testing.T) {
 		{"unresolvable", tlsHello("gone.test"), "gone.test", sniproxy.ReasonUpstream, nil},
 		{"private upstream", tlsHello("private.test"), "private.test", sniproxy.ReasonUpstream, nil},
 		{"resolver upstream", tlsHello("resolver.test"), "resolver.test", sniproxy.ReasonUpstream, nil},
+		{"unspecified upstream", tlsHello("unspecified.test"), "unspecified.test", sniproxy.ReasonUpstream, nil},
+		{"multicast upstream", tlsHello("multicast.test"), "multicast.test", sniproxy.ReasonUpstream, nil},
+		{"mapped shared and resolver upstream", tlsHello("mapped.test"), "mapped.test", sniproxy.ReasonUpstream, nil},
 		{"every upstream refuses", tlsHello("refused.test"), "refused.test", sniproxy.ReasonUpstream,
 			[]string{"203.0.113.50:443", "203.0.113.51:443"}},
 	}

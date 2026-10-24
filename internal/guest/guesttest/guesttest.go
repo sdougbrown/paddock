@@ -19,6 +19,7 @@ import (
 	"net/netip"
 	"os"
 	"strconv"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -128,6 +129,9 @@ func (r Resolver) LookupNetIP(_ context.Context, network, host string) ([]netip.
 // goes to Proxy, and every other connection, IPv6 tcp/443 included, is
 // refused. With Open true (a missing firewall) tcp goes straight to Upstream
 // and udp to UDPUpstream.
+//
+// Net mirrors the allowlist ruleset in netpolicy (ruleset.go). A change to
+// what that ruleset lets the agent reach must change Net with it.
 type Net struct {
 	Resolver    Resolver
 	Proxy       string
@@ -233,6 +237,38 @@ func ServeProxy(t testing.TB, cfg sniproxy.Config) string {
 	t.Cleanup(func() { ln.Close() })
 	go func() { _ = p.Serve(ln) }()
 	return ln.Addr().String()
+}
+
+// Linux capability numbers for HasCaps.
+const (
+	CapNetAdmin = 12
+	CapSysAdmin = 21
+)
+
+// HasCaps reports whether the process's effective capability set holds
+// every one of caps. It reads /proc/self/status, so it is Linux only.
+func HasCaps(t testing.TB, caps ...uint) bool {
+	t.Helper()
+	b, err := os.ReadFile("/proc/self/status")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, line := range strings.Split(string(b), "\n") {
+		if v, ok := strings.CutPrefix(line, "CapEff:"); ok {
+			eff, err := strconv.ParseUint(strings.TrimSpace(v), 16, 64)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, c := range caps {
+				if eff&(1<<c) == 0 {
+					return false
+				}
+			}
+			return true
+		}
+	}
+	t.Fatal("no CapEff line in /proc/self/status")
+	return false
 }
 
 type dialFunc func(ctx context.Context, network, addr string) (net.Conn, error)

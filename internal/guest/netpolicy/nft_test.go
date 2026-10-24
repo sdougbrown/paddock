@@ -7,14 +7,16 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/sdougbrown/paddock/internal/guest/guesttest"
 )
 
 // TestNftAcceptsRulesets checks the generated rulesets with `nft -c`, which
 // parses and validates them against the kernel without applying them. It
-// needs CAP_NET_ADMIN.
+// needs root and CAP_NET_ADMIN.
 func TestNftAcceptsRulesets(t *testing.T) {
-	if runtime.GOOS != "linux" || os.Geteuid() != 0 {
-		t.Skip("needs root on linux")
+	if runtime.GOOS != "linux" || os.Geteuid() != 0 || !guesttest.HasCaps(t, guesttest.CapNetAdmin) {
+		t.Skip("needs root with CAP_NET_ADMIN on linux")
 	}
 	nft, err := NFTPath()
 	if err != nil {

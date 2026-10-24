@@ -195,6 +195,25 @@ func TestCommitNoneAndHost(t *testing.T) {
 	}
 }
 
+// The deny-all loads that start a commit get a live context, as the
+// rollback does: a cancelled caller must not keep a previous, more open
+// policy in force.
+func TestCommitDenyAllOutlivesCancel(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	for _, mode := range []Mode{ModeNone, ModeAllowlist} {
+		t.Run(string(mode), func(t *testing.T) {
+			r := &recorder{}
+			p := basePolicy()
+			p.Mode = mode
+			_ = Commit(ctx, p, CommitOptions{Apply: r.apply, StartProxy: r.step("start"), Lifeline: r.step("lifeline")})
+			if len(r.ctxErrs) == 0 || r.ctxErrs[0] != nil {
+				t.Fatalf("first deny-all load got context error %v; want a live context", r.ctxErrs)
+			}
+		})
+	}
+}
+
 // Mode none is only deny-all, so a failed load must reach the caller.
 func TestCommitNoneReportsFailedDenyAll(t *testing.T) {
 	r := &recorder{failOn: "apply deny-all"}

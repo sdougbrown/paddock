@@ -69,3 +69,31 @@ func TestLocalChecks(t *testing.T) {
 		t.Errorf("checks left files behind: %v", entries)
 	}
 }
+
+func TestWriteRefusedNotEROFS(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root bypasses file permissions")
+	}
+	dir := t.TempDir()
+	if err := os.Chmod(dir, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(dir, 0o755) })
+	results := Run(context.Background(), LocalChecks(LocalOptions{
+		UID:        501,
+		StatusPath: filepath.Join(dir, "status"),
+		ReadOnly:   []string{dir},
+	}))
+	for _, r := range results {
+		if r.Name == "readonly-mount "+dir {
+			if r.Pass {
+				t.Fatalf("permission-denied directory passed as read-only mount: %s", r.Detail)
+			}
+			if !strings.Contains(r.Detail, "refused, but not with EROFS") {
+				t.Errorf("detail = %q; want the not-EROFS failure", r.Detail)
+			}
+			return
+		}
+	}
+	t.Fatal("no readonly-mount result")
+}

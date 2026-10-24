@@ -259,6 +259,9 @@ func TestProxyDialsNextAddressAfterTimeout(t *testing.T) {
 	h.dialer.mu.Lock()
 	first, second := h.dialer.deadlines[0], h.dialer.deadlines[1]
 	h.dialer.mu.Unlock()
+	if first.IsZero() || second.IsZero() {
+		t.Fatalf("dial deadlines %v, %v; want both set", first, second)
+	}
 	// The first address gets half the time left; the second gets the rest,
 	// up to the overall deadline.
 	if gap := second.Sub(first); gap < timeout/5 {

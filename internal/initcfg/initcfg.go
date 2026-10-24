@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path"
+	"slices"
 	"strings"
 )
 
@@ -55,9 +56,23 @@ type User struct {
 	Home string `json:"home"`
 }
 
+// Network policies: the values of Network.Policy and of a profile's
+// network.policy. These constants are the one definition of the names.
+const (
+	PolicyAllowlist = "allowlist"
+	PolicyNone      = "none"
+	PolicyHost      = "host"
+)
+
+// Policies lists every network policy.
+func Policies() []string { return []string{PolicyAllowlist, PolicyNone, PolicyHost} }
+
+// ValidPolicy reports whether p names a network policy.
+func ValidPolicy(p string) bool { return slices.Contains(Policies(), p) }
+
 // Network describes the guest's egress policy.
 type Network struct {
-	Policy    string   `json:"policy"` // "allowlist" | "none" | "host"
+	Policy    string   `json:"policy"` // one of Policies()
 	Hosts     []string `json:"hosts,omitempty"`
 	ProxyPort int      `json:"proxy_port,omitempty"`
 	DenyLog   string   `json:"deny_log,omitempty"`
@@ -130,7 +145,7 @@ func (c *Config) Validate() error {
 		}
 	}
 	switch c.Network.Policy {
-	case "allowlist":
+	case PolicyAllowlist:
 		if len(c.Network.Hosts) == 0 {
 			return fmt.Errorf("initcfg: allowlist policy has no hosts")
 		}
@@ -149,7 +164,7 @@ func (c *Config) Validate() error {
 		if c.ProxyUID == c.User.UID {
 			return fmt.Errorf("initcfg: proxy uid equals user uid %d", c.ProxyUID)
 		}
-	case "none", "host":
+	case PolicyNone, PolicyHost:
 	default:
 		return fmt.Errorf("initcfg: unknown network policy %q", c.Network.Policy)
 	}

@@ -144,6 +144,16 @@ func TestValidate(t *testing.T) {
 	}
 }
 
+func TestValidateAcceptsEveryPolicy(t *testing.T) {
+	for _, p := range Policies() {
+		c := validConfig()
+		c.Network.Policy = p
+		if err := c.Validate(); err != nil {
+			t.Errorf("policy %q: %v", p, err)
+		}
+	}
+}
+
 func TestReserved(t *testing.T) {
 	tests := []struct {
 		path string

@@ -49,10 +49,7 @@ func TestHasDenialReadsTail(t *testing.T) {
 	}
 	// An entry that starts exactly at the cap is read whole.
 	exact := line("exact.test")
-	rest := exact
-	for len(rest)+len(filler) < denialLogLimit-1 {
-		rest += filler
-	}
+	rest := exact + strings.Repeat(filler, (denialLogLimit-1-len(exact))/len(filler))
 	rest += strings.Repeat(" ", denialLogLimit-len(rest)-1) + "\n"
 	at := filepath.Join(t.TempDir(), "at.jsonl")
 	if err := os.WriteFile(at, []byte(line("head.test")+rest), 0o644); err != nil {

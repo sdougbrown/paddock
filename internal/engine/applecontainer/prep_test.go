@@ -231,6 +231,7 @@ func fakeContainer(t *testing.T, existing ...string) (bin string, calls func() [
 	}
 	script := "#!/bin/sh\nprintf '%s\\037' \"$@\" >> " + log + "\necho >> " + log + "\n" +
 		"[ -e " + dir + "/fail-$1 ] && exit 1\n" +
+		"[ -e " + dir + "/fail-$1-$2 ] && exit 1\n" +
 		"case \"$1\" in\n image) cat " + tags + " ;;\n build) while [ $# -gt 0 ]; do [ \"$1\" = -t ] && echo \"$2\" >> " + tags + "; shift; done ;;\nesac\n"
 	bin = filepath.Join(dir, "container")
 	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
@@ -691,5 +692,58 @@ func TestImageExistsMatchesImageLsOutput(t *testing.T) {
 		if err != nil || got != tc.want {
 			t.Errorf("imageExists(%q) = %v, %v; want %v", tc.tag, got, err, tc.want)
 		}
+	}
+}
+
+func TestEnsureImagesPrunesSupersededTags(t *testing.T) {
+	d := writeTree(t, map[string]string{"Dockerfile": "ARG PADDOCK_PARENT\nFROM ${PADDOCK_PARENT}\n"})
+	p := &plan.Plan{Image: plan.ImagePlan{Layers: []plan.ImageLayer{{Spec: "afresh", Dockerfile: filepath.Join(d, "Dockerfile")}}}}
+
+	// Learn the current tags from a first run against an empty store.
+	bin, calls := fakeContainer(t)
+	if _, err := (&Engine{Bin: bin, Stderr: io.Discard}).ensureImages(p); err != nil {
+		t.Fatal(err)
+	}
+	builds := buildCalls(calls())
+	base, layer := flagValue(builds[0], "-t"), flagValue(builds[1], "-t")
+
+	bin, calls = fakeContainer(t,
+		base, layer,
+		"docker.io/paddock/afresh:oldlayer11111",
+		"paddock/base:oldbase000000",
+		"docker.io/paddock/base:oldbase111111",
+		"paddock/afresh:oldlayer00000",
+		"paddock/other:abcdef012345",
+		"alpine:3.22",
+		"example.com/paddock/base:notours00000",
+	)
+	e := &Engine{Bin: bin, Stderr: io.Discard}
+	if got, err := e.ensureImages(p); err != nil || got != layer {
+		t.Fatalf("ensureImages = %q, %v", got, err)
+	}
+	var removed []string
+	for _, c := range calls() {
+		if len(c) == 3 && c[0] == "image" && c[1] == "rm" {
+			removed = append(removed, c[2])
+		}
+	}
+	want := []string{
+		"docker.io/paddock/afresh:oldlayer11111",
+		"paddock/base:oldbase000000",
+		"docker.io/paddock/base:oldbase111111",
+		"paddock/afresh:oldlayer00000",
+	}
+	if strings.Join(removed, " ") != strings.Join(want, " ") {
+		t.Errorf("removed = %q, want %q", removed, want)
+	}
+
+	// A failed removal does not fail the run.
+	bin, calls = fakeContainer(t, base, layer, "paddock/base:oldbase000000")
+	failOn(t, bin, "image-rm")
+	if got, err := (&Engine{Bin: bin, Stderr: io.Discard}).ensureImages(p); err != nil || got != layer {
+		t.Fatalf("ensureImages with failing rm = %q, %v", got, err)
+	}
+	if len(calls()) < 2 {
+		t.Errorf("no removal attempted: %q", calls())
 	}
 }

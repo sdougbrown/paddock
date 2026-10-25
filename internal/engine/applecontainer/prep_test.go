@@ -345,6 +345,7 @@ func TestBuildInitConfig(t *testing.T) {
 			ManagedSettings: []byte(`{"a":1}`),
 			SeedFiles:       []string{"/h/.claude/remote-settings.json"},
 			Skills:          "/s",
+			Agents:          "/ag",
 		},
 	}
 	mounts, err := guestMounts(p, mountLayout{
@@ -369,6 +370,9 @@ func TestBuildInitConfig(t *testing.T) {
 	n := cfg.Network
 	if n.ProxyPort != 15443 || n.DenyLog != "/run/paddock-log/deny.jsonl" || n.ErrorLog != "/run/paddock-log/proxy.log" || cfg.ProxyUID != 970 {
 		t.Errorf("network = %+v uid %d", n, cfg.ProxyUID)
+	}
+	if c := cfg.Claude; string(c.ManagedSettings) != `{"a":1}` || c.Skills != "/s" || c.Agents != "/ag" {
+		t.Errorf("managed settings %s, skills %q, agents %q", c.ManagedSettings, c.Skills, c.Agents)
 	}
 	if want := []string{"remote-settings.json"}; !slices.Equal(cfg.Claude.SeedFiles, want) {
 		t.Errorf("SeedFiles = %v", cfg.Claude.SeedFiles)
@@ -449,9 +453,22 @@ func TestStageInitBinary(t *testing.T) {
 	if st, _ := os.Stat(filepath.Join(dir, "paddock-init")); st.Mode().Perm() != 0o755 {
 		t.Errorf("mode = %v", st.Mode())
 	}
+	if got, _ := os.ReadFile(filepath.Join(dir, "paddock-init")); string(got) != "binary" {
+		t.Errorf("staged content = %q", got)
+	}
 	again, err := stageInitBinary(cache, src)
 	if err != nil || again != dir {
 		t.Fatalf("restage = %q, %v", again, err)
+	}
+	if err := os.WriteFile(src, []byte("rebuilt"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	next, err := stageInitBinary(cache, src)
+	if err != nil || next == dir {
+		t.Fatalf("stage after a change = %q, %v", next, err)
+	}
+	if got, _ := os.ReadFile(filepath.Join(next, "paddock-init")); string(got) != "rebuilt" {
+		t.Errorf("restaged content = %q", got)
 	}
 }
 
@@ -759,7 +776,9 @@ func TestEnsureImagesPrunesSupersededTags(t *testing.T) {
 	if got, err := (&Engine{Bin: bin, Stderr: io.Discard}).ensureImages(p); err != nil || got != layer {
 		t.Fatalf("ensureImages with failing rm = %q, %v", got, err)
 	}
-	if len(calls()) < 2 {
+	if !slices.ContainsFunc(calls(), func(c []string) bool {
+		return slices.Equal(c, []string{"image", "rm", "paddock/base:oldbase000000"})
+	}) {
 		t.Errorf("no removal attempted: %q", calls())
 	}
 }

@@ -371,6 +371,9 @@ func TestBuildInitConfig(t *testing.T) {
 		t.Errorf("Env = %v, want %v", cfg.Env, want)
 	}
 	n := cfg.Network
+	if n.Policy != "allowlist" || !slices.Equal(n.Hosts, []string{"api.anthropic.com"}) {
+		t.Errorf("policy %q hosts %v", n.Policy, n.Hosts)
+	}
 	if n.ProxyPort != 15443 || n.DenyLog != "/run/paddock-log/deny.jsonl" || n.ErrorLog != "/run/paddock-log/proxy.log" || cfg.ProxyUID != 970 {
 		t.Errorf("network = %+v uid %d", n, cfg.ProxyUID)
 	}

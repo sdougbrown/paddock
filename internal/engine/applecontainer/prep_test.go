@@ -1,6 +1,7 @@
 package applecontainer
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -10,6 +11,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/sdougbrown/paddock/images"
 	"github.com/sdougbrown/paddock/internal/initcfg"
@@ -234,6 +236,7 @@ func fakeContainer(t *testing.T, existing ...string) (bin string, calls func() [
 	script := "#!/bin/sh\nprintf '%s\\037' \"$@\" >> " + log + "\necho >> " + log + "\n" +
 		"[ -e " + dir + "/fail-$1 ] && exit 1\n" +
 		"[ -e " + dir + "/fail-$1-$2 ] && exit 1\n" +
+		"[ -e " + dir + "/slow-$1 ] && exec sleep 30\n" +
 		"case \"$1\" in\n image) cat " + tags + " ;;\n build) while [ $# -gt 0 ]; do [ \"$1\" = -t ] && echo \"$2\" >> " + tags + "; shift; done ;;\nesac\n"
 	bin = filepath.Join(dir, "container")
 	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
@@ -285,7 +288,7 @@ func TestEnsureImagesChainsParentsAndSkipsExisting(t *testing.T) {
 	}}}
 	bin, calls := fakeContainer(t)
 	e := &Engine{Bin: bin, Stderr: io.Discard}
-	last, err := e.ensureImages(p)
+	last, err := e.ensureImages(t.Context(), p)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -311,7 +314,7 @@ func TestEnsureImagesChainsParentsAndSkipsExisting(t *testing.T) {
 
 	bin2, calls2 := fakeContainer(t, tags...)
 	e = &Engine{Bin: bin2, Stderr: io.Discard}
-	if again, err := e.ensureImages(p); err != nil || again != last {
+	if again, err := e.ensureImages(t.Context(), p); err != nil || again != last {
 		t.Fatalf("second run = %q, %v", again, err)
 	}
 	if b := buildCalls(calls2()); len(b) != 0 {
@@ -320,7 +323,7 @@ func TestEnsureImagesChainsParentsAndSkipsExisting(t *testing.T) {
 
 	bin3, calls3 := fakeContainer(t, tags[:2]...)
 	e = &Engine{Bin: bin3, Stderr: io.Discard}
-	if _, err := e.ensureImages(p); err != nil {
+	if _, err := e.ensureImages(t.Context(), p); err != nil {
 		t.Fatal(err)
 	}
 	if b := buildCalls(calls3()); len(b) != 1 || flagValue(b[0], "-t") != tags[2] || flagValue(b[0], "--build-arg") != "PADDOCK_PARENT="+tags[1] {
@@ -586,7 +589,7 @@ func TestEnsureImagesFailures(t *testing.T) {
 	bin, calls := fakeContainer(t)
 	failOn(t, bin, "build")
 	e := &Engine{Bin: bin, Stderr: io.Discard}
-	if _, err := e.ensureImages(p); err == nil {
+	if _, err := e.ensureImages(t.Context(), p); err == nil {
 		t.Fatal("want an error when build fails")
 	}
 	if b := buildCalls(calls()); len(b) != 1 {
@@ -596,11 +599,40 @@ func TestEnsureImagesFailures(t *testing.T) {
 	bin, calls = fakeContainer(t)
 	failOn(t, bin, "image")
 	e = &Engine{Bin: bin, Stderr: io.Discard}
-	if _, err := e.ensureImages(p); err == nil {
+	if _, err := e.ensureImages(t.Context(), p); err == nil {
 		t.Fatal("want an error when image ls fails")
 	}
 	if b := buildCalls(calls()); len(b) != 0 {
 		t.Errorf("builds after a failed image ls = %q", b)
+	}
+}
+
+func TestEnsureImagesStopsWhenCancelled(t *testing.T) {
+	d := writeTree(t, map[string]string{"Dockerfile": "FROM x\n"})
+	p := &plan.Plan{Image: plan.ImagePlan{Layers: []plan.ImageLayer{{Spec: "a", Dockerfile: filepath.Join(d, "Dockerfile")}}}}
+
+	bin, calls := fakeContainer(t)
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	if _, err := (&Engine{Bin: bin, Stderr: io.Discard}).ensureImages(ctx, p); err == nil {
+		t.Fatal("want an error from a cancelled context")
+	}
+	if c := calls(); len(c) != 0 {
+		t.Errorf("container calls after cancellation = %q", c)
+	}
+
+	bin, _ = fakeContainer(t)
+	if err := os.WriteFile(filepath.Join(filepath.Dir(bin), "slow-build"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel = context.WithTimeout(t.Context(), 200*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	if _, err := (&Engine{Bin: bin, Stderr: io.Discard}).ensureImages(ctx, p); err == nil {
+		t.Fatal("want an error when the context ends during a build")
+	}
+	if d := time.Since(start); d > 10*time.Second {
+		t.Errorf("ensureImages returned %v after the context ended", d)
 	}
 }
 
@@ -721,7 +753,7 @@ func TestImageExistsMatchesImageLsOutput(t *testing.T) {
 		{"app:fb710fee1985", false},
 		{"paddock/elsewhere:0123456789ab", false},
 	} {
-		got, err := e.imageExists(tc.tag)
+		got, err := e.imageExists(t.Context(), tc.tag)
 		if err != nil || got != tc.want {
 			t.Errorf("imageExists(%q) = %v, %v; want %v", tc.tag, got, err, tc.want)
 		}
@@ -734,7 +766,7 @@ func TestEnsureImagesPrunesSupersededTags(t *testing.T) {
 
 	// Learn the current tags from a first run against an empty store.
 	bin, calls := fakeContainer(t)
-	if _, err := (&Engine{Bin: bin, Stderr: io.Discard}).ensureImages(p); err != nil {
+	if _, err := (&Engine{Bin: bin, Stderr: io.Discard}).ensureImages(t.Context(), p); err != nil {
 		t.Fatal(err)
 	}
 	builds := buildCalls(calls())
@@ -751,7 +783,7 @@ func TestEnsureImagesPrunesSupersededTags(t *testing.T) {
 		"example.com/paddock/base:notours00000",
 	)
 	e := &Engine{Bin: bin, Stderr: io.Discard}
-	if got, err := e.ensureImages(p); err != nil || got != layer {
+	if got, err := e.ensureImages(t.Context(), p); err != nil || got != layer {
 		t.Fatalf("ensureImages = %q, %v", got, err)
 	}
 	var removed []string
@@ -773,7 +805,7 @@ func TestEnsureImagesPrunesSupersededTags(t *testing.T) {
 	// A failed removal does not fail the run.
 	bin, calls = fakeContainer(t, base, layer, "paddock/base:oldbase000000")
 	failOn(t, bin, "image-rm")
-	if got, err := (&Engine{Bin: bin, Stderr: io.Discard}).ensureImages(p); err != nil || got != layer {
+	if got, err := (&Engine{Bin: bin, Stderr: io.Discard}).ensureImages(t.Context(), p); err != nil || got != layer {
 		t.Fatalf("ensureImages with failing rm = %q, %v", got, err)
 	}
 	if !slices.ContainsFunc(calls(), func(c []string) bool {

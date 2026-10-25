@@ -38,9 +38,10 @@ func (e *Engine) debugf(format string, a ...any) {
 // cliTimeout bounds each short `container` CLI call.
 const cliTimeout = 5 * time.Second
 
-// cliOutput is cli with the command's standard output returned.
-func (e *Engine) cliOutput(extra time.Duration, args ...string) ([]byte, error) {
-	c, cancel := context.WithTimeout(context.Background(), cliTimeout+extra)
+// cliOutput runs one short `container` CLI call under ctx, bounded by
+// cliTimeout, and returns its standard output.
+func (e *Engine) cliOutput(ctx context.Context, args ...string) ([]byte, error) {
+	c, cancel := context.WithTimeout(ctx, cliTimeout)
 	defer cancel()
 	return exec.CommandContext(c, e.bin(), args...).Output()
 }

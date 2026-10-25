@@ -85,13 +85,13 @@ func layerTag(spec, hash string) string {
 // present, and returns the tag of the last layer. Build output goes to
 // stderr. Once the chain is built or reused, other tags of the chain's
 // repositories are removed.
-func (e *Engine) ensureImages(p *plan.Plan) (string, error) {
+func (e *Engine) ensureImages(ctx context.Context, p *plan.Plan) (string, error) {
 	hash, err := imageHash(images.BaseDockerfile, "", "")
 	if err != nil {
 		return "", err
 	}
 	tag := "paddock/base:" + hash[:12]
-	if err := e.ensureImage(tag, func() error { return e.buildBase(tag) }); err != nil {
+	if err := e.ensureImage(ctx, tag, func() error { return e.buildBase(ctx, tag) }); err != nil {
 		return "", err
 	}
 	chain := []string{tag}
@@ -103,21 +103,21 @@ func (e *Engine) ensureImages(p *plan.Plan) (string, error) {
 		if err != nil {
 			return "", fmt.Errorf("image layer %s: %w", l.Spec, err)
 		}
-		ctx := l.Context
-		if ctx == "" {
-			ctx = filepath.Dir(l.Dockerfile)
+		dir := l.Context
+		if dir == "" {
+			dir = filepath.Dir(l.Dockerfile)
 		}
-		if ctx, err = filepath.EvalSymlinks(ctx); err != nil {
+		if dir, err = filepath.EvalSymlinks(dir); err != nil {
 			return "", fmt.Errorf("image layer %s: %w", l.Spec, err)
 		}
-		hash, err := imageHash(df, ctx, tag)
+		hash, err := imageHash(df, dir, tag)
 		if err != nil {
 			return "", fmt.Errorf("image layer %s: %w", l.Spec, err)
 		}
 		next := layerTag(l.Spec, hash)
 		parent := tag
-		err = e.ensureImage(next, func() error {
-			return e.build(next, l.Dockerfile, ctx, parent)
+		err = e.ensureImage(ctx, next, func() error {
+			return e.build(ctx, next, l.Dockerfile, dir, parent)
 		})
 		if err != nil {
 			return "", err
@@ -125,7 +125,7 @@ func (e *Engine) ensureImages(p *plan.Plan) (string, error) {
 		tag = next
 		chain = append(chain, tag)
 	}
-	e.pruneSuperseded(chain)
+	e.pruneSuperseded(ctx, chain)
 	return tag, nil
 }
 
@@ -135,7 +135,7 @@ func (e *Engine) ensureImages(p *plan.Plan) (string, error) {
 // Retention is not coordinated across processes: a concurrent run that
 // prepared an older chain of the same spec and has not started its container
 // yet loses its tag, and its `container run` fails.
-func (e *Engine) pruneSuperseded(chain []string) {
+func (e *Engine) pruneSuperseded(ctx context.Context, chain []string) {
 	keep := make(map[string]bool, len(chain))
 	repos := make(map[string]bool, len(chain))
 	for _, t := range chain {
@@ -143,7 +143,7 @@ func (e *Engine) pruneSuperseded(chain []string) {
 		repo, _, _ := strings.Cut(t, ":")
 		repos[repo] = true
 	}
-	out, err := e.cliOutput(0, "image", "ls", "--quiet")
+	out, err := e.cliOutput(ctx, "image", "ls", "--quiet")
 	if err != nil {
 		e.debugf("prune images: container image ls: %v", err)
 		return
@@ -154,7 +154,7 @@ func (e *Engine) pruneSuperseded(chain []string) {
 		if !ok || !repos[repo] || keep[name] {
 			continue
 		}
-		if _, err := e.cliOutput(0, "image", "rm", line); err != nil {
+		if _, err := e.cliOutput(ctx, "image", "rm", line); err != nil {
 			e.debugf("prune images: container image rm %s: %v", line, err)
 			continue
 		}
@@ -162,8 +162,8 @@ func (e *Engine) pruneSuperseded(chain []string) {
 	}
 }
 
-func (e *Engine) ensureImage(tag string, build func() error) error {
-	have, err := e.imageExists(tag)
+func (e *Engine) ensureImage(ctx context.Context, tag string, build func() error) error {
+	have, err := e.imageExists(ctx, tag)
 	if err != nil {
 		return err
 	}
@@ -174,8 +174,8 @@ func (e *Engine) ensureImage(tag string, build func() error) error {
 	return build()
 }
 
-func (e *Engine) imageExists(tag string) (bool, error) {
-	out, err := e.cliOutput(0, "image", "ls", "--quiet")
+func (e *Engine) imageExists(ctx context.Context, tag string) (bool, error) {
+	out, err := e.cliOutput(ctx, "image", "ls", "--quiet")
 	if err != nil {
 		return false, fmt.Errorf("container image ls: %w", err)
 	}
@@ -187,7 +187,7 @@ func (e *Engine) imageExists(tag string) (bool, error) {
 	return false, nil
 }
 
-func (e *Engine) buildBase(tag string) error {
+func (e *Engine) buildBase(ctx context.Context, tag string) error {
 	dir, err := os.MkdirTemp("", "paddock-base-")
 	if err != nil {
 		return err
@@ -197,21 +197,21 @@ func (e *Engine) buildBase(tag string) error {
 	if err := os.WriteFile(df, images.BaseDockerfile, 0o644); err != nil {
 		return err
 	}
-	return e.build(tag, df, dir, "")
+	return e.build(ctx, tag, df, dir, "")
 }
 
 // buildTimeout bounds one `container build`.
 const buildTimeout = 30 * time.Minute
 
-func (e *Engine) build(tag, dockerfile, contextDir, parent string) error {
+func (e *Engine) build(ctx context.Context, tag, dockerfile, contextDir, parent string) error {
 	args := []string{"build", "-f", dockerfile, "-t", tag}
 	if parent != "" {
 		args = append(args, "--build-arg", "PADDOCK_PARENT="+parent)
 	}
 	args = append(args, contextDir)
-	ctx, cancel := context.WithTimeout(context.Background(), buildTimeout)
+	c, cancel := context.WithTimeout(ctx, buildTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, e.bin(), args...)
+	cmd := exec.CommandContext(c, e.bin(), args...)
 	cmd.Stdout = e.Stderr
 	cmd.Stderr = e.Stderr
 	if err := cmd.Run(); err != nil {

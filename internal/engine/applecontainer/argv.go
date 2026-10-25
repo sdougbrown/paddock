@@ -3,6 +3,7 @@ package applecontainer
 import (
 	"fmt"
 	"strconv"
+	"strings"
 
 	"github.com/sdougbrown/paddock/internal/initcfg"
 	"github.com/sdougbrown/paddock/internal/plan"
@@ -25,8 +26,24 @@ type mountLayout struct {
 }
 
 // guestMounts lists the plan's mounts followed by the paddock-managed ones. A
-// plan mount whose guest path is paddock-managed is an error.
+// plan mount whose guest path is paddock-managed is an error, and so is any
+// path containing ':', which `-v host:guest[:ro]` cannot express.
 func guestMounts(p *plan.Plan, l mountLayout) ([]guestMount, error) {
+	ms, err := listMounts(p, l)
+	if err != nil {
+		return nil, err
+	}
+	for _, m := range ms {
+		for _, path := range []string{m.Host, m.Guest} {
+			if strings.Contains(path, ":") {
+				return nil, fmt.Errorf("mount path %q contains ':'", path)
+			}
+		}
+	}
+	return ms, nil
+}
+
+func listMounts(p *plan.Plan, l mountLayout) ([]guestMount, error) {
 	var ms []guestMount
 	for _, m := range p.Mounts {
 		if initcfg.Reserved(m.Guest) {

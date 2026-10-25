@@ -132,6 +132,9 @@ func (e *Engine) ensureImages(p *plan.Plan) (string, error) {
 // pruneSuperseded removes every tag of a repository in chain that is not in
 // chain. Other repositories are never touched, and a failure to list or remove
 // is logged and ignored: an image still used by a running container stays.
+// Retention is not coordinated across processes: a concurrent run that
+// prepared an older chain of the same spec and has not started its container
+// yet loses its tag, and its `container run` fails.
 func (e *Engine) pruneSuperseded(chain []string) {
 	keep := make(map[string]bool, len(chain))
 	repos := make(map[string]bool, len(chain))
@@ -177,7 +180,7 @@ func (e *Engine) imageExists(tag string) (bool, error) {
 		return false, fmt.Errorf("container image ls: %w", err)
 	}
 	for _, line := range strings.Fields(string(out)) {
-		if line == tag || strings.HasSuffix(line, "/"+tag) {
+		if strings.TrimPrefix(line, "docker.io/") == tag {
 			return true, nil
 		}
 	}

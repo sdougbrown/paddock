@@ -667,6 +667,18 @@ func TestGuestMountsRejectManagedGuestPaths(t *testing.T) {
 	}
 }
 
+func TestGuestMountsRejectColons(t *testing.T) {
+	for _, m := range []plan.Mount{{Host: "/w/a:b", Guest: "/w/a:b"}, {Host: "/h", Guest: "/g:x"}} {
+		p := &plan.Plan{Mounts: []plan.Mount{m}}
+		if _, err := guestMounts(p, mountLayout{TranscriptDir: "/t"}); err == nil || !strings.Contains(err.Error(), "':'") {
+			t.Errorf("mount %+v: err = %v", m, err)
+		}
+	}
+	if _, err := guestMounts(&plan.Plan{}, mountLayout{TranscriptDir: "/t:x"}); err == nil {
+		t.Error("a managed host path with ':' was accepted")
+	}
+}
+
 func TestImageExistsMatchesImageLsOutput(t *testing.T) {
 	// Output shape of `container image ls -q` from Apple container 1.6.0, plus
 	// a docker.io/-prefixed name as printed after a build.
@@ -678,6 +690,7 @@ func TestImageExistsMatchesImageLsOutput(t *testing.T) {
 		"paddock/afresh:bf490c6a3900",
 		"paddock/base:2887019daf15",
 		"docker.io/paddock/built:0123456789ab",
+		"example.com/paddock/elsewhere:0123456789ab",
 	)
 	e := &Engine{Bin: bin, Stderr: io.Discard}
 	for _, tc := range []struct {
@@ -689,6 +702,7 @@ func TestImageExistsMatchesImageLsOutput(t *testing.T) {
 		{"paddock/afresh:000000000000", false},
 		{"fresh:bf490c6a3900", false},
 		{"app:fb710fee1985", false},
+		{"paddock/elsewhere:0123456789ab", false},
 	} {
 		got, err := e.imageExists(tc.tag)
 		if err != nil || got != tc.want {

@@ -17,7 +17,10 @@ import (
 
 // imageHash is a hex digest over the Dockerfile bytes, the context tree
 // (relative paths, modes, and contents or link targets, sorted), and the
-// parent tag. A symlinked contextDir is resolved first. An empty contextDir
+// parent tag. Symlinks inside the context are hashed by their link target, not
+// the content they point at: a Dockerfile COPY of a directory copies links as
+// links, so retargeting a link changes the image and editing its target's
+// content does not. A symlinked contextDir is resolved first. An empty contextDir
 // contributes an empty tree.
 func imageHash(dockerfile []byte, contextDir, parentTag string) (string, error) {
 	h := sha256.New()

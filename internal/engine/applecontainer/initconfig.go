@@ -54,7 +54,8 @@ func splitEnv(env []plan.EnvVar) (literals, secretRefs []plan.EnvVar) {
 // buildInitConfig assembles the init config for p. Literal env values go into
 // Env, with the passthrough variables added only where the plan does not set
 // the same name; any file or env source makes Secrets point at secrets.env.
-// An empty Plan.Workdir is an error.
+// An empty Plan.Workdir is an error, and so is a seed file named like the
+// read-only user settings file when the plan has managed settings.
 func buildInitConfig(p *plan.Plan, in initInput) (*initcfg.Config, error) {
 	if p.Workdir == "" {
 		return nil, errors.New("plan has no workdir")
@@ -108,7 +109,11 @@ func buildInitConfig(p *plan.Plan, in initInput) (*initcfg.Config, error) {
 		TranscriptDir:   in.TranscriptDir,
 	}
 	for _, f := range p.Claude.SeedFiles {
-		cfg.Claude.SeedFiles = append(cfg.Claude.SeedFiles, filepath.Base(f))
+		base := filepath.Base(f)
+		if len(p.Claude.ManagedSettings) > 0 && base == path.Base(userSettingsPath(in.User.Home)) {
+			return nil, fmt.Errorf("claude.seed_files: %s would replace the read-only settings file that holds the managed settings", f)
+		}
+		cfg.Claude.SeedFiles = append(cfg.Claude.SeedFiles, base)
 	}
 	for _, m := range in.Mounts {
 		cfg.Mounts = append(cfg.Mounts, initcfg.Mount{Path: m.Guest, ReadOnly: m.ReadOnly})

@@ -850,3 +850,18 @@ func TestNewRunName(t *testing.T) {
 		t.Errorf("two run names are both %q", a)
 	}
 }
+
+func TestBuildInitConfigRejectsSeedOverManagedSettings(t *testing.T) {
+	p := &plan.Plan{
+		Workspace: "/w", Workdir: "/w", Argv: []string{"claude"},
+		Network: plan.Network{Policy: initcfg.PolicyNone},
+		Claude:  plan.ClaudePlan{SeedFiles: []string{"/h/.claude/settings.json"}},
+	}
+	if _, err := buildInitConfig(p, initInput{User: testUser}); err != nil {
+		t.Fatalf("settings.json seed without managed settings: %v", err)
+	}
+	p.Claude.ManagedSettings = []byte(`{}`)
+	if _, err := buildInitConfig(p, initInput{User: testUser}); err == nil || !strings.Contains(err.Error(), "settings.json") {
+		t.Errorf("settings.json seed with managed settings: err = %v", err)
+	}
+}

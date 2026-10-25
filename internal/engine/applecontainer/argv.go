@@ -28,6 +28,11 @@ type mountLayout struct {
 // guestMounts lists the plan's mounts followed by the paddock-managed ones. A
 // plan mount whose guest path is paddock-managed is an error, and so is any
 // path containing ':', which `-v host:guest[:ro]` cannot express.
+//
+// These checks repeat resolve's mount rules (resolver.go, Resolver.mounts) at
+// the point where the engine builds `container run` arguments, and also cover
+// the workspace mount and the paddock-managed mounts, which resolve does not
+// check. A new mount rule belongs in both places.
 func guestMounts(p *plan.Plan, l mountLayout) ([]guestMount, error) {
 	ms, err := listMounts(p, l)
 	if err != nil {

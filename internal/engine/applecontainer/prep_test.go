@@ -685,13 +685,13 @@ func TestGuestMountsRejectManagedGuestPaths(t *testing.T) {
 }
 
 func TestGuestMountsRejectColons(t *testing.T) {
-	for _, m := range []plan.Mount{{Host: "/w/a:b", Guest: "/w/a:b"}, {Host: "/h", Guest: "/g:x"}} {
+	for _, m := range []plan.Mount{{Host: "/h:x", Guest: "/g"}, {Host: "/h", Guest: "/g:x"}} {
 		p := &plan.Plan{Mounts: []plan.Mount{m}}
 		if _, err := guestMounts(p, mountLayout{TranscriptDir: "/t"}); err == nil || !strings.Contains(err.Error(), "':'") {
 			t.Errorf("mount %+v: err = %v", m, err)
 		}
 	}
-	if _, err := guestMounts(&plan.Plan{}, mountLayout{TranscriptDir: "/t:x"}); err == nil {
+	if _, err := guestMounts(&plan.Plan{}, mountLayout{TranscriptDir: "/t", BinDir: "/bin:x"}); err == nil {
 		t.Error("a managed host path with ':' was accepted")
 	}
 }

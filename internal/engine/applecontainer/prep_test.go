@@ -2,9 +2,11 @@ package applecontainer
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -745,5 +747,38 @@ func TestEnsureImagesPrunesSupersededTags(t *testing.T) {
 	}
 	if len(calls()) < 2 {
 		t.Errorf("no removal attempted: %q", calls())
+	}
+}
+
+func TestLocateInitBinary(t *testing.T) {
+	exe := func() (string, error) { return "/opt/bin/paddock", nil }
+	set := func(k string) string {
+		if k == "PADDOCK_INIT" {
+			return "/custom/paddock-init"
+		}
+		return ""
+	}
+	unset := func(string) string { return "" }
+
+	if got, err := locateInitBinary(set, exe); err != nil || got != "/custom/paddock-init" {
+		t.Errorf("with $PADDOCK_INIT: %q, %v", got, err)
+	}
+	if got, err := locateInitBinary(unset, exe); err != nil || got != "/opt/bin/paddock-init" {
+		t.Errorf("beside the executable: %q, %v", got, err)
+	}
+	failing := func() (string, error) { return "", errors.New("no executable") }
+	if _, err := locateInitBinary(unset, failing); err == nil {
+		t.Error("want the executable lookup error")
+	}
+}
+
+func TestNewRunName(t *testing.T) {
+	re := regexp.MustCompile(`^paddock-[0-9a-f]{8}$`)
+	a, err := newRunName()
+	if err != nil || !re.MatchString(a) {
+		t.Fatalf("newRunName() = %q, %v", a, err)
+	}
+	if b, _ := newRunName(); b == a {
+		t.Errorf("two run names are both %q", a)
 	}
 }

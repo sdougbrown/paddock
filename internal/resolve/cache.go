@@ -15,8 +15,14 @@ import (
 	"github.com/sdougbrown/paddock/internal/plan"
 )
 
+// CacheRoot returns paddock's host cache root, <home>/.cache/paddock. The
+// setup caches and the engine's staged binaries live under it.
+func CacheRoot(home string) string {
+	return filepath.Join(home, ".cache", "paddock")
+}
+
 // CacheDir returns the host dependency-cache directory for a spec and
-// workdir: <home>/.cache/paddock/<ref as nested directories>/<first 16 hex of
+// workdir: <CacheRoot>/<ref as nested directories>/<first 16 hex of
 // sha256 of the workdir's keyFile>. home must be absolute. Refs are validated
 // against ".." when the spec chain loads.
 func CacheDir(home, ref, workdir, keyFile string) (string, error) {
@@ -27,7 +33,7 @@ func CacheDir(home, ref, workdir, keyFile string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("setup.cache_key: %w", err)
 	}
-	return filepath.Join(home, ".cache", "paddock", filepath.FromSlash(ref), hex.EncodeToString(sum)[:16]), nil
+	return filepath.Join(CacheRoot(home), filepath.FromSlash(ref), hex.EncodeToString(sum)[:16]), nil
 }
 
 // maxKeyFileSize bounds how much of a cache_key file CacheDir reads.

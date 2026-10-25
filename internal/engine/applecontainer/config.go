@@ -14,7 +14,7 @@ type Engine struct {
 	Bin       string // container CLI; default "container"
 	Home      string // default: the user's home directory
 	StateRoot string // default: <home>/.local/state/paddock
-	CacheRoot string // default: <home>/.cache/paddock
+	CacheRoot string // default: resolve.CacheRoot(home)
 	Stdin     *os.File
 	Stdout    io.Writer
 	Stderr    io.Writer

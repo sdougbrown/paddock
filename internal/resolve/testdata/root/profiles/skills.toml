@@ -1,0 +1,3 @@
+engine = "apple-container"
+[claude]
+skills = "/not/mounted"

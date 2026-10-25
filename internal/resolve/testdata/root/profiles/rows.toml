@@ -1,0 +1,11 @@
+engine = "apple-container"
+default_spec = "afresh"
+
+[workspace]
+mode = "rw"
+readonly = ["repo"]
+
+[network]
+policy = "allowlist"
+run = ["anthropic"]
+setup = ["anthropic", "registries"]

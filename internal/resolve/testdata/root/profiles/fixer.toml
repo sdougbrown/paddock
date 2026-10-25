@@ -1,0 +1,28 @@
+engine = "apple-container"
+default_spec = "afresh"
+
+[workspace]
+mode = "rw"
+readonly = ["repo"]
+
+[network]
+policy = "allowlist"
+run = ["anthropic"]
+setup = ["anthropic", "registries"]
+
+[env]
+CLAUDE_CODE_OAUTH_TOKEN = "file:~/.secrets/claude.token"
+HOST_NAME = "env:HOST_NAME"
+MODE = "fixer"
+
+[mounts]
+readonly = ["~/.botfiles/skills", "~/.botfiles/agents"]
+
+[limits]
+cpus = 4
+memory = "6G"
+
+[claude]
+seed_files = ["~/.claude/remote-settings.json"]
+skills = "~/.botfiles/skills"
+agents = "~/.botfiles/agents"

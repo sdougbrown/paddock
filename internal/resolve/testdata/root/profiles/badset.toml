@@ -1,0 +1,4 @@
+engine = "apple-container"
+[network]
+policy = "allowlist"
+run = ["nope"]

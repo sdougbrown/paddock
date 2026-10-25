@@ -1,0 +1,13 @@
+[image]
+dockerfile = "images/afresh/Dockerfile"
+
+[egress]
+anthropic = ["api.anthropic.com", "downloads.claude.ai"]
+unused = ["unused.example.com"]
+registries = ["registry.yarnpkg.com", "registry.npmjs.org"]
+
+[claude]
+managed_settings = "claude/afresh-managed-settings.json"
+
+[env]
+CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC = "1"

@@ -15,6 +15,9 @@ Agent-specific behavior (what to run, which prompt, which skills) belongs to the
   trust = repository; the resolver enforces the rules for them even though v1 does not load them.
 - No spec, at any trust level, may add a rw mount, set an env credential (`file:` or `env:` value
   source), or define host hooks. Profiles may not define host hooks either.
+- The one rw mount a spec can cause is the setup-phase dependency cache: `setup.cache_dir` must lie
+  under `/var/cache/paddock/`, and paddock picks the host directory under `~/.cache/paddock`. The
+  run phase never mounts it. SECURITY.md residual risk 7 covers what it shares between workspaces.
 - Only operator specs may define `[egress]` sets; a repository spec must extend an operator parent.
 - A child spec adds contents and never overrides a parent (egress set, env name, setup command,
   managed-settings scalar).

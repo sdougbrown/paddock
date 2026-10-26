@@ -8,23 +8,40 @@ import (
 )
 
 // TestRemoveSecretsOnceRunning drives removeSecretsOnceRunning with a fake
-// CLI whose `container ls` reports the container running or never lists it.
-// Either way secrets.env must be gone soon after the matching wait.
+// CLI whose `container ls` lists the container as running from the start,
+// only after a delay, or never. secrets.env must survive until the matching
+// wait ends (secretsGrace once running, secretsStartWait otherwise), then
+// be removed.
 func TestRemoveSecretsOnceRunning(t *testing.T) {
+	const running = `[{"configuration":{"id":"paddock-test"},"status":{"state":"running"}}]`
+	const grace = 400 * time.Millisecond
 	tests := []struct {
-		name string
-		ls   string // `container ls --format json` output
+		name      string
+		runningAt time.Duration // when ls starts listing it as running; <0 never
+		startWait time.Duration
+		removedBy time.Duration // earliest time secrets.env may go
 	}{
-		{"running, guest never unlinks", `[{"configuration":{"id":"paddock-test"},"status":{"state":"running"}}]`},
-		{"never running", `[]`},
+		{"running from the start", 0, 5 * time.Second, grace},
+		{"running after a delay", 600 * time.Millisecond, 5 * time.Second, 600*time.Millisecond + grace},
+		{"never running", -1, time.Second, time.Second},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			dir := t.TempDir()
-			bin := filepath.Join(dir, "container")
-			if err := os.WriteFile(filepath.Join(dir, "ls.json"), []byte(tt.ls), 0o644); err != nil {
-				t.Fatal(err)
+			ls := filepath.Join(dir, "ls.json")
+			setLs := func(s string) {
+				if err := os.WriteFile(ls+".tmp", []byte(s), 0o644); err != nil {
+					t.Error(err)
+				}
+				if err := os.Rename(ls+".tmp", ls); err != nil {
+					t.Error(err)
+				}
 			}
+			setLs("[]")
+			if tt.runningAt == 0 {
+				setLs(running)
+			}
+			bin := filepath.Join(dir, "container")
 			if err := os.WriteFile(bin, []byte("#!/bin/sh\ncat \"${0%/*}/ls.json\"\n"), 0o755); err != nil {
 				t.Fatal(err)
 			}
@@ -36,16 +53,28 @@ func TestRemoveSecretsOnceRunning(t *testing.T) {
 			if err := os.WriteFile(file, []byte("TOKEN=x\n"), 0o600); err != nil {
 				t.Fatal(err)
 			}
-			e := &Engine{Bin: bin, secretsGrace: 300 * time.Millisecond, secretsStartWait: 300 * time.Millisecond}
-			returned := make(chan struct{})
+			e := &Engine{Bin: bin, secretsGrace: grace, secretsStartWait: tt.startWait}
 			done := make(chan struct{})
 			defer close(done)
+			returned := make(chan time.Duration, 1)
+			start := time.Now()
 			go func() {
 				e.removeSecretsOnceRunning("paddock-test", secrets, done)
-				close(returned)
+				returned <- time.Since(start)
 			}()
+			if tt.runningAt > 0 {
+				time.Sleep(tt.runningAt)
+				setLs(running)
+			}
+			time.Sleep(tt.removedBy - 150*time.Millisecond - time.Since(start))
+			if _, err := os.Stat(file); err != nil {
+				t.Fatalf("secrets.env gone at %s, before %s: %v", time.Since(start), tt.removedBy, err)
+			}
 			select {
-			case <-returned:
+			case d := <-returned:
+				if d < tt.removedBy || d > tt.removedBy+3*time.Second {
+					t.Errorf("returned after %s; want between %s and %s", d, tt.removedBy, tt.removedBy+3*time.Second)
+				}
 			case <-time.After(10 * time.Second):
 				t.Fatal("removeSecretsOnceRunning still waiting after 10s")
 			}

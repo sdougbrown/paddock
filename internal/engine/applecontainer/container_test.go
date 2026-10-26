@@ -255,7 +255,11 @@ func TestContainerSIGTERMBeforeRunningStillExits143(t *testing.T) {
 // promptly without ever creating the container.
 func TestContainerCancelBeforeStartNeverStarts(t *testing.T) {
 	h := startHelper(t, "exec sleep 300", "HELPER_START_DELAY=20s")
-	eventually(t, 30*time.Second, "run dir to appear", func() bool { return h.name() != "" })
+	// secrets.env is the last file Run writes before the start delay.
+	eventually(t, 30*time.Second, "secrets.env to be written", func() bool {
+		_, err := os.Stat(filepath.Join(h.runDir(), "secrets", secretsFile))
+		return h.name() != "" && err == nil
+	})
 	name := h.name()
 	start := time.Now()
 	if err := h.cmd.Process.Signal(syscall.SIGUSR1); err != nil {

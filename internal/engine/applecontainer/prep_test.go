@@ -140,9 +140,19 @@ func TestResolveSecretsFailsOnUnsetSource(t *testing.T) {
 }
 
 func TestTranscriptDirEncoding(t *testing.T) {
+	// Expected names come from running the project-dir function of Claude
+	// Code 2.1.303 (s0 in its bundle) in node on the same inputs.
+	emoji := "\U0001F600"
 	cases := map[string]string{
 		"/private/tmp/claude-501/-Users-douglasbrown--botfiles/x": "-private-tmp-claude-501--Users-douglasbrown--botfiles-x",
 		"/Users/me/Code/my.repo_v2":                               "-Users-me-Code-my-repo-v2",
+		"/Users/u/Code/my_repo.v2":                                "-Users-u-Code-my-repo-v2",
+		"/w/caf\u00e9 " + emoji + "x":                             "-w-caf----x",
+		"/w/" + strings.Repeat("b", 197):                          "-w-" + strings.Repeat("b", 197),
+		"/w/" + strings.Repeat("b", 198):                          "-w-" + strings.Repeat("b", 197) + "-jtl6k9",
+		"/w/" + strings.Repeat("a", 250):                          "-w-" + strings.Repeat("a", 197) + "-9arrx5",
+		"/w/" + strings.Repeat(emoji, 110):                        "-w-" + strings.Repeat("-", 197) + "-16fk1b",
+		"/w/" + strings.Repeat("c", 300):                          "-w-" + strings.Repeat("c", 197) + "-klqcw7",
 	}
 	for ws, enc := range cases {
 		got := transcriptDir("/home/u", ws)

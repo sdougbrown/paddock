@@ -268,6 +268,11 @@ func TestLookPath(t *testing.T) {
 	if got, err := lookPath("/bin/tool", ""); err != nil || got != "/bin/tool" {
 		t.Errorf("absolute path: got %q, %v", got, err)
 	}
+	// An empty entry does not search the working directory.
+	t.Chdir(filepath.Join(dir, "b"))
+	if got, err := lookPath("tool", ":"+filepath.Join(dir, "a")); err == nil {
+		t.Errorf("empty entry searched the working directory: %q", got)
+	}
 }
 
 func TestEnvValue(t *testing.T) {

@@ -97,8 +97,10 @@ func agentEnv(inherited []string, u initcfg.User, extra, secrets []string) ([]st
 	return env, nil
 }
 
-// lookPath finds file on the colon-separated list dirs, the way execvp
-// does: a name containing a slash is used as is.
+// lookPath finds file on the colon-separated list dirs: a name containing a
+// slash is used as is. Unlike execvp, an empty entry is skipped rather than
+// read as the current directory, so a file in the agent's working directory
+// never stands in for a command on PATH.
 func lookPath(file, dirs string) (string, error) {
 	if strings.Contains(file, "/") {
 		return file, nil

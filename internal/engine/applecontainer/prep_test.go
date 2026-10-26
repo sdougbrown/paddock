@@ -770,6 +770,23 @@ func TestGuestMountsRejectManagedGuestPaths(t *testing.T) {
 	}
 }
 
+func TestGuestMountsRejectTranscriptAndSettingsPaths(t *testing.T) {
+	l := mountLayout{TranscriptDir: "/h/.claude/projects/-w", UserSettings: "/s/user-settings.json", UserSettingsAt: "/h/.claude/settings.json"}
+	for _, guest := range []string{"/h/.claude/projects/-w", "/h/.claude/projects/-w/sub", "/h/.claude/settings.json"} {
+		p := &plan.Plan{Mounts: []plan.Mount{{Host: "/x", Guest: guest}}}
+		if _, err := guestMounts(p, l); err == nil || !strings.Contains(err.Error(), "paddock-managed") {
+			t.Errorf("guest %q: err = %v", guest, err)
+		}
+	}
+	p := &plan.Plan{Mounts: []plan.Mount{{Host: "/x", Guest: "/h/.claude/projects/-w2"}, {Host: "/y", Guest: "/h/.claude/settings.json.d"}}}
+	if _, err := guestMounts(p, l); err != nil {
+		t.Errorf("sibling paths rejected: %v", err)
+	}
+	if _, err := guestMounts(&plan.Plan{Mounts: []plan.Mount{{Host: "/x", Guest: "/h/.claude/settings.json"}}}, mountLayout{TranscriptDir: "/t"}); err != nil {
+		t.Errorf("settings path without a settings mount: %v", err)
+	}
+}
+
 func TestGuestMountsRejectColons(t *testing.T) {
 	for _, m := range []plan.Mount{{Host: "/h:x", Guest: "/g"}, {Host: "/h", Guest: "/g:x"}} {
 		p := &plan.Plan{Mounts: []plan.Mount{m}}

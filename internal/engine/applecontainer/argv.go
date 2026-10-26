@@ -2,6 +2,8 @@ package applecontainer
 
 import (
 	"fmt"
+	"path"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -39,9 +41,9 @@ func guestMounts(p *plan.Plan, l mountLayout) ([]guestMount, error) {
 		return nil, err
 	}
 	for _, m := range ms {
-		for _, path := range []string{m.Host, m.Guest} {
-			if strings.Contains(path, ":") {
-				return nil, fmt.Errorf("mount path %q contains ':'", path)
+		for _, s := range []string{m.Host, m.Guest} {
+			if strings.Contains(s, ":") {
+				return nil, fmt.Errorf("mount path %q contains ':'", s)
 			}
 		}
 	}
@@ -49,9 +51,13 @@ func guestMounts(p *plan.Plan, l mountLayout) ([]guestMount, error) {
 }
 
 func listMounts(p *plan.Plan, l mountLayout) ([]guestMount, error) {
+	managed := []string{l.TranscriptDir}
+	if l.UserSettings != "" {
+		managed = append(managed, l.UserSettingsAt)
+	}
 	var ms []guestMount
 	for _, m := range p.Mounts {
-		if initcfg.Reserved(m.Guest) {
+		if initcfg.Reserved(m.Guest) || slices.ContainsFunc(managed, func(d string) bool { return atOrUnder(m.Guest, d) }) {
 			return nil, fmt.Errorf("plan mount %q targets paddock-managed guest path %s", m.Host, m.Guest)
 		}
 		ms = append(ms, guestMount{m.Host, m.Guest, m.ReadOnly})
@@ -69,6 +75,15 @@ func listMounts(p *plan.Plan, l mountLayout) ([]guestMount, error) {
 		ms = append(ms, guestMount{l.UserSettings, l.UserSettingsAt, true})
 	}
 	return ms, nil
+}
+
+// atOrUnder reports whether guest path p is dir or lies under it.
+func atOrUnder(p, dir string) bool {
+	if dir == "" {
+		return false
+	}
+	p, dir = path.Clean(p), path.Clean(dir)
+	return p == dir || strings.HasPrefix(p, dir+"/")
 }
 
 // runSpec is everything `container run` needs. It holds no secret values.

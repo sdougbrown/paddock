@@ -31,14 +31,10 @@ const watchdogDone = 'x'
 // watchdogReady is the byte the watchdog writes on fd 4 once it holds the pipe on fd 3.
 const watchdogReady = 'r'
 
-// watchdogStopGrace is how many seconds the watchdog's `container stop`
-// gives the guest before killing it.
-const watchdogStopGrace = 2
-
 // watchdogCLITimeout bounds each `container` call the watchdog makes, so a
 // hung container service cannot keep it from removing the run's directories.
-// It is the stop timeout for watchdogStopGrace.
-var watchdogCLITimeout = stopTimeout(watchdogStopGrace)
+// It is the stop timeout for orphanStopGrace.
+var watchdogCLITimeout = stopTimeout(orphanStopGrace)
 
 // watchdogStopTries is how many times the watchdog tries `container stop`
 // before it deletes the container anyway.
@@ -76,7 +72,7 @@ func RunWatchdog(args []string) int {
 		return 0
 	}
 	for range watchdogStopTries {
-		if _, err := e.cliRun(context.Background(), watchdogCLITimeout, stopArgs(name, watchdogStopGrace)...); err == nil {
+		if _, err := e.cliRun(context.Background(), watchdogCLITimeout, stopArgs(name, orphanStopGrace)...); err == nil {
 			break
 		}
 		time.Sleep(watchdogRetry)

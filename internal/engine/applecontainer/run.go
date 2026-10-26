@@ -269,7 +269,7 @@ func (e *Engine) Run(ctx context.Context, p *plan.Plan, o engine.Options) (int, 
 		if ws, ok := exitErr.Sys().(syscall.WaitStatus); ok && ws.Signaled() {
 			code = 128 + int(ws.Signal())
 			// The client died without the container's own exit; stop it.
-			e.stopContainer(name, 2)
+			e.stopContainer(name, orphanStopGrace)
 		}
 	default:
 		return 1, waitErr
@@ -293,6 +293,14 @@ func (e *Engine) cli(args ...string) error {
 	_, err := e.cliOutput(context.Background(), args...)
 	return err
 }
+
+// orphanStopGrace is the stop grace, in seconds, for a container whose
+// paddock side is gone: the `container run` client died (Run) or paddock
+// itself died (the watchdog). Nobody is waiting on the guest's exit and it
+// got no signal of its own, so it is stopped promptly. A cancellation uses
+// Engine.stopGrace instead: the guest has already had SIGTERM and
+// cancelGrace, and the stop is the caller's last word.
+const orphanStopGrace = 2
 
 // stopArgs is the `container stop` argv that stops name, killing it after
 // grace seconds. Run and the watchdog both stop containers with it.

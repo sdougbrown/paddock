@@ -105,7 +105,13 @@ func TestForwardSignalsDeliversQueuedSignalsInOrder(t *testing.T) {
 			}
 			kills := filepath.Join(dir, "kills")
 			bin := filepath.Join(dir, "container")
-			script := "#!/bin/sh\nd=\"${0%/*}\"\ncase \"$1\" in\n ls) cat \"$d/ls.json\" ;;\n kill) echo \"$3\" >> \"$d/kills\" ;;\nesac\n"
+			// Each `ls` logs a line after it has read ls.json, so the test can
+			// tell when the loop's checks have seen the booting state.
+			script := "#!/bin/sh\nd=\"${0%/*}\"\ncase \"$1\" in\n ls) cat \"$d/ls.json\"; echo >> \"$d/ls.log\" ;;\n kill) echo \"$3\" >> \"$d/kills\" ;;\nesac\n"
+			lsCalls := func() int {
+				b, _ := os.ReadFile(filepath.Join(dir, "ls.log"))
+				return strings.Count(string(b), "\n")
+			}
 			if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
 				t.Fatal(err)
 			}
@@ -126,14 +132,17 @@ func TestForwardSignalsDeliversQueuedSignalsInOrder(t *testing.T) {
 			for _, s := range tt.sigs {
 				sigs <- s
 			}
+			// A select with both a signal and the cancellation ready picks
+			// either, so cancel only once the loop has taken the signals.
+			eventually(t, 5*time.Second, "signals to be received", func() bool { return len(sigs) == 0 })
 			if tt.cancel {
-				// A select with both a signal and the cancellation ready picks
-				// either, so cancel only once the loop has taken the signals.
-				eventually(t, 5*time.Second, "signals to be received", func() bool { return len(sigs) == 0 })
 				cancel()
 			}
-			// Let the loop take everything in while the container is booting.
-			time.Sleep(3 * pendingRetry)
+			// The loop runs one check per iteration. A few more completed
+			// checks mean it has handled every signal and the cancellation
+			// while the container was still booting.
+			n := lsCalls()
+			eventually(t, 10*time.Second, "checks while booting", func() bool { return lsCalls() >= n+3 })
 			if b, _ := os.ReadFile(kills); len(b) != 0 {
 				t.Fatalf("delivered %q while the container was booting", b)
 			}

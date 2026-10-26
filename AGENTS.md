@@ -34,6 +34,10 @@ Agent-specific behavior (what to run, which prompt, which skills) belongs to the
 - `internal/initcfg`: the init config the host writes and paddock-init reads, the guest paths both
   sides share, and the network policy names
 - `internal/egresshost`: the egress host validator shared by config, resolve, and the guest proxy
+- `internal/engine`: the Engine interface between a plan and the runtime that runs it
+- `internal/engine/applecontainer`: the Apple `container` engine: image chain, mounts, run argv,
+  init config, per-run directories
+- `images`: the embedded base image Dockerfile and the Claude Code version it installs
 - `internal/guest/...`: in-guest enforcement (netpolicy, sniproxy)
 
 ## Notes

@@ -132,6 +132,13 @@ func TestResolveSecretsRejectsLineBreaks(t *testing.T) {
 	}
 }
 
+func TestResolveSecretsFailsOnUnsetSource(t *testing.T) {
+	env := []plan.EnvVar{{Name: "A", Source: plan.SourceEnv, Ref: "X"}}
+	if b, err := resolveSecrets(env, func(string) (string, bool) { return "", false }); err == nil {
+		t.Fatalf("resolveSecrets with an unset variable = %q, nil", b)
+	}
+}
+
 func TestTranscriptDirEncoding(t *testing.T) {
 	cases := map[string]string{
 		"/private/tmp/claude-501/-Users-douglasbrown--botfiles/x": "-private-tmp-claude-501--Users-douglasbrown--botfiles-x",

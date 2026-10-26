@@ -378,30 +378,57 @@ func TestPrepareHomeRejectsInvalidManagedSettings(t *testing.T) {
 	}
 }
 
-func TestPrepareHomeDoesNotFollowSeedSymlink(t *testing.T) {
-	root := t.TempDir()
-	home := "/Users/doug"
-	writeFile(t, filepath.Join(root, initcfg.SeedDir, "remote-settings.json"), `{"seed":1}`, 0o644)
-	target := filepath.Join(root, "etc/target")
-	writeFile(t, target, "original", 0o644)
-	link := filepath.Join(root, home, ".claude/remote-settings.json")
-	if err := os.MkdirAll(filepath.Dir(link), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink(target, link); err != nil {
-		t.Fatal(err)
-	}
-	cfg := &initcfg.Config{
-		User:   initcfg.User{Name: "doug", UID: 501, GID: 20, Home: home},
-		Claude: initcfg.ClaudeHome{SeedFiles: []string{"remote-settings.json"}},
-	}
-	h := newHomeFS(root, cfg)
-	h.chown = func(string, int, int) error { return nil }
-	if err := prepareHome(h, cfg); err == nil {
-		t.Error("seed file through a symlink: no error")
-	}
-	if got := readFile(t, target); got != "original" {
-		t.Errorf("symlink target overwritten: %q", got)
+// A seed destination that is a symlink or a hard link is replaced, and the
+// file it shares or points at is left alone.
+func TestPrepareHomeReplacesLinkedSeedDestination(t *testing.T) {
+	for _, kind := range []string{"symlink", "hardlink"} {
+		t.Run(kind, func(t *testing.T) {
+			root := t.TempDir()
+			home := "/Users/doug"
+			writeFile(t, filepath.Join(root, initcfg.SeedDir, "remote-settings.json"), `{"seed":1}`, 0o644)
+			other := filepath.Join(root, home, ".claude/other")
+			writeFile(t, other, "original", 0o644)
+			dest := filepath.Join(root, home, ".claude/remote-settings.json")
+			link := os.Symlink
+			if kind == "hardlink" {
+				link = os.Link
+			}
+			if err := link(other, dest); err != nil {
+				t.Fatal(err)
+			}
+			cfg := &initcfg.Config{
+				User:   initcfg.User{Name: "doug", UID: 501, GID: 20, Home: home},
+				Claude: initcfg.ClaudeHome{SeedFiles: []string{"remote-settings.json"}},
+			}
+			h := newHomeFS(root, cfg)
+			var chowned []string
+			h.chown = func(p string, _, _ int) error {
+				chowned = append(chowned, strings.TrimPrefix(p, root))
+				return nil
+			}
+			if err := prepareHome(h, cfg); err != nil {
+				t.Fatal(err)
+			}
+			if got := readFile(t, other); got != "original" {
+				t.Errorf("linked file overwritten: %q", got)
+			}
+			if st, err := os.Stat(other); err != nil || st.Mode().Perm() != 0o644 {
+				t.Errorf("linked file mode: %v %v", st, err)
+			}
+			if slices.Contains(chowned, home+"/.claude/other") {
+				t.Error("linked file chowned")
+			}
+			st, err := os.Lstat(dest)
+			if err != nil || !st.Mode().IsRegular() || st.Mode().Perm() != 0o600 || readFile(t, dest) != `{"seed":1}` {
+				t.Errorf("seed file: %v %v", st, err)
+			}
+			if err := os.Remove(other); err != nil {
+				t.Fatal(err)
+			}
+			if got := readFile(t, dest); got != `{"seed":1}` {
+				t.Errorf("seed file shares the linked inode: %q", got)
+			}
+		})
 	}
 }
 

@@ -147,18 +147,21 @@ func prepareHome(h homeFS, cfg *initcfg.Config) error {
 	return nil
 }
 
-// agentFile writes data to guest with mode 0600, owned by the agent. It
-// never follows a symlink at guest. With replace false an existing file is
-// kept unchanged.
+// agentFile writes data to guest with mode 0600, owned by the agent. With
+// replace true the data goes into a new file that is renamed over guest, so
+// a symlink, hard link, or other file already at guest is replaced and
+// whatever it points at or shares is left alone. With replace false an
+// existing entry at guest is kept unchanged, and a symlink is never
+// followed.
 func (h homeFS) agentFile(guest string, data []byte, uid, gid int, replace bool) error {
-	flags := os.O_WRONLY | os.O_CREATE | syscall.O_NOFOLLOW
 	if replace {
-		flags |= os.O_TRUNC
-	} else {
-		flags |= os.O_EXCL
+		if err := writeFileAtomic(h.p(guest), data, 0o600); err != nil {
+			return err
+		}
+		return h.chown(h.p(guest), uid, gid)
 	}
-	f, err := os.OpenFile(h.p(guest), flags, 0o600)
-	if !replace && errors.Is(err, fs.ErrExist) {
+	f, err := os.OpenFile(h.p(guest), os.O_WRONLY|os.O_CREATE|os.O_EXCL|syscall.O_NOFOLLOW, 0o600)
+	if errors.Is(err, fs.ErrExist) {
 		return nil
 	}
 	if err != nil {

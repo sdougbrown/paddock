@@ -9,6 +9,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -16,8 +17,8 @@ import (
 
 // LocalOptions configures LocalChecks.
 type LocalOptions struct {
-	// UID is the uid the checks must run as.
-	UID int
+	// UID and GID are the uid and gid the checks must run as.
+	UID, GID int
 	// StatusPath is read for the credential check; default /proc/self/status.
 	StatusPath string
 	// ReadOnly lists mount points that must refuse writes with EROFS.
@@ -38,7 +39,7 @@ func LocalChecks(o LocalOptions) []Check {
 		if err != nil {
 			return "", err
 		}
-		return CheckPrivileges(b, o.UID)
+		return CheckPrivileges(b, o.UID, o.GID)
 	}}}
 	for _, p := range o.ReadOnly {
 		checks = append(checks, Check{"readonly-mount " + p, func(context.Context) (string, error) {
@@ -58,9 +59,10 @@ func LocalChecks(o LocalOptions) []Check {
 	return checks
 }
 
-// CheckPrivileges checks a /proc/<pid>/status text: every uid is uid, all
+// CheckPrivileges checks a /proc/<pid>/status text: every uid is uid, every
+// gid is gid, gid is the only supplementary group (or there are none), all
 // five capability sets are empty, and NoNewPrivs is 1.
-func CheckPrivileges(status []byte, uid int) (string, error) {
+func CheckPrivileges(status []byte, uid, gid int) (string, error) {
 	fields := map[string][]string{}
 	sc := bufio.NewScanner(bytes.NewReader(status))
 	for sc.Scan() {
@@ -78,14 +80,19 @@ func CheckPrivileges(status []byte, uid int) (string, error) {
 	if nnp := fields["NoNewPrivs"]; len(nnp) != 1 || nnp[0] != "1" {
 		bad = append(bad, "NoNewPrivs="+strings.Join(nnp, " "))
 	}
-	want := strconv.Itoa(uid)
-	if ids := fields["Uid"]; len(ids) != 4 || ids[0] != want || ids[1] != want || ids[2] != want || ids[3] != want {
-		bad = append(bad, "Uid="+strings.Join(ids, " "))
+	u, g := strconv.Itoa(uid), strconv.Itoa(gid)
+	for _, id := range []struct{ field, want string }{{"Uid", u}, {"Gid", g}} {
+		if ids := fields[id.field]; len(ids) != 4 || ids[0] != id.want || ids[1] != id.want || ids[2] != id.want || ids[3] != id.want {
+			bad = append(bad, id.field+"="+strings.Join(ids, " "))
+		}
+	}
+	if groups, ok := fields["Groups"]; !ok || slices.ContainsFunc(groups, func(id string) bool { return id != g }) {
+		bad = append(bad, "Groups="+strings.Join(groups, " "))
 	}
 	if len(bad) > 0 {
 		return "", fmt.Errorf("not dropped: %s", strings.Join(bad, ", "))
 	}
-	return fmt.Sprintf("uid %s, all capability sets empty, NoNewPrivs 1", want), nil
+	return fmt.Sprintf("uid %s, gid %s, all capability sets empty, NoNewPrivs 1", u, g), nil
 }
 
 // writeRefused tries to create a file in the directory p, or to open the

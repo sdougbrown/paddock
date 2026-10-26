@@ -52,7 +52,7 @@ func dropAndExec(uid, gid int, workdir, path string, argv, env []string) error {
 	if err != nil {
 		return err
 	}
-	if _, err := verify.CheckPrivileges(status, uid); err != nil {
+	if _, err := verify.CheckPrivileges(status, uid, gid); err != nil {
 		return fmt.Errorf("privilege drop did not hold: %w", err)
 	}
 	if err := os.Chdir(workdir); err != nil {

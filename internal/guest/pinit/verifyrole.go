@@ -14,6 +14,7 @@ import (
 type verifyPlan struct {
 	Policy      string   `json:"policy"`
 	UID         int      `json:"uid"`
+	GID         int      `json:"gid"`
 	AllowedHost string   `json:"allowed_host,omitempty"`
 	DeniedHost  string   `json:"denied_host,omitempty"`
 	DenyLog     string   `json:"deny_log,omitempty"`
@@ -37,6 +38,7 @@ func verifyMain(args []string) int {
 	checks := networkChecks(p)
 	checks = append(checks, verify.LocalChecks(verify.LocalOptions{
 		UID:      p.UID,
+		GID:      p.GID,
 		ReadOnly: p.ReadOnly,
 		Writable: p.Writable,
 	})...)

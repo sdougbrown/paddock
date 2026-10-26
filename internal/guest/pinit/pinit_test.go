@@ -48,11 +48,12 @@ func TestLifelineHosts(t *testing.T) {
 }
 
 // TestVerifyArgv decodes the verify role's argument the way verifyMain does
-// and checks that it carries every read-only mount, the writable home and
-// transcript dirs, and the proxy fields only when a proxy runs.
+// and checks that it carries the agent's uid and gid, every read-only mount,
+// the writable home and transcript dirs and read-write mounts other than
+// paddock's log dir, and the proxy fields only when a proxy runs.
 func TestVerifyArgv(t *testing.T) {
 	cfg := &initcfg.Config{
-		User: initcfg.User{UID: 501, Home: "/Users/a"},
+		User: initcfg.User{UID: 501, GID: 20, Home: "/Users/a"},
 		Network: initcfg.Network{
 			Policy:  initcfg.PolicyAllowlist,
 			DenyLog: "/run/paddock-log/deny.jsonl",
@@ -63,11 +64,13 @@ func TestVerifyArgv(t *testing.T) {
 			{Path: "/Users/a/ws", ReadOnly: false},
 			{Path: "/Users/a/.botfiles/skills", ReadOnly: true},
 			{Path: "/Users/a/.claude/projects/-ws", ReadOnly: false},
+			{Path: initcfg.LogDir, ReadOnly: false},
 		},
 	}
 	t.Run("no transcript dir", func(t *testing.T) {
 		bare := *cfg
 		bare.Claude = initcfg.ClaudeHome{}
+		bare.Mounts = nil
 		argv, err := verifyArgv(&bare, &network{})
 		if err != nil {
 			t.Fatal(err)
@@ -103,13 +106,13 @@ func TestVerifyArgv(t *testing.T) {
 			if err := json.Unmarshal([]byte(argv[2]), &p); err != nil {
 				t.Fatal(err)
 			}
-			if p.Policy != initcfg.PolicyAllowlist || p.UID != 501 || p.DenyLog != tt.wantLog {
-				t.Errorf("policy %q uid %d deny log %q", p.Policy, p.UID, p.DenyLog)
+			if p.Policy != initcfg.PolicyAllowlist || p.UID != 501 || p.GID != 20 || p.DenyLog != tt.wantLog {
+				t.Errorf("policy %q uid %d gid %d deny log %q", p.Policy, p.UID, p.GID, p.DenyLog)
 			}
 			if want := []string{"/opt/paddock", "/Users/a/.botfiles/skills"}; !sameSet(p.ReadOnly, want) {
 				t.Errorf("ReadOnly = %q; want %q", p.ReadOnly, want)
 			}
-			if want := []string{"/Users/a", "/Users/a/.claude", "/Users/a/.claude/projects/-ws"}; !sameSet(p.Writable, want) {
+			if want := []string{"/Users/a", "/Users/a/.claude", "/Users/a/.claude/projects/-ws", "/Users/a/ws"}; !sameSet(p.Writable, want) {
 				t.Errorf("Writable = %q; want %q", p.Writable, want)
 			}
 			if p.ProxyPID != tt.wantPID || p.AllowedHost != tt.wantAllowed || p.DeniedHost != tt.wantDenied {

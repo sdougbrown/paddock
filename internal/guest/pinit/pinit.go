@@ -27,6 +27,7 @@ import (
 	"os"
 	"path"
 	"runtime"
+	"slices"
 
 	"github.com/sdougbrown/paddock/internal/guest/sniproxy"
 	"github.com/sdougbrown/paddock/internal/initcfg"
@@ -121,6 +122,7 @@ func verifyArgv(cfg *initcfg.Config, net *network) ([]string, error) {
 	p := verifyPlan{
 		Policy:  cfg.Network.Policy,
 		UID:     cfg.User.UID,
+		GID:     cfg.User.GID,
 		DenyLog: cfg.Network.DenyLog,
 	}
 	for _, d := range agentDirs(path.Clean(cfg.User.Home)) {
@@ -133,9 +135,15 @@ func verifyArgv(cfg *initcfg.Config, net *network) ([]string, error) {
 	if t := cfg.Claude.TranscriptDir; t != "" {
 		p.Writable = append(p.Writable, t)
 	}
+	// Every read-write mount but paddock's own (the log dir) is a directory
+	// the agent must be able to write: the workspace, the transcript dir,
+	// and a setup cache.
 	for _, m := range cfg.Mounts {
-		if m.ReadOnly {
+		switch {
+		case m.ReadOnly:
 			p.ReadOnly = append(p.ReadOnly, m.Path)
+		case !initcfg.Reserved(m.Path) && !slices.Contains(p.Writable, m.Path):
+			p.Writable = append(p.Writable, m.Path)
 		}
 	}
 	b, err := json.Marshal(p)

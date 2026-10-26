@@ -23,8 +23,7 @@ const dropStage = "PADDOCK_DROP_STAGE"
 // TestDropAndExec runs the real privilege drop: a root child of this test
 // binary calls dropAndExec, which execs a copy of the binary as the verify
 // role. The verify role must pass its privileges-dropped and writable
-// checks and see the workdir as its working directory and 65534 as its
-// only group. It needs root.
+// checks and see the workdir as its working directory. It needs root.
 func TestDropAndExec(t *testing.T) {
 	switch os.Getenv(dropStage) {
 	case "drop":
@@ -37,8 +36,6 @@ func TestDropAndExec(t *testing.T) {
 	case "verify":
 		wd, err := os.Getwd()
 		fmt.Printf("cwd %s %v\n", wd, err)
-		groups, err := os.Getgroups()
-		fmt.Printf("groups %v %v\n", groups, err)
 		os.Exit(verifyMain([]string{os.Getenv("DROP_PLAN")}))
 	}
 	if os.Geteuid() != 0 {
@@ -61,7 +58,7 @@ func TestDropAndExec(t *testing.T) {
 	if err := os.Chown(work, 65534, 65534); err != nil {
 		t.Fatal(err)
 	}
-	plan, err := json.Marshal(verifyPlan{Policy: initcfg.PolicyHost, UID: 65534, Writable: []string{work}})
+	plan, err := json.Marshal(verifyPlan{Policy: initcfg.PolicyHost, UID: 65534, GID: 65534, Writable: []string{work}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -74,8 +71,7 @@ func TestDropAndExec(t *testing.T) {
 	lines := strings.Split(string(out), "\n")
 	for _, want := range []string{
 		"cwd " + work + " <nil>",
-		"groups [65534] <nil>",
-		"PASS privileges-dropped: uid 65534, all capability sets empty, NoNewPrivs 1",
+		"PASS privileges-dropped: uid 65534, gid 65534, all capability sets empty, NoNewPrivs 1",
 		"PASS writable " + work + ":",
 	} {
 		if !slices.ContainsFunc(lines, func(l string) bool { return strings.HasPrefix(l, want) }) {

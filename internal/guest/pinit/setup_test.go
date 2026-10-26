@@ -78,6 +78,9 @@ func TestEnsureAccount(t *testing.T) {
 				if got := readFile(t, filepath.Join(root, "etc/passwd")); got != tt.wantPasswd {
 					t.Errorf("second run changed passwd:\n%s", got)
 				}
+				if got := readFile(t, filepath.Join(root, "etc/group")); got != tt.wantGroup {
+					t.Errorf("second run changed group:\n%s", got)
+				}
 			}
 		})
 	}
@@ -125,6 +128,9 @@ func TestTakeSecretsUnlinks(t *testing.T) {
 	}
 	if _, err := takeSecrets(filepath.Join(t.TempDir(), "missing")); err == nil {
 		t.Error("missing secrets file: no error")
+	}
+	if got, err := takeSecrets(""); got != nil || err != nil {
+		t.Errorf("no secrets path: got %q, %v", got, err)
 	}
 }
 
@@ -334,6 +340,7 @@ func TestPrepareHomeLeavesFileMountAlone(t *testing.T) {
 	if got := readFile(t, filepath.Join(root, settings)); got != `{"mounted":true}` {
 		t.Errorf("mounted file changed: %q", got)
 	}
+	slices.Sort(chowned)
 	if want := []string{home, home + "/.claude"}; !reflect.DeepEqual(chowned, want) {
 		t.Errorf("chowned %q, want %q", chowned, want)
 	}
@@ -368,5 +375,45 @@ func TestPrepareHomeRejectsInvalidManagedSettings(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(root, initcfg.ManagedSettingsPath)); !os.IsNotExist(err) {
 		t.Errorf("managed settings written: %v", err)
+	}
+}
+
+func TestPrepareHomeDoesNotFollowSeedSymlink(t *testing.T) {
+	root := t.TempDir()
+	home := "/Users/doug"
+	writeFile(t, filepath.Join(root, initcfg.SeedDir, "remote-settings.json"), `{"seed":1}`, 0o644)
+	target := filepath.Join(root, "etc/target")
+	writeFile(t, target, "original", 0o644)
+	link := filepath.Join(root, home, ".claude/remote-settings.json")
+	if err := os.MkdirAll(filepath.Dir(link), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+	cfg := &initcfg.Config{
+		User:   initcfg.User{Name: "doug", UID: 501, GID: 20, Home: home},
+		Claude: initcfg.ClaudeHome{SeedFiles: []string{"remote-settings.json"}},
+	}
+	h := newHomeFS(root, cfg)
+	h.chown = func(string, int, int) error { return nil }
+	if err := prepareHome(h, cfg); err == nil {
+		t.Error("seed file through a symlink: no error")
+	}
+	if got := readFile(t, target); got != "original" {
+		t.Errorf("symlink target overwritten: %q", got)
+	}
+}
+
+func TestPrepareHomeRejectsFileAtAgentDir(t *testing.T) {
+	for _, file := range []string{"/Users/doug", "/Users/doug/.claude"} {
+		root := t.TempDir()
+		writeFile(t, filepath.Join(root, file), "", 0o644)
+		cfg := &initcfg.Config{User: initcfg.User{Name: "doug", UID: 501, GID: 20, Home: "/Users/doug"}}
+		h := newHomeFS(root, cfg)
+		h.chown = func(string, int, int) error { return nil }
+		if err := prepareHome(h, cfg); err == nil || !strings.Contains(err.Error(), "is not a directory") {
+			t.Errorf("file at %s: err = %v", file, err)
+		}
 	}
 }

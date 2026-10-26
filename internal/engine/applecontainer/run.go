@@ -276,11 +276,11 @@ var signalNames = map[os.Signal]string{
 const pendingRetry = 200 * time.Millisecond
 
 // cli runs `container args...` with its output discarded, bounded by
-// cliTimeout plus extra.
+// cliTimeout plus extra. It never uses the run's ctx: stop and kill go
+// through it after that ctx is cancelled.
 func (e *Engine) cli(extra time.Duration, args ...string) error {
-	c, cancel := context.WithTimeout(context.Background(), cliTimeout+extra)
-	defer cancel()
-	return exec.CommandContext(c, e.bin(), args...).Run()
+	_, err := e.cliRun(context.Background(), cliTimeout+extra, args...)
+	return err
 }
 
 // stopContainer asks the container to stop, killing it after secs seconds.
@@ -383,9 +383,7 @@ func (e *Engine) removeSecretsOnceRunning(name, dir string, done <-chan struct{}
 }
 
 func (e *Engine) isRunning(name string) bool {
-	c, cancel := context.WithTimeout(context.Background(), cliTimeout)
-	defer cancel()
-	out, err := exec.CommandContext(c, e.bin(), "ls", "--format", "json").Output()
+	out, err := e.cliOutput(context.Background(), "ls", "--format", "json")
 	if err != nil {
 		return false
 	}

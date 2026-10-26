@@ -4,7 +4,6 @@ import (
 	"context"
 	"io"
 	"os"
-	"os/exec"
 	"time"
 )
 
@@ -26,13 +25,6 @@ var watchdogCLITimeout = cliTimeout + 2*time.Second
 // watchdogRetry is the pause between the watchdog's `container stop` attempts.
 var watchdogRetry = time.Second
 
-// watchdogCLI runs `bin args...` bounded by watchdogCLITimeout.
-func watchdogCLI(bin string, args ...string) error {
-	c, cancel := context.WithTimeout(context.Background(), watchdogCLITimeout)
-	defer cancel()
-	return exec.CommandContext(c, bin, args...).Run()
-}
-
 // RunWatchdog is the watchdog process body. args are the container binary,
 // the container name, then the directories to remove (runDirs.removable). It
 // reports ready on fd 4, then blocks on fd 3, the read end of a pipe whose
@@ -42,7 +34,7 @@ func RunWatchdog(args []string) int {
 	if len(args) < 2 {
 		return 2
 	}
-	bin, name, dirs := args[0], args[1], args[2:]
+	e, name, dirs := &Engine{Bin: args[0]}, args[1], args[2:]
 	pipe := os.NewFile(3, "watchdog-pipe")
 	if pipe == nil {
 		return 2
@@ -56,12 +48,12 @@ func RunWatchdog(args []string) int {
 		return 0
 	}
 	for range 10 {
-		if watchdogCLI(bin, "stop", "--time", "2", name) == nil {
+		if _, err := e.cliRun(context.Background(), watchdogCLITimeout, "stop", "--time", "2", name); err == nil {
 			break
 		}
 		time.Sleep(watchdogRetry)
 	}
-	watchdogCLI(bin, "delete", "--force", name)
+	e.cliRun(context.Background(), watchdogCLITimeout, "delete", "--force", name)
 	for _, d := range dirs {
 		os.RemoveAll(d)
 	}

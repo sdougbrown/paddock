@@ -57,7 +57,17 @@ const cliTimeout = 5 * time.Second
 // cliOutput runs one short `container` CLI call under ctx, bounded by
 // cliTimeout, and returns its standard output.
 func (e *Engine) cliOutput(ctx context.Context, args ...string) ([]byte, error) {
-	c, cancel := context.WithTimeout(ctx, cliTimeout)
+	return e.cliRun(ctx, cliTimeout, args...)
+}
+
+// cliRun runs `container args...` under ctx, bounded by timeout, and returns
+// its standard output. Every `container` call except build and run goes
+// through it. WaitDelay bounds the wait for the output pipe after a timeout
+// kill, in case a child of the CLI still holds it.
+func (e *Engine) cliRun(ctx context.Context, timeout time.Duration, args ...string) ([]byte, error) {
+	c, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	return exec.CommandContext(c, e.bin(), args...).Output()
+	cmd := exec.CommandContext(c, e.bin(), args...)
+	cmd.WaitDelay = time.Second
+	return cmd.Output()
 }

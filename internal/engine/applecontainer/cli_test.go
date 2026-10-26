@@ -2,6 +2,7 @@ package applecontainer
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -17,8 +18,13 @@ func TestCLIRunReturnsWhenAChildHoldsOutput(t *testing.T) {
 	dir := t.TempDir()
 	pidFile := filepath.Join(dir, "child")
 	bin := filepath.Join(dir, "container")
-	script := "#!/bin/sh\nsleep 30 &\necho $! > \"${0%/*}/child\"\nexec sleep 30\n"
+	script := "#!/bin/sh\n[ \"$1\" = warm ] && exit 0\nsleep 30 &\necho $! > \"${0%/*}/child\"\nexec sleep 30\n"
 	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// The first exec of a new script can be slow on a loaded host; run it
+	// once so the timed call below measures only cliRun.
+	if err := exec.Command(bin, "warm").Run(); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {

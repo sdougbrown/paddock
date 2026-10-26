@@ -236,3 +236,17 @@ func TestWatchdogRefusesNonPipe(t *testing.T) {
 		t.Errorf("run dir: %v", err)
 	}
 }
+
+// TestDispatch checks that Dispatch hands WatchdogCommand to RunWatchdog
+// and leaves every other argument list to the caller. The watchdog's own
+// tests re-execute this binary through Dispatch in TestMain.
+func TestDispatch(t *testing.T) {
+	if code, handled := Dispatch([]string{WatchdogCommand}); !handled || code != 2 {
+		t.Errorf("Dispatch(%q) = %d, %v; want RunWatchdog's 2, true", WatchdogCommand, code, handled)
+	}
+	for _, args := range [][]string{nil, {}, {"run", WatchdogCommand}, {"plan"}, {"-" + WatchdogCommand}} {
+		if code, handled := Dispatch(args); handled || code != 0 {
+			t.Errorf("Dispatch(%q) = %d, %v; want 0, false", args, code, handled)
+		}
+	}
+}

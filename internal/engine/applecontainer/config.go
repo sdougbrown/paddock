@@ -13,9 +13,10 @@ import (
 //
 // Cleanup after a crash of the paddock process (SIGKILL, power loss of the
 // parent) is done by a watchdog that Run starts by re-executing the running
-// binary with WatchdogCommand as its first argument. The program embedding
-// Engine must dispatch that argument to RunWatchdog; otherwise the watchdog
-// never signals readiness and Run fails.
+// binary with the internal WatchdogCommand as its first argument. The one
+// thing a program embedding Engine must wire is a call to Dispatch with its
+// arguments before it handles them; otherwise the watchdog never signals
+// readiness and Run fails.
 type Engine struct {
 	Bin       string // container CLI; default "container"
 	Home      string // default: the user's home directory

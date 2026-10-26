@@ -24,6 +24,9 @@ func main() {
 		fmt.Fprintln(os.Stderr, "paddock-init: not implemented")
 		os.Exit(2)
 	}
+	if code, handled := applecontainer.Dispatch(os.Args[1:]); handled {
+		os.Exit(code)
+	}
 	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
 }
 
@@ -48,8 +51,6 @@ func run(args []string, stdout, stderr io.Writer) int {
 			fmt.Fprintln(stderr, "paddock run:", err)
 		}
 		return code
-	case applecontainer.WatchdogCommand:
-		return applecontainer.RunWatchdog(args[1:])
 	case "setup":
 		code, err := setupCmd(args[1:], stderr)
 		if err != nil {

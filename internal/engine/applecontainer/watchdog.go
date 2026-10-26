@@ -7,9 +7,22 @@ import (
 	"time"
 )
 
-// WatchdogCommand is the hidden subcommand under which paddock re-executes
-// itself as the watchdog.
+// WatchdogCommand is the internal first argument under which Run
+// re-executes the running program as the watchdog. It is not a user-facing
+// subcommand; Dispatch handles it.
 const WatchdogCommand = "__watchdog"
+
+// Dispatch is the one entry a program embedding Engine wires: it calls
+// Dispatch with its arguments (without the program name) before handling
+// them itself. When they start with WatchdogCommand, Dispatch runs the
+// watchdog and returns its exit code with handled true; otherwise it
+// returns handled false and the program carries on.
+func Dispatch(args []string) (code int, handled bool) {
+	if len(args) == 0 || args[0] != WatchdogCommand {
+		return 0, false
+	}
+	return RunWatchdog(args[1:]), true
+}
 
 // watchdogDone is the byte the parent writes to tell the watchdog the run
 // ended normally and nothing needs cleaning up.

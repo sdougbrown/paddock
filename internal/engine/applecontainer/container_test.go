@@ -21,20 +21,21 @@ import (
 
 // The container tests run alpine with a shell entrypoint instead of
 // paddock-init. They re-execute this test binary: with PADDOCK_ENGINE_HELPER
-// set it runs Engine.Run as the paddock process under test, and with
-// __watchdog as its first argument it is the watchdog.
+// set it runs Engine.Run as the paddock process under test, and TestMain
+// calls Dispatch first, as an embedding program must, so it can be the
+// watchdog.
 
 const fakeSecret = "tok-not-a-real-secret"
 
 func TestMain(m *testing.M) {
-	if len(os.Args) > 1 && os.Args[1] == WatchdogCommand {
-		if d, err := time.ParseDuration(os.Getenv("HELPER_WATCHDOG_CLI_TIMEOUT")); err == nil {
-			watchdogCLITimeout = d
-		}
-		if d, err := time.ParseDuration(os.Getenv("HELPER_WATCHDOG_RETRY")); err == nil {
-			watchdogRetry = d
-		}
-		os.Exit(RunWatchdog(os.Args[2:]))
+	if d, err := time.ParseDuration(os.Getenv("HELPER_WATCHDOG_CLI_TIMEOUT")); err == nil {
+		watchdogCLITimeout = d
+	}
+	if d, err := time.ParseDuration(os.Getenv("HELPER_WATCHDOG_RETRY")); err == nil {
+		watchdogRetry = d
+	}
+	if code, handled := Dispatch(os.Args[1:]); handled {
+		os.Exit(code)
 	}
 	if os.Getenv("PADDOCK_ENGINE_HELPER") == "1" {
 		os.Exit(helperMain())

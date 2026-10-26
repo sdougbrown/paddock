@@ -11,8 +11,7 @@ import (
 // CLI whose `container ls` lists the container as running from the start,
 // only after a delay, or never. secrets.env must survive until the matching
 // wait ends (secretsGrace once running, secretsStartWait otherwise), then
-// be removed. The survival check runs half a second before that, so a
-// remover delayed by test load does not fail it.
+// be removed.
 func TestRemoveSecretsOnceRunning(t *testing.T) {
 	const running = `[{"configuration":{"id":"paddock-test"},"status":{"state":"running"}}]`
 	const grace = time.Second
@@ -64,24 +63,30 @@ func TestRemoveSecretsOnceRunning(t *testing.T) {
 				returned <- time.Since(start)
 			}()
 			if tt.runningAt > 0 {
-				time.Sleep(tt.runningAt)
-				setLs(running)
+				time.AfterFunc(tt.runningAt, func() { setLs(running) })
 			}
-			// Half a second of slack before the earliest allowed removal.
-			time.Sleep(tt.removedBy - 500*time.Millisecond - time.Since(start))
-			if _, err := os.Stat(file); err != nil {
-				t.Fatalf("secrets.env gone at %s, before %s: %v", time.Since(start), tt.removedBy, err)
+			// secrets.env must be present whenever it is checked before the
+			// earliest allowed removal. The time is read after each Stat, so a
+			// check delayed by test load cannot fail a correct remover.
+			deadline := start.Add(tt.removedBy - 50*time.Millisecond)
+			for time.Now().Before(deadline) {
+				_, err := os.Stat(file)
+				if at := time.Now(); err != nil && at.Before(deadline) {
+					t.Fatalf("secrets.env gone at %s, before %s: %v", at.Sub(start), tt.removedBy, err)
+				}
+				time.Sleep(20 * time.Millisecond)
 			}
+			eventually(t, tt.removedBy+3*time.Second-time.Since(start), "secrets.env to be removed", func() bool {
+				_, err := os.Stat(file)
+				return os.IsNotExist(err)
+			})
 			select {
 			case d := <-returned:
-				if d < tt.removedBy || d > tt.removedBy+3*time.Second {
-					t.Errorf("returned after %s; want between %s and %s", d, tt.removedBy, tt.removedBy+3*time.Second)
+				if d < tt.removedBy {
+					t.Errorf("returned after %s; want at least %s", d, tt.removedBy)
 				}
-			case <-time.After(10 * time.Second):
-				t.Fatal("removeSecretsOnceRunning still waiting after 10s")
-			}
-			if _, err := os.Stat(file); !os.IsNotExist(err) {
-				t.Errorf("secrets.env still present: %v", err)
+			case <-time.After(5 * time.Second):
+				t.Fatal("removeSecretsOnceRunning did not return after removing secrets.env")
 			}
 		})
 	}

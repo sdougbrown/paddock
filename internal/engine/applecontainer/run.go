@@ -276,16 +276,30 @@ var signalNames = map[os.Signal]string{
 const pendingRetry = 200 * time.Millisecond
 
 // cli runs `container args...` with its output discarded, bounded by
-// cliTimeout plus extra. It never uses the run's ctx: stop and kill go
-// through it after that ctx is cancelled.
-func (e *Engine) cli(extra time.Duration, args ...string) error {
-	_, err := e.cliRun(context.Background(), cliTimeout+extra, args...)
+// cliTimeout. It never uses the run's ctx: kill goes through it after that
+// ctx is cancelled.
+func (e *Engine) cli(args ...string) error {
+	_, err := e.cliOutput(context.Background(), args...)
 	return err
 }
 
+// stopArgs is the `container stop` argv that stops name, killing it after
+// grace seconds. Run and the watchdog both stop containers with it.
+func stopArgs(name string, grace int) []string {
+	return []string{"stop", "--time", strconv.Itoa(grace), name}
+}
+
+// stopTimeout bounds a `container stop` whose grace is grace seconds:
+// cliTimeout plus the grace.
+func stopTimeout(grace int) time.Duration {
+	return cliTimeout + time.Duration(grace)*time.Second
+}
+
 // stopContainer asks the container to stop, killing it after secs seconds.
+// Like cli, it never uses the run's ctx.
 func (e *Engine) stopContainer(name string, secs int) error {
-	return e.cli(time.Duration(secs)*time.Second, "stop", "--time", strconv.Itoa(secs), name)
+	_, err := e.cliRun(context.Background(), stopTimeout(secs), stopArgs(name, secs)...)
+	return err
 }
 
 // forwardSignals delivers signals received by paddock to the guest process,
@@ -344,7 +358,7 @@ func (e *Engine) signalContainer(name string, s os.Signal) bool {
 		return false
 	}
 	e.debugf("forwarding %s to %s", n, name)
-	if err := e.cli(0, "kill", "--signal", n, name); err != nil {
+	if err := e.cli("kill", "--signal", n, name); err != nil {
 		e.debugf("container kill: %v", err)
 		return false
 	}

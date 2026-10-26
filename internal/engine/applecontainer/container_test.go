@@ -225,14 +225,28 @@ func TestContainerExitCodePropagates(t *testing.T) {
 	}
 }
 
-func TestContainerSIGTERMReachesGuest(t *testing.T) {
-	h := startHelper(t, "exec sleep 300")
-	waitRunning(t, h)
-	if err := h.cmd.Process.Signal(syscall.SIGTERM); err != nil {
-		t.Fatal(err)
-	}
-	if code := h.wait(t); code != 143 {
-		t.Fatalf("exit code %d, want 143; output:\n%s", code, h.out.String())
+// TestContainerSignalsReachGuest sends each forwarded signal to paddock
+// while the guest runs. `container kill --signal` must deliver it, and the
+// exit code must be the guest's 128+signal.
+func TestContainerSignalsReachGuest(t *testing.T) {
+	for _, tc := range []struct {
+		sig  syscall.Signal
+		code int
+	}{
+		{syscall.SIGTERM, 143},
+		{syscall.SIGINT, 130},
+		{syscall.SIGHUP, 129},
+	} {
+		t.Run(signalNames[tc.sig], func(t *testing.T) {
+			h := startHelper(t, "exec sleep 300")
+			waitRunning(t, h)
+			if err := h.cmd.Process.Signal(tc.sig); err != nil {
+				t.Fatal(err)
+			}
+			if code := h.wait(t); code != tc.code {
+				t.Fatalf("exit code %d, want %d; output:\n%s", code, tc.code, h.out.String())
+			}
+		})
 	}
 }
 

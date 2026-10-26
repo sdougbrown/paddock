@@ -108,9 +108,6 @@ func resolveSecrets(env []plan.EnvVar, lookup func(string) (string, bool)) ([]by
 		if err != nil {
 			return nil, err
 		}
-		if strings.ContainsAny(v, "\r\n") {
-			return nil, fmt.Errorf("env.%s: value contains a line break", e.Name)
-		}
 		b.WriteString(e.Name + "=" + v + "\n")
 	}
 	if b.Len() == 0 {

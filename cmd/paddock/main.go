@@ -4,6 +4,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -66,7 +67,7 @@ func planCmd(args []string, stdout, stderr io.Writer) (int, error) {
 	fs := planFlagSet("plan", stderr, &o)
 	fs.StringVar(&o.Phase, "phase", "run", "run or setup")
 	if err := fs.Parse(args); err != nil {
-		return 2, nil
+		return parseExitCode(err), nil
 	}
 	if o.Profile == "" {
 		return 1, fmt.Errorf("--profile is required")
@@ -86,8 +87,8 @@ func planCmd(args []string, stdout, stderr io.Writer) (int, error) {
 
 // planFlagSet returns a flag set for the named command with the flags plan,
 // run, and setup share: --profile, --spec, and --workspace, stored in o. A
-// parse error is reported by the flag set on output; the commands then
-// exit 2 without printing it again.
+// parse error or -h is reported by the flag set on output; the commands then
+// exit with parseExitCode without printing it again.
 func planFlagSet(name string, output io.Writer, o *resolve.Options) *flag.FlagSet {
 	fs := flag.NewFlagSet(name, flag.ContinueOnError)
 	fs.SetOutput(output)
@@ -95,6 +96,15 @@ func planFlagSet(name string, output io.Writer, o *resolve.Options) *flag.FlagSe
 	fs.StringVar(&o.Spec, "spec", "", "spec ref (default: from git origin, else profile default_spec)")
 	fs.StringVar(&o.Workspace, "workspace", "", "workspace directory (default: current directory)")
 	return fs
+}
+
+// parseExitCode is a command's exit code after its flag set failed to
+// parse: 0 for -h or -help, as flag.ExitOnError does, and 2 otherwise.
+func parseExitCode(err error) int {
+	if errors.Is(err, flag.ErrHelp) {
+		return 0
+	}
+	return 2
 }
 
 // resolvePlan resolves o against the user's config root.

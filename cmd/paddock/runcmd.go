@@ -19,7 +19,7 @@ func runCmd(args []string, stderr io.Writer) (int, error) {
 	fs := planFlagSet("run", stderr, &o)
 	fs.BoolVar(&verify, "verify", false, "run the in-guest isolation checks instead of a command")
 	if err := fs.Parse(args); err != nil {
-		return 2, nil
+		return parseExitCode(err), nil
 	}
 	if o.Profile == "" {
 		return 1, fmt.Errorf("--profile is required")

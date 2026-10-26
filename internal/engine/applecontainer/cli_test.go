@@ -17,7 +17,7 @@ func TestCLIRunReturnsWhenAChildHoldsOutput(t *testing.T) {
 	dir := t.TempDir()
 	pidFile := filepath.Join(dir, "child")
 	bin := filepath.Join(dir, "container")
-	script := "#!/bin/sh\nsleep 30 &\necho $! > " + pidFile + "\nexec sleep 30\n"
+	script := "#!/bin/sh\nsleep 30 &\necho $! > \"$(dirname \"$0\")/child\"\nexec sleep 30\n"
 	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -34,5 +34,8 @@ func TestCLIRunReturnsWhenAChildHoldsOutput(t *testing.T) {
 	}
 	if d := time.Since(start); d > 5*time.Second {
 		t.Fatalf("cliRun returned after %s; want about the timeout plus WaitDelay", d)
+	}
+	if _, err := os.Stat(pidFile); err != nil {
+		t.Fatalf("the CLI never started its background child: %v", err)
 	}
 }

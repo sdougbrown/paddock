@@ -33,14 +33,20 @@ var watchdogRetry = time.Second
 // the container name, then the directories to remove (runDirs.removable). It
 // reports ready on fd 4, then blocks on fd 3, the read end of a pipe whose
 // write end only the parent holds. On EOF without the done byte the parent
-// died, so it stops the container and removes the directories.
+// died, so it stops the container and removes the directories. It exits 2
+// without acting when fd 3 is not a pipe.
 func RunWatchdog(args []string) int {
 	if len(args) < 2 {
 		return 2
 	}
 	e, name, dirs := &Engine{Bin: args[0]}, args[1], args[2:]
+	// Only a pipe from startWatchdog may trigger cleanup: anything else on
+	// fd 3, such as /dev/null, would read as EOF at once.
 	pipe := os.NewFile(3, "watchdog-pipe")
 	if pipe == nil {
+		return 2
+	}
+	if st, err := pipe.Stat(); err != nil || st.Mode()&os.ModeNamedPipe == 0 {
 		return 2
 	}
 	if ready := os.NewFile(4, "watchdog-ready"); ready != nil {

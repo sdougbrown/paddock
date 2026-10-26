@@ -18,11 +18,11 @@ import (
 	"github.com/sdougbrown/paddock/internal/plan"
 )
 
-// The container tests run alpine with a shell entrypoint instead of
-// paddock-init. They re-execute this test binary: with PADDOCK_ENGINE_HELPER
-// set it runs Engine.Run as the paddock process under test, and TestMain
-// calls Dispatch first, as an embedding program must, so it can be the
-// watchdog.
+// The container tests other than TestContainerRealInit run alpine with a
+// shell entrypoint instead of paddock-init. They re-execute this test
+// binary: with PADDOCK_ENGINE_HELPER set it runs Engine.Run as the paddock
+// process under test, and TestMain calls Dispatch first, as an embedding
+// program must, so it can be the watchdog.
 
 const fakeSecret = "tok-not-a-real-secret"
 

@@ -42,8 +42,10 @@ Agent-specific behavior (what to run, which prompt, which skills) belongs to the
   init config, per-run directories
 - `images`: the embedded base image Dockerfile and the Claude Code version it installs
 - `internal/guest/...`: in-guest enforcement (netpolicy, sniproxy)
-- `internal/guest/pinit`: paddock-init's guest setup steps: the agent and proxy accounts, the
-  agent's HOME and `~/.claude`, the agent environment and secrets, and `/etc/hosts`
+- `internal/guest/pinit`: paddock-init, the guest entrypoint (`Main`): the agent and proxy
+  accounts, the agent's HOME and `~/.claude`, the agent environment and secrets, `/etc/hosts`, the
+  network commit, and the privilege drop and exec of the agent; also the proxy child and the verify
+  role
 
 ## Notes
 
@@ -61,6 +63,7 @@ Agent-specific behavior (what to run, which prompt, which skills) belongs to the
   of its choosing. List each host exactly.
 - `make verify` runs fmtcheck, vet, test, build, and build-init.
 - `make container-test` runs the engine tests that start real Apple `container` VMs and build
-  images. CI cannot run them: GitHub's macOS runners have no nested virtualization. A change to
-  `internal/engine/applecontainer` or the run loop needs a passing `make container-test` on Apple
-  silicon before merge.
+  images; `TestContainerRealInit` boots paddock-init in the base image. CI cannot run them: GitHub's
+  macOS runners have no nested virtualization. A change to `internal/engine/applecontainer`, the run
+  loop, or `internal/guest/pinit` needs a passing `make container-test` on Apple silicon before
+  merge.

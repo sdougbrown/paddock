@@ -13,6 +13,8 @@ import (
 
 const droppedStatus = `Name:	sh
 Uid:	501	501	501	501
+Gid:	20	20	20	20
+Groups:	20
 NoNewPrivs:	1
 CapInh:	0000000000000000
 CapPrm:	0000000000000000
@@ -24,21 +26,27 @@ CapAmb:	0000000000000000
 func TestCheckPrivileges(t *testing.T) {
 	tests := []struct {
 		name, status string
-		uid          int
+		uid, gid     int
 		want         string
 	}{
-		{"dropped", droppedStatus, 501, ""},
-		{"bounding set kept", strings.Replace(droppedStatus, "CapBnd:	0000000000000000", "CapBnd:	00000000a80435fb", 1), 501, "CapBnd=00000000a80435fb"},
-		{"no_new_privs unset", strings.Replace(droppedStatus, "NoNewPrivs:	1", "NoNewPrivs:	0", 1), 501, "NoNewPrivs=0"},
-		{"missing ambient", strings.Replace(droppedStatus, "CapAmb:	0000000000000000\n", "", 1), 501, "CapAmb="},
-		{"wrong uid", droppedStatus, 1000, "Uid=501 501 501 501"},
-		{"effective uid 0", strings.Replace(droppedStatus, "Uid:	501	501	501	501", "Uid:	501	0	501	501", 1), 501, "Uid=501 0 501 501"},
-		{"saved uid 0", strings.Replace(droppedStatus, "Uid:	501	501	501	501", "Uid:	501	501	0	501", 1), 501, "Uid=501 501 0 501"},
-		{"filesystem uid 0", strings.Replace(droppedStatus, "Uid:	501	501	501	501", "Uid:	501	501	501	0", 1), 501, "Uid=501 501 501 0"},
+		{"dropped", droppedStatus, 501, 20, ""},
+		{"bounding set kept", strings.Replace(droppedStatus, "CapBnd:	0000000000000000", "CapBnd:	00000000a80435fb", 1), 501, 20, "CapBnd=00000000a80435fb"},
+		{"no_new_privs unset", strings.Replace(droppedStatus, "NoNewPrivs:	1", "NoNewPrivs:	0", 1), 501, 20, "NoNewPrivs=0"},
+		{"missing ambient", strings.Replace(droppedStatus, "CapAmb:	0000000000000000\n", "", 1), 501, 20, "CapAmb="},
+		{"wrong uid", droppedStatus, 1000, 20, "Uid=501 501 501 501"},
+		{"effective uid 0", strings.Replace(droppedStatus, "Uid:	501	501	501	501", "Uid:	501	0	501	501", 1), 501, 20, "Uid=501 0 501 501"},
+		{"saved uid 0", strings.Replace(droppedStatus, "Uid:	501	501	501	501", "Uid:	501	501	0	501", 1), 501, 20, "Uid=501 501 0 501"},
+		{"no supplementary groups", strings.Replace(droppedStatus, "Groups:	20", "Groups:", 1), 501, 20, ""},
+		{"wrong gid", droppedStatus, 501, 21, "Gid=20 20 20 20"},
+		{"effective gid 0", strings.Replace(droppedStatus, "Gid:	20	20	20	20", "Gid:	20	0	20	20", 1), 501, 20, "Gid=20 0 20 20"},
+		{"filesystem gid 0", strings.Replace(droppedStatus, "Gid:	20	20	20	20", "Gid:	20	20	20	0", 1), 501, 20, "Gid=20 20 20 0"},
+		{"root supplementary group", strings.Replace(droppedStatus, "Groups:	20", "Groups:	0 20", 1), 501, 20, "Groups=0 20"},
+		{"missing groups", strings.Replace(droppedStatus, "Groups:	20\n", "", 1), 501, 20, "Groups="},
+		{"filesystem uid 0", strings.Replace(droppedStatus, "Uid:	501	501	501	501", "Uid:	501	501	501	0", 1), 501, 20, "Uid=501 501 501 0"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := CheckPrivileges([]byte(tt.status), tt.uid)
+			_, err := CheckPrivileges([]byte(tt.status), tt.uid, tt.gid)
 			if tt.want == "" && err != nil || tt.want != "" && (err == nil || !strings.Contains(err.Error(), tt.want)) {
 				t.Errorf("err = %v, want %q", err, tt.want)
 			}
@@ -55,6 +63,7 @@ func TestLocalChecks(t *testing.T) {
 	// A writable directory listed as read-only must fail its check.
 	results := Run(context.Background(), LocalChecks(LocalOptions{
 		UID:        501,
+		GID:        20,
 		StatusPath: status,
 		ReadOnly:   []string{dir},
 		Writable:   []string{dir},
@@ -97,6 +106,7 @@ func TestWriteRefusedNotEROFS(t *testing.T) {
 		t.Cleanup(func() { os.Chmod(dir, 0o755) })
 		results := Run(context.Background(), LocalChecks(LocalOptions{
 			UID:        501,
+			GID:        20,
 			StatusPath: filepath.Join(dir, "status"),
 			ReadOnly:   []string{dir},
 		}))

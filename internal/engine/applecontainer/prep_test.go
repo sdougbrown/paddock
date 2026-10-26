@@ -52,8 +52,10 @@ func TestRunArgv(t *testing.T) {
 		"-v /w:/w -v /w/repo:/w/repo:ro -v /skills:/skills:ro " +
 		"-v /run/s:/run/paddock:ro -v /run/x:/run/paddock-secrets -v /run/l:/run/paddock-log " +
 		"-v /cache/bin/h:/opt/paddock:ro -v /home/u/.claude/projects/-w:/home/u/.claude/projects/-w " +
-		"-w /w -e TERM=xterm -e COLORTERM=truecolor --entrypoint /opt/paddock/paddock-init paddock/x:1"
-	if got := runArgv(testSpec()); !slices.Equal(got, strings.Fields(want)) {
+		"-w /w -e TERM=xterm -e COLORTERM=truecolor --entrypoint /opt/paddock/paddock-init paddock/x:1 -- claude -p"
+	s := testSpec()
+	s.Args = []string{"--", "claude", "-p"}
+	if got := runArgv(s); !slices.Equal(got, strings.Fields(want)) {
 		t.Fatalf("argv mismatch\n got: %q\nwant: %q", got, strings.Fields(want))
 	}
 }
@@ -278,7 +280,7 @@ func fakeContainer(t *testing.T, existing ...string) (bin string, calls func() [
 		"[ -e " + dir + "/fail-$1 ] && exit 1\n" +
 		"[ -e " + dir + "/fail-$1-$2 ] && exit 1\n" +
 		"[ -e " + dir + "/slow-$1 ] && exec sleep 30\n" +
-		"case \"$1\" in\n image) cat " + tags + " ;;\n build) for a; do c=$a; done; ls -A \"$c\" | tr '\\n' ' ' >> " + filepath.Join(dir, "contexts") + "; echo >> " + filepath.Join(dir, "contexts") + "\n  while [ $# -gt 0 ]; do [ \"$1\" = -t ] && echo \"$2\" >> " + tags + "; shift; done ;;\nesac\n"
+		"case \"$1\" in\n image) if [ \"$2\" = ls ]; then [ $# -eq 3 ] && [ \"$3\" = --quiet ] || exit 2; cat " + tags + "; fi ;;\n build) for a; do c=$a; done; ls -A \"$c\" | tr '\\n' ' ' >> " + filepath.Join(dir, "contexts") + "; echo >> " + filepath.Join(dir, "contexts") + "\n  while [ $# -gt 0 ]; do [ \"$1\" = -t ] && echo \"$2\" >> " + tags + "; shift; done ;;\nesac\n"
 	bin = filepath.Join(dir, "container")
 	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
@@ -539,8 +541,10 @@ func TestCreateRunDirsAreOwnerOnly(t *testing.T) {
 		}
 	}
 	d.remove()
-	if _, err := os.Stat(d.Secrets); !os.IsNotExist(err) {
-		t.Error("secrets dir survived remove")
+	for _, p := range []string{d.State, d.Secrets, d.Settings} {
+		if _, err := os.Stat(p); !os.IsNotExist(err) {
+			t.Errorf("%s survived remove", p)
+		}
 	}
 	if _, err := os.Stat(d.Log); err != nil {
 		t.Error("log dir was removed")
@@ -871,7 +875,9 @@ func TestEnsureImagesPrunesSupersededTags(t *testing.T) {
 		"docker.io/paddock/base:oldbase111111",
 		repo + ":oldlayer00000",
 	}
-	if strings.Join(removed, " ") != strings.Join(want, " ") {
+	slices.Sort(removed)
+	slices.Sort(want)
+	if !slices.Equal(removed, want) {
 		t.Errorf("removed = %q, want %q", removed, want)
 	}
 

@@ -27,7 +27,9 @@ Agent-specific behavior (what to run, which prompt, which skills) belongs to the
 
 ## Package layout
 
-- `cmd/paddock`: thin CLI (also the guest `paddock-init` role when argv[0] is `paddock-init`)
+- `cmd/paddock`: thin CLI. It also has two re-exec roles: the guest `paddock-init` when argv[0] is
+  `paddock-init`, and the host watchdog, which `main` hands to `applecontainer.Dispatch` before any
+  other argument handling. Without that call Run cannot start its watchdog, so every run fails.
 - `internal/config`: strict TOML types and loaders for profiles and specs, config root
 - `internal/resolve`: extends chain, trust rules, value sources, spec selection, mounts
 - `internal/plan`: the Plan struct produced by resolve and consumed by engines, and the mount rule

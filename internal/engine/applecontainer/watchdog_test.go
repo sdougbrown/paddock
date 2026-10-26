@@ -146,8 +146,12 @@ func TestWatchdogBoundsHungCLICalls(t *testing.T) {
 func TestStartWatchdogFailsWhenNotReady(t *testing.T) {
 	dir := t.TempDir()
 	exe := filepath.Join(dir, "not-paddock")
-	script := "#!/bin/sh\necho $$ > \"${0%/*}/pid\"\nprintf '%s\\n' \"$@\" > \"${0%/*}/args\"\nexec sleep 30\n"
+	script := "#!/bin/sh\n[ \"$1\" = warm ] && exit 0\necho $$ > \"${0%/*}/pid\"\nprintf '%s\\n' \"$@\" > \"${0%/*}/args\"\nexec sleep 30\n"
 	if err := os.WriteFile(exe, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Keep a slow first exec out of the timed readiness wait.
+	if err := exec.Command(exe, "warm").Run(); err != nil {
 		t.Fatal(err)
 	}
 	defer func(d time.Duration) { watchdogReadyTimeout = d }(watchdogReadyTimeout)

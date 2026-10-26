@@ -16,9 +16,10 @@ const hostsPath = "/etc/hosts"
 
 // writeHosts rewrites the hosts file at path so that every name in hosts
 // maps to addr and to nothing else. Each name must pass egresshost.Validate;
-// a bad one fails before the file is touched. Existing entries are kept,
-// minus the listed names and any earlier line for addr. The file is replaced
-// through a rename, root-owned with mode 0644.
+// a bad one fails before the file is touched. Names are written normalized,
+// once each. Existing entries are kept, minus the listed names and any
+// earlier line for addr. The file is replaced through a rename, root-owned
+// with mode 0644.
 func writeHosts(path string, hosts []string, addr netip.Addr) error {
 	for _, h := range hosts {
 		if err := egresshost.Validate(h); err != nil {
@@ -30,8 +31,12 @@ func writeHosts(path string, hosts []string, addr netip.Addr) error {
 		return fmt.Errorf("hosts: %w", err)
 	}
 	listed := map[string]bool{}
+	var names []string
 	for _, h := range hosts {
-		listed[egresshost.Normalize(h)] = true
+		if n := egresshost.Normalize(h); !listed[n] {
+			listed[n] = true
+			names = append(names, n)
+		}
 	}
 	var b strings.Builder
 	for _, line := range strings.Split(strings.TrimRight(string(old), "\n"), "\n") {
@@ -46,21 +51,21 @@ func writeHosts(path string, hosts []string, addr netip.Addr) error {
 		if a, err := netip.ParseAddr(f[0]); err == nil && a.Unmap() == addr {
 			continue
 		}
-		var names []string
+		var kept []string
 		for _, n := range f[1:] {
 			if !listed[egresshost.Normalize(n)] {
-				names = append(names, n)
+				kept = append(kept, n)
 			}
 		}
 		switch {
-		case len(names) == len(f)-1:
+		case len(kept) == len(f)-1:
 			b.WriteString(line + "\n")
-		case len(names) > 0:
-			b.WriteString(f[0] + "\t" + strings.Join(names, " ") + "\n")
+		case len(kept) > 0:
+			b.WriteString(f[0] + "\t" + strings.Join(kept, " ") + "\n")
 		}
 	}
-	for _, h := range hosts {
-		fmt.Fprintf(&b, "%s\t%s\n", addr, h)
+	for _, n := range names {
+		fmt.Fprintf(&b, "%s\t%s\n", addr, n)
 	}
 	if err := writeFileAtomic(path, []byte(b.String()), 0o644); err != nil {
 		return fmt.Errorf("hosts: %w", err)

@@ -17,7 +17,7 @@ func TestWriteHosts(t *testing.T) {
 		"192.0.2.1 stale.example\n"
 	path := filepath.Join(t.TempDir(), "hosts")
 	writeFile(t, path, in, 0o600)
-	hosts := []string{"api.anthropic.com", "registry.npmjs.org"}
+	hosts := []string{"API.anthropic.com.", "registry.npmjs.org"}
 	if err := writeHosts(path, hosts, addr); err != nil {
 		t.Fatal(err)
 	}

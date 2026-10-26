@@ -319,7 +319,11 @@ func TestContainerSecretsRemovedWhileRunning(t *testing.T) {
 	if err != nil || strings.TrimSpace(string(seen)) != "TOKEN="+fakeSecret {
 		t.Fatalf("guest did not read secrets.env: %q, %v", seen, err)
 	}
-	if out, _ := exec.Command("container", "inspect", name).Output(); strings.Contains(string(out), fakeSecret) {
+	out, err := exec.Command("container", "inspect", name).Output()
+	if err != nil || !strings.Contains(string(out), name) {
+		t.Fatalf("container inspect %s: %v; output:\n%s", name, err, out)
+	}
+	if strings.Contains(string(out), fakeSecret) {
 		t.Fatal("secret value visible in container inspect")
 	}
 }

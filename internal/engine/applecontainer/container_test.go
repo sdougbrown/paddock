@@ -9,7 +9,6 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"syscall"
 	"testing"
@@ -320,12 +319,14 @@ func TestContainerWatchdogStopsAfterSIGKILL(t *testing.T) {
 func TestContainerClientKilledStopsGuest(t *testing.T) {
 	h := startHelper(t, "exec sleep 300")
 	name := waitRunning(t, h)
-	out, err := exec.Command("pgrep", "-P", strconv.Itoa(h.cmd.Process.Pid), "-x", "container").Output()
+	// Find the client by its command line, `container run ... --name <name>`;
+	// the run name is unique, so any match belongs to this run.
+	out, err := exec.Command("pgrep", "-f", "run .*--name "+name).Output()
 	pids := strings.Fields(string(out))
-	if err != nil || len(pids) != 1 {
-		t.Fatalf("container run client of helper %d: %q, %v", h.cmd.Process.Pid, out, err)
+	if err != nil || len(pids) == 0 {
+		t.Fatalf("no `container run --name %s` process: %q, %v", name, out, err)
 	}
-	if err := exec.Command("kill", "-KILL", pids[0]).Run(); err != nil {
+	if err := exec.Command("kill", append([]string{"-KILL"}, pids...)...).Run(); err != nil {
 		t.Fatal(err)
 	}
 	if code := h.wait(t); code != 137 {

@@ -1,0 +1,38 @@
+package applecontainer
+
+import (
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"syscall"
+	"testing"
+	"time"
+)
+
+// TestCLIRunReturnsWhenAChildHoldsOutput times out a CLI that leaves a
+// background child holding its stdout. cliRun must return soon after the
+// timeout rather than when that child exits.
+func TestCLIRunReturnsWhenAChildHoldsOutput(t *testing.T) {
+	dir := t.TempDir()
+	pidFile := filepath.Join(dir, "child")
+	bin := filepath.Join(dir, "container")
+	script := "#!/bin/sh\nsleep 30 &\necho $! > " + pidFile + "\nexec sleep 30\n"
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if b, err := os.ReadFile(pidFile); err == nil {
+			if pid, err := strconv.Atoi(strings.TrimSpace(string(b))); err == nil {
+				syscall.Kill(pid, syscall.SIGKILL)
+			}
+		}
+	})
+	start := time.Now()
+	if _, err := (&Engine{Bin: bin}).cliRun(t.Context(), 200*time.Millisecond, "ls"); err == nil {
+		t.Fatal("cliRun succeeded; want a timeout error")
+	}
+	if d := time.Since(start); d > 5*time.Second {
+		t.Fatalf("cliRun returned after %s; want about the timeout plus WaitDelay", d)
+	}
+}

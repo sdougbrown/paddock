@@ -2,6 +2,7 @@ package applecontainer
 
 import (
 	"errors"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -165,8 +166,8 @@ func TestStartWatchdogFailsWhenNotReady(t *testing.T) {
 	if d := time.Since(start); d > 10*time.Second {
 		t.Errorf("startWatchdog returned after %s; want about %s", d, watchdogReadyTimeout)
 	}
-	if !strings.Contains(err.Error(), `did not become ready`) || !strings.Contains(err.Error(), `"custom-watchdog"`) {
-		t.Errorf("error %q does not name the readiness failure and the entry arguments", err)
+	if want := `the program must dispatch the arguments ["custom-watchdog"] to applecontainer.RunWatchdog`; !strings.Contains(err.Error(), "did not become ready") || !strings.Contains(err.Error(), want) {
+		t.Errorf("error %q does not name the readiness failure and the missing dispatch %q", err, want)
 	}
 	args, err := os.ReadFile(filepath.Join(dir, "args"))
 	if err != nil || !strings.HasPrefix(string(args), "custom-watchdog\ncontainer\npaddock-test\n") {
@@ -183,5 +184,55 @@ func TestStartWatchdogFailsWhenNotReady(t *testing.T) {
 	if err := syscall.Kill(pid, 0); !errors.Is(err, syscall.ESRCH) {
 		syscall.Kill(pid, syscall.SIGKILL)
 		t.Errorf("watchdog child %d still exists after startWatchdog returned (kill 0: %v)", pid, err)
+	}
+}
+
+// TestWatchdogRefusesNonPipe starts the watchdog with /dev/null on fd 3,
+// which reads as EOF at once. It must exit 2 without signalling ready,
+// calling the container CLI, or removing the directory.
+func TestWatchdogRefusesNonPipe(t *testing.T) {
+	bin, calls := fakeContainer(t)
+	dir := filepath.Join(t.TempDir(), "state")
+	if err := os.Mkdir(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	null, err := os.Open(os.DevNull)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer null.Close()
+	readyR, readyW, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer readyR.Close()
+	cmd := exec.Command(os.Args[0], WatchdogCommand, bin, "paddock-test", dir)
+	cmd.ExtraFiles = []*os.File{null, readyW}
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	readyW.Close()
+	exited := make(chan error, 1)
+	go func() { exited <- cmd.Wait() }()
+	var waitErr error
+	select {
+	case waitErr = <-exited:
+	case <-time.After(10 * time.Second):
+		cmd.Process.Kill()
+		<-exited
+		t.Fatal("watchdog still running after 10s")
+	}
+	var ee *exec.ExitError
+	if !errors.As(waitErr, &ee) || ee.ExitCode() != 2 {
+		t.Errorf("watchdog exit: %v; want exit status 2", waitErr)
+	}
+	if b, _ := io.ReadAll(readyR); len(b) != 0 {
+		t.Errorf("watchdog wrote %q on the ready pipe", b)
+	}
+	if c := calls(); len(c) != 0 {
+		t.Errorf("watchdog called the container CLI: %q", c)
+	}
+	if _, err := os.Stat(dir); err != nil {
+		t.Errorf("run dir: %v", err)
 	}
 }

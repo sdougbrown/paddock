@@ -461,7 +461,7 @@ func (e *Engine) startWatchdog(name string, d runDirs) (*watchdog, error) {
 		cmd.Process.Kill()
 		cmd.Wait()
 		w.Close()
-		return nil, fmt.Errorf("watchdog %s did not become ready; the paddock binary must dispatch %q to RunWatchdog", exe, entry)
+		return nil, fmt.Errorf("watchdog %s %q did not become ready within %s; the program must dispatch the arguments %q to applecontainer.RunWatchdog", exe, entry, watchdogReadyTimeout, entry)
 	}
 	return &watchdog{w: w, cmd: cmd}, nil
 }

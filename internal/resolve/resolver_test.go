@@ -692,3 +692,37 @@ func TestWorkspaceModeDefaultsToReadonly(t *testing.T) {
 		t.Errorf("workspace mount = %+v, want read-only", p.Mounts[0])
 	}
 }
+
+func TestSeedFilesNeedDistinctNames(t *testing.T) {
+	r, _ := testResolver(t, "", errors.New("no remote"))
+	useProfile(t, r, "[claude]\nseed_files = [\"~/a/remote-settings.json\", \"~/b/remote-settings.json\"]\n")
+	if _, err := r.Resolve(Options{Profile: "p", Spec: "afresh"}); err == nil || !strings.Contains(err.Error(), "claude.seed_files") {
+		t.Errorf("colliding seed file names: err = %v", err)
+	}
+	useProfile(t, r, "[claude]\nseed_files = [\"~/a/remote-settings.json\", \"~/b/other.json\"]\n")
+	if _, err := r.Resolve(Options{Profile: "p", Spec: "afresh"}); err != nil {
+		t.Errorf("distinct seed file names: %v", err)
+	}
+}
+
+func TestWorkspaceMountRules(t *testing.T) {
+	r, _ := testResolver(t, "", errors.New("no remote"))
+	ws := filepath.Join(t.TempDir(), "a:b")
+	if err := os.Mkdir(ws, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	useProfile(t, r, "")
+	if _, err := r.Resolve(Options{Profile: "p", Spec: "afresh", Workspace: ws}); err == nil || !strings.Contains(err.Error(), "':'") {
+		t.Errorf("workspace with ':': err = %v", err)
+	}
+
+	r, ws = testResolver(t, "", errors.New("no remote"))
+	if err := os.Mkdir(filepath.Join(ws, "a:b"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	useProfile(t, r, "[workspace]\nreadonly = [\"a:b\"]\n")
+	_, err := r.Resolve(Options{Profile: "p", Spec: "afresh", Workspace: ws})
+	if err == nil || !strings.Contains(err.Error(), "workspace.readonly") || !strings.Contains(err.Error(), "a:b") || !strings.Contains(err.Error(), "':'") {
+		t.Errorf("workspace.readonly subpath with ':': err = %v", err)
+	}
+}

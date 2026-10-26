@@ -53,6 +53,11 @@ runs the allowlist proxy as a separate uid, and installs a firewall the agent ca
    cache hit is only reported; the setup command still runs. Use install commands that check cached
    packages against the lockfile's checksums, do not run setup for an untrusted workspace under a
    spec that trusted workspaces use, or clear `~/.cache/paddock/<spec>`.
+8. **Image pruning is not coordinated between runs.** After it builds or reuses a spec's image
+   chain, paddock removes the other tags of that chain's repositories. Two concurrent runs of one
+   spec whose Dockerfile or build context changed between them can remove the image the other run
+   has prepared but not yet started, and that run's `container run` fails. Running it again
+   recovers. A container that is already running keeps its image.
 
 ## Notes on the network policy
 

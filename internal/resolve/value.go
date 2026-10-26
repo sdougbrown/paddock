@@ -48,7 +48,8 @@ func ExpandHome(p, home string) (string, error) {
 
 // ResolveValue reads the value behind an EnvVar at launch time. A file value
 // is trimmed of surrounding whitespace and must contain no interior
-// whitespace or control characters; an env value must be set and non-empty.
+// whitespace or control characters; an env value must be set, non-empty, and
+// free of line breaks. Either way the value fits on one KEY=VALUE line.
 // Errors never include the value.
 func ResolveValue(v plan.EnvVar, lookup func(string) (string, bool)) (string, error) {
 	switch v.Source {
@@ -58,6 +59,9 @@ func ResolveValue(v plan.EnvVar, lookup func(string) (string, bool)) (string, er
 		val, ok := lookup(v.Ref)
 		if !ok || val == "" {
 			return "", fmt.Errorf("env.%s: environment variable %s is unset or empty", v.Name, v.Ref)
+		}
+		if strings.ContainsAny(val, "\r\n") {
+			return "", fmt.Errorf("env.%s: environment variable %s contains a line break", v.Name, v.Ref)
 		}
 		return val, nil
 	case plan.SourceFile:

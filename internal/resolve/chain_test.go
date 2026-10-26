@@ -327,7 +327,7 @@ func TestResolveValue(t *testing.T) {
 		return p
 	}
 	lookup := func(k string) (string, bool) {
-		v, ok := map[string]string{"SET": "from-env", "EMPTY": ""}[k]
+		v, ok := map[string]string{"SET": "from-env", "EMPTY": "", "NL": "a\nB=def", "CR": "a\rdef", "SPACE": "a def"}[k]
 		return v, ok
 	}
 	tests := []struct {
@@ -346,6 +346,9 @@ func TestResolveValue(t *testing.T) {
 		{"env set", plan.EnvVar{Name: "E", Source: "env", Ref: "SET"}, "from-env", ""},
 		{"env unset", plan.EnvVar{Name: "E", Source: "env", Ref: "UNSET"}, "", "unset"},
 		{"env empty", plan.EnvVar{Name: "E", Source: "env", Ref: "EMPTY"}, "", "unset or empty"},
+		{"env newline", plan.EnvVar{Name: "E", Source: "env", Ref: "NL"}, "", "line break"},
+		{"env carriage return", plan.EnvVar{Name: "E", Source: "env", Ref: "CR"}, "", "line break"},
+		{"env interior space", plan.EnvVar{Name: "E", Source: "env", Ref: "SPACE"}, "a def", ""},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

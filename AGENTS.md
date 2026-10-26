@@ -30,10 +30,15 @@ Agent-specific behavior (what to run, which prompt, which skills) belongs to the
 - `cmd/paddock`: thin CLI (also the guest `paddock-init` role when argv[0] is `paddock-init`)
 - `internal/config`: strict TOML types and loaders for profiles and specs, config root
 - `internal/resolve`: extends chain, trust rules, value sources, spec selection, mounts
-- `internal/plan`: the Plan struct produced by resolve and consumed by engines
+- `internal/plan`: the Plan struct produced by resolve and consumed by engines, and the mount rule
+  (`Mount.Check`) both apply
 - `internal/initcfg`: the init config the host writes and paddock-init reads, the guest paths both
   sides share, and the network policy names
 - `internal/egresshost`: the egress host validator shared by config, resolve, and the guest proxy
+- `internal/engine`: the Engine interface between a plan and the runtime that runs it
+- `internal/engine/applecontainer`: the Apple `container` engine: image chain, mounts, run argv,
+  init config, per-run directories
+- `images`: the embedded base image Dockerfile and the Claude Code version it installs
 - `internal/guest/...`: in-guest enforcement (netpolicy, sniproxy)
 
 ## Notes

@@ -204,6 +204,9 @@ func modeName(m string) string {
 // profile's mode in both phases; its readonly subpaths stay read-only.
 func (r *Resolver) mounts(prof *config.Profile, m *Merged, ws string) ([]plan.Mount, error) {
 	mounts := []plan.Mount{{Host: ws, Guest: ws, ReadOnly: prof.Workspace.Mode != "rw"}}
+	if err := mounts[0].Check(); err != nil {
+		return nil, fmt.Errorf("workspace: %w", err)
+	}
 	for _, sub := range prof.Workspace.Readonly {
 		clean := filepath.Clean(sub)
 		if _, ok := relInside(".", sub); !ok {
@@ -213,7 +216,11 @@ func (r *Resolver) mounts(prof *config.Profile, m *Merged, ws string) ([]plan.Mo
 		if err != nil {
 			return nil, fmt.Errorf("workspace.readonly: %q: %w", sub, err)
 		}
-		mounts = append(mounts, plan.Mount{Host: p, Guest: p, ReadOnly: true})
+		mount := plan.Mount{Host: p, Guest: p, ReadOnly: true}
+		if err := mount.Check(); err != nil {
+			return nil, fmt.Errorf("workspace.readonly: %w", err)
+		}
+		mounts = append(mounts, mount)
 	}
 	add := func(key string, paths []string) error {
 		for _, raw := range paths {
@@ -221,14 +228,11 @@ func (r *Resolver) mounts(prof *config.Profile, m *Merged, ws string) ([]plan.Mo
 			if err != nil {
 				return fmt.Errorf("%s: %w", key, err)
 			}
-			if strings.Contains(p, ":") {
-				return fmt.Errorf("%s: %q must not contain ':'", key, p)
+			if err := (plan.Mount{Host: p, Guest: p}).Check(); err != nil {
+				return fmt.Errorf("%s: %w", key, err)
 			}
 			if containsPath(p, ws) {
 				return fmt.Errorf("%s: %q equals or contains the workspace %s", key, p, ws)
-			}
-			if initcfg.Reserved(p) {
-				return fmt.Errorf("%s: %q is a paddock-managed guest path", key, p)
 			}
 			if !hasMount(mounts, p) {
 				mounts = append(mounts, plan.Mount{Host: p, Guest: p, ReadOnly: true})
@@ -370,11 +374,18 @@ func (r *Resolver) claude(prof *config.Profile, m *Merged, mounts []plan.Mount) 
 	if m.ManagedSettings != nil {
 		c.ManagedSettings = json.RawMessage(m.ManagedSettings)
 	}
+	// Seed files land in the guest's ~/.claude under their base names.
+	names := map[string]string{}
 	for _, f := range prof.Claude.SeedFiles {
 		p, err := ExpandHome(f, r.Home)
 		if err != nil {
 			return c, fmt.Errorf("claude.seed_files: %w", err)
 		}
+		base := filepath.Base(p)
+		if prev, dup := names[base]; dup {
+			return c, fmt.Errorf("claude.seed_files: %s and %s share the name %s", prev, p, base)
+		}
+		names[base] = p
 		c.SeedFiles = append(c.SeedFiles, p)
 	}
 	for _, t := range []struct {

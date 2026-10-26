@@ -55,16 +55,28 @@ func TestRemoveSecretsOnceRunning(t *testing.T) {
 			}
 			e := &Engine{Bin: bin, secretsGrace: grace, secretsStartWait: tt.startWait}
 			done := make(chan struct{})
-			defer close(done)
 			returned := make(chan time.Duration, 1)
 			start := time.Now()
 			go func() {
 				e.removeSecretsOnceRunning("paddock-test", secrets, done)
 				returned <- time.Since(start)
 			}()
+			// Registered after TempDir, so this runs before the directory is
+			// removed: stop the remover and any pending flip to running.
+			flipped := make(chan struct{})
+			var flip *time.Timer
 			if tt.runningAt > 0 {
-				time.AfterFunc(tt.runningAt, func() { setLs(running) })
+				flip = time.AfterFunc(tt.runningAt, func() {
+					defer close(flipped)
+					setLs(running)
+				})
 			}
+			t.Cleanup(func() {
+				if flip != nil && !flip.Stop() {
+					<-flipped
+				}
+				close(done)
+			})
 			// secrets.env must be present whenever it is checked before the
 			// earliest allowed removal. The time is read after each Stat, so a
 			// check delayed by test load cannot fail a correct remover.
@@ -76,14 +88,16 @@ func TestRemoveSecretsOnceRunning(t *testing.T) {
 				}
 				time.Sleep(20 * time.Millisecond)
 			}
-			eventually(t, tt.removedBy+3*time.Second-time.Since(start), "secrets.env to be removed", func() bool {
+			eventually(t, 10*time.Second, "secrets.env to be removed", func() bool {
 				_, err := os.Stat(file)
 				return os.IsNotExist(err)
 			})
+			// The remover's own clock: it must not finish early, and finishing
+			// long after the expected wait means it took the wrong path.
 			select {
 			case d := <-returned:
-				if d < tt.removedBy {
-					t.Errorf("returned after %s; want at least %s", d, tt.removedBy)
+				if d < tt.removedBy || d > tt.removedBy+3*time.Second {
+					t.Errorf("returned after %s; want between %s and %s", d, tt.removedBy, tt.removedBy+3*time.Second)
 				}
 			case <-time.After(5 * time.Second):
 				t.Fatal("removeSecretsOnceRunning did not return after removing secrets.env")

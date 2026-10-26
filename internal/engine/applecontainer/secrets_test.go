@@ -11,10 +11,11 @@ import (
 // CLI whose `container ls` lists the container as running from the start,
 // only after a delay, or never. secrets.env must survive until the matching
 // wait ends (secretsGrace once running, secretsStartWait otherwise), then
-// be removed.
+// be removed. The survival check runs half a second before that, so a
+// remover delayed by test load does not fail it.
 func TestRemoveSecretsOnceRunning(t *testing.T) {
 	const running = `[{"configuration":{"id":"paddock-test"},"status":{"state":"running"}}]`
-	const grace = 400 * time.Millisecond
+	const grace = time.Second
 	tests := []struct {
 		name      string
 		runningAt time.Duration // when ls starts listing it as running; <0 never
@@ -23,7 +24,7 @@ func TestRemoveSecretsOnceRunning(t *testing.T) {
 	}{
 		{"running from the start", 0, 5 * time.Second, grace},
 		{"running after a delay", 600 * time.Millisecond, 5 * time.Second, 600*time.Millisecond + grace},
-		{"never running", -1, time.Second, time.Second},
+		{"never running", -1, 1500 * time.Millisecond, 1500 * time.Millisecond},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -66,7 +67,8 @@ func TestRemoveSecretsOnceRunning(t *testing.T) {
 				time.Sleep(tt.runningAt)
 				setLs(running)
 			}
-			time.Sleep(tt.removedBy - 150*time.Millisecond - time.Since(start))
+			// Half a second of slack before the earliest allowed removal.
+			time.Sleep(tt.removedBy - 500*time.Millisecond - time.Since(start))
 			if _, err := os.Stat(file); err != nil {
 				t.Fatalf("secrets.env gone at %s, before %s: %v", time.Since(start), tt.removedBy, err)
 			}

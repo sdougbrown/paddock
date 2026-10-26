@@ -416,6 +416,10 @@ func TestPrepareHomeReplacesLinkedSeedDestination(t *testing.T) {
 			writeFile(t, filepath.Join(root, initcfg.SeedDir, "remote-settings.json"), `{"seed":1}`, 0o644)
 			other := filepath.Join(root, home, ".claude/other")
 			writeFile(t, other, "original", 0o644)
+			// Pin the mode the umask may have narrowed.
+			if err := os.Chmod(other, 0o644); err != nil {
+				t.Fatal(err)
+			}
 			dest := filepath.Join(root, home, ".claude/remote-settings.json")
 			link := os.Symlink
 			if kind == "hardlink" {

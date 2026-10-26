@@ -63,6 +63,7 @@ Agent-specific behavior (what to run, which prompt, which skills) belongs to the
   of its choosing. List each host exactly.
 - `make verify` runs fmtcheck, vet, test, build, and build-init.
 - `make container-test` runs the engine tests that start real Apple `container` VMs and build
-  images. CI cannot run them: GitHub's macOS runners have no nested virtualization. A change to
-  `internal/engine/applecontainer` or the run loop needs a passing `make container-test` on Apple
-  silicon before merge.
+  images; `TestContainerRealInit` boots paddock-init in the base image. CI cannot run them: GitHub's
+  macOS runners have no nested virtualization. A change to `internal/engine/applecontainer`, the run
+  loop, or `internal/guest/pinit` needs a passing `make container-test` on Apple silicon before
+  merge.

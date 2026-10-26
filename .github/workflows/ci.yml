@@ -19,3 +19,9 @@ jobs:
       - run: make vet
       - run: make fmtcheck
       - run: make test
+      # The privilege drop test needs root; it skips under `make test`.
+      - if: runner.os == 'Linux'
+        run: |
+          go test -c -o "$RUNNER_TEMP/pinit.test" ./internal/guest/pinit
+          sudo "$RUNNER_TEMP/pinit.test" -test.run '^TestDropAndExec$' -test.v | tee "$RUNNER_TEMP/drop.out"
+          grep -q -- '--- PASS: TestDropAndExec' "$RUNNER_TEMP/drop.out"

@@ -15,10 +15,16 @@ import (
 const hostsPath = "/etc/hosts"
 
 // writeHosts rewrites the hosts file at path so that every name in hosts
-// maps to addr and to nothing else. Existing entries are kept, minus the
-// listed names and any earlier line for addr. The file is replaced through
-// a rename, root-owned with mode 0644.
+// maps to addr and to nothing else. Each name must pass egresshost.Validate;
+// a bad one fails before the file is touched. Existing entries are kept,
+// minus the listed names and any earlier line for addr. The file is replaced
+// through a rename, root-owned with mode 0644.
 func writeHosts(path string, hosts []string, addr netip.Addr) error {
+	for _, h := range hosts {
+		if err := egresshost.Validate(h); err != nil {
+			return fmt.Errorf("hosts: %w", err)
+		}
+	}
 	old, err := os.ReadFile(path)
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return fmt.Errorf("hosts: %w", err)

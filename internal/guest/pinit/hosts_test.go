@@ -51,3 +51,16 @@ func TestWriteHostsMissingFile(t *testing.T) {
 		t.Errorf("got %q", got)
 	}
 }
+
+func TestWriteHostsRejectsInvalidHost(t *testing.T) {
+	for _, bad := range []string{"*.example.com", "192.0.2.5", "lifeline.invalid", "not a host"} {
+		path := filepath.Join(t.TempDir(), "hosts")
+		writeFile(t, path, "127.0.0.1 localhost\n", 0o644)
+		if err := writeHosts(path, []string{"a.test", bad}, netip.MustParseAddr("192.0.2.1")); err == nil {
+			t.Errorf("%q: no error", bad)
+		}
+		if got := readFile(t, path); got != "127.0.0.1 localhost\n" {
+			t.Errorf("%q: hosts changed:\n%s", bad, got)
+		}
+	}
+}

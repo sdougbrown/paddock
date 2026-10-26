@@ -428,10 +428,15 @@ func TestPrepareHomeReplacesLinkedSeedDestination(t *testing.T) {
 				User:   initcfg.User{Name: "doug", UID: 501, GID: 20, Home: home},
 				Claude: initcfg.ClaudeHome{SeedFiles: []string{"remote-settings.json"}},
 			}
+			otherInfo, err := os.Stat(other)
+			if err != nil {
+				t.Fatal(err)
+			}
 			h := newHomeFS(root, cfg)
-			var chowned []string
 			h.chown = func(p string, _, _ int) error {
-				chowned = append(chowned, strings.TrimPrefix(p, root))
+				if st, err := os.Lstat(p); err == nil && os.SameFile(st, otherInfo) {
+					t.Errorf("chown %s reaches the linked file", strings.TrimPrefix(p, root))
+				}
 				return nil
 			}
 			if err := prepareHome(h, cfg); err != nil {
@@ -442,9 +447,6 @@ func TestPrepareHomeReplacesLinkedSeedDestination(t *testing.T) {
 			}
 			if st, err := os.Stat(other); err != nil || st.Mode().Perm() != 0o644 {
 				t.Errorf("linked file mode: %v %v", st, err)
-			}
-			if slices.Contains(chowned, home+"/.claude/other") {
-				t.Error("linked file chowned")
 			}
 			st, err := os.Lstat(dest)
 			if err != nil || !st.Mode().IsRegular() || st.Mode().Perm() != 0o600 || readFile(t, dest) != `{"seed":1}` {
@@ -498,6 +500,32 @@ func TestPrepareHomeLeavesDirMountAlone(t *testing.T) {
 	}
 	if got := readFile(t, filepath.Join(root, home, ".claude/keep")); got != "keep" {
 		t.Errorf("mounted dir content changed: %q", got)
+	}
+	if st, err := os.Stat(filepath.Join(root, home, ".claude")); err != nil || st.Mode().Perm() != 0o750 {
+		t.Errorf("mounted dir mode: %v %v", st, err)
+	}
+}
+
+func TestPrepareHomeSeedOntoDirectoryFails(t *testing.T) {
+	root := t.TempDir()
+	home := "/Users/doug"
+	writeFile(t, filepath.Join(root, initcfg.SeedDir, "remote-settings.json"), `{"seed":1}`, 0o644)
+	writeFile(t, filepath.Join(root, home, ".claude/remote-settings.json/keep"), "keep", 0o644)
+	cfg := &initcfg.Config{
+		User:   initcfg.User{Name: "doug", UID: 501, GID: 20, Home: home},
+		Claude: initcfg.ClaudeHome{SeedFiles: []string{"remote-settings.json"}},
+	}
+	h := newHomeFS(root, cfg)
+	h.chown = func(string, int, int) error { return nil }
+	if err := prepareHome(h, cfg); err == nil {
+		t.Error("seed onto a directory: no error")
+	}
+	if got := readFile(t, filepath.Join(root, home, ".claude/remote-settings.json/keep")); got != "keep" {
+		t.Errorf("directory content changed: %q", got)
+	}
+	left, err := filepath.Glob(filepath.Join(root, home, ".claude/.remote-settings.json.*"))
+	if err != nil || len(left) != 0 {
+		t.Errorf("temporary files left: %q %v", left, err)
 	}
 }
 

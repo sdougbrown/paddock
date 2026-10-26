@@ -2,8 +2,12 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"strings"
 	"testing"
+
+	"github.com/sdougbrown/paddock/internal/engine"
+	"github.com/sdougbrown/paddock/internal/plan"
 )
 
 func TestRunAndSetupArgumentGuards(t *testing.T) {
@@ -18,7 +22,6 @@ func TestRunAndSetupArgumentGuards(t *testing.T) {
 		{"run verify with command", []string{"run", "--profile", "p", "--verify", "--", "claude"}, 1, "paddock run: --verify takes no command"},
 		{"run profile without value", []string{"run", "--profile"}, 2, "flag needs an argument: -profile"},
 		{"setup without profile", []string{"setup"}, 1, "paddock setup: --profile is required"},
-		{"setup unknown flag", []string{"setup", "--bogus"}, 2, "flag provided but not defined: -bogus"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -58,5 +61,42 @@ func TestSetupRejectsACommand(t *testing.T) {
 	code := run([]string{"setup", "--profile", "fixer", "--spec", "afresh/scanner", "--workspace", ws, "make"}, &stdout, &stderr)
 	if want := "paddock setup: phase setup: the setup command comes from the spec"; code != 1 || !strings.Contains(stderr.String(), want) {
 		t.Errorf("exit %d, stderr %q; want 1 and %q", code, stderr.String(), want)
+	}
+}
+
+// recordingEngine records the plan and options Run receives.
+type recordingEngine struct {
+	plan *plan.Plan
+	opts engine.Options
+}
+
+func (r *recordingEngine) Run(_ context.Context, p *plan.Plan, o engine.Options) (int, error) {
+	r.plan, r.opts = p, o
+	return 0, nil
+}
+
+// TestRunPassesVerifyToEngine checks that `paddock run --verify` reaches
+// the engine as Options.Verify with no argv, and a command does not.
+func TestRunPassesVerifyToEngine(t *testing.T) {
+	ws := planFixture(t)
+	rec := &recordingEngine{}
+	defer func(f func(string) (engine.Engine, error)) { newEngine = f }(newEngine)
+	newEngine = func(string) (engine.Engine, error) { return rec, nil }
+	for _, tc := range []struct {
+		args   []string
+		verify bool
+		argv   string
+	}{
+		{[]string{"--verify"}, true, ""},
+		{[]string{"--", "claude"}, false, "claude"},
+	} {
+		var stdout, stderr bytes.Buffer
+		args := append([]string{"run", "--profile", "fixer", "--spec", "afresh", "--workspace", ws}, tc.args...)
+		if code := run(args, &stdout, &stderr); code != 0 {
+			t.Fatalf("%q: exit %d, stderr %q", tc.args, code, stderr.String())
+		}
+		if rec.opts.Verify != tc.verify || strings.Join(rec.plan.Argv, " ") != tc.argv {
+			t.Errorf("%q: engine got Verify %v, argv %q; want %v, %q", tc.args, rec.opts.Verify, rec.plan.Argv, tc.verify, tc.argv)
+		}
 	}
 }

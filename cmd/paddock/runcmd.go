@@ -42,7 +42,9 @@ func runCmd(args []string, stderr io.Writer) (int, error) {
 	return eng.Run(context.Background(), p, engine.Options{Verify: verify})
 }
 
-func newEngine(name string) (engine.Engine, error) {
+// newEngine returns the engine a plan names. It is a variable so tests can
+// substitute a fake engine.
+var newEngine = func(name string) (engine.Engine, error) {
 	switch name {
 	case config.EngineAppleContainer:
 		return &applecontainer.Engine{Debug: os.Getenv("PADDOCK_DEBUG") == "1"}, nil

@@ -297,6 +297,7 @@ func fakeContainer(t *testing.T, existing ...string) (bin string, calls func() [
 		"[ -e " + dir + "/fail-$1 ] && exit 1\n" +
 		"[ -e " + dir + "/fail-$1-$2 ] && exit 1\n" +
 		"[ -e " + dir + "/slow-$1 ] && exec sleep 30\n" +
+		"[ -e " + dir + "/slow-once-$1 ] && rm " + dir + "/slow-once-$1 && exec sleep 30\n" +
 		"case \"$1\" in\n image) if [ \"$2\" = ls ]; then [ $# -eq 3 ] && [ \"$3\" = --quiet ] || exit 2; cat " + tags + "; fi ;;\n build) for a; do c=$a; done; ls -A \"$c\" | tr '\\n' ' ' >> " + filepath.Join(dir, "contexts") + "; echo >> " + filepath.Join(dir, "contexts") + "\n  while [ $# -gt 0 ]; do [ \"$1\" = -t ] && echo \"$2\" >> " + tags + "; shift; done ;;\nesac\n"
 	bin = filepath.Join(dir, "container")
 	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {

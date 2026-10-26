@@ -23,6 +23,9 @@ const watchdogReady = 'r'
 // hung container service cannot keep it from removing the run's directories.
 var watchdogCLITimeout = cliTimeout + 2*time.Second
 
+// watchdogRetry is the pause between the watchdog's `container stop` attempts.
+var watchdogRetry = time.Second
+
 // watchdogCLI runs `bin args...` bounded by watchdogCLITimeout.
 func watchdogCLI(bin string, args ...string) error {
 	c, cancel := context.WithTimeout(context.Background(), watchdogCLITimeout)
@@ -56,7 +59,7 @@ func RunWatchdog(args []string) int {
 		if watchdogCLI(bin, "stop", "--time", "2", name) == nil {
 			break
 		}
-		time.Sleep(time.Second)
+		time.Sleep(watchdogRetry)
 	}
 	watchdogCLI(bin, "delete", "--force", name)
 	for _, d := range dirs {

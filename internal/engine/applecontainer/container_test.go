@@ -31,6 +31,9 @@ func TestMain(m *testing.M) {
 		if d, err := time.ParseDuration(os.Getenv("HELPER_WATCHDOG_CLI_TIMEOUT")); err == nil {
 			watchdogCLITimeout = d
 		}
+		if d, err := time.ParseDuration(os.Getenv("HELPER_WATCHDOG_RETRY")); err == nil {
+			watchdogRetry = d
+		}
 		os.Exit(RunWatchdog(os.Args[2:]))
 	}
 	if os.Getenv("PADDOCK_ENGINE_HELPER") == "1" {
@@ -99,6 +102,9 @@ func startHelper(t *testing.T, script string, env ...string) *helper {
 		"HELPER_WORKSPACE="+ws, "HELPER_SCRIPT="+script, "HELPER_TOKEN="+fakeSecret)
 	h.cmd.Env = append(h.cmd.Env, env...)
 	h.cmd.Stdout, h.cmd.Stderr = &h.out, &h.out
+	// The `container run` child shares the output pipe, so a killed helper's
+	// Wait must not block on it.
+	h.cmd.WaitDelay = 5 * time.Second
 	if err := h.cmd.Start(); err != nil {
 		t.Fatal(err)
 	}

@@ -99,6 +99,11 @@ func hostUser() (initcfg.User, error) {
 	return initcfg.User{Name: u.Username, UID: uid, GID: gid, Home: u.HomeDir}, nil
 }
 
+// passthroughEnv names the invoking environment's variables that reach the
+// guest. Run passes the set ones to paddock-init both in the init config,
+// where the plan's env overrides them, and with `container run -e`.
+var passthroughEnv = []string{"TERM", "COLORTERM", "LANG"}
+
 // Run implements engine.Engine.
 func (e *Engine) Run(ctx context.Context, p *plan.Plan, o engine.Options) (int, error) {
 	if err := e.defaults(); err != nil {
@@ -165,7 +170,7 @@ func (e *Engine) Run(ctx context.Context, p *plan.Plan, o engine.Options) (int, 
 		return 1, err
 	}
 	var pass []string
-	for _, k := range []string{"TERM", "COLORTERM", "LANG"} {
+	for _, k := range passthroughEnv {
 		if v := e.getenv(k); v != "" {
 			pass = append(pass, k+"="+v)
 		}
@@ -200,12 +205,6 @@ func (e *Engine) Run(ctx context.Context, p *plan.Plan, o engine.Options) (int, 
 		}
 	}
 
-	var termEnv []string
-	for _, k := range []string{"TERM", "COLORTERM"} {
-		if v := e.getenv(k); v != "" {
-			termEnv = append(termEnv, k+"="+v)
-		}
-	}
 	argv := runArgv(runSpec{
 		Name:       name,
 		TTY:        isTTY(e.Stdin),
@@ -213,7 +212,7 @@ func (e *Engine) Run(ctx context.Context, p *plan.Plan, o engine.Options) (int, 
 		Memory:     p.Limits.Memory,
 		Mounts:     mounts,
 		Workdir:    p.Workdir,
-		Env:        termEnv,
+		Env:        pass,
 		Entrypoint: entry,
 		Image:      image,
 		Args:       e.testArgs,

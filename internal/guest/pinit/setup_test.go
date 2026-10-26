@@ -2,6 +2,7 @@ package pinit
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -115,15 +116,25 @@ func TestParseSecrets(t *testing.T) {
 }
 
 func TestTakeSecretsUnlinks(t *testing.T) {
-	for _, data := range []string{"A=" + sentinel + "\n", "broken " + sentinel + "\n"} {
+	for _, tt := range []struct {
+		data    string
+		want    []string
+		wantErr bool
+	}{
+		{"A=" + sentinel + "\n", []string{"A=" + sentinel}, false},
+		{"broken " + sentinel + "\n", nil, true},
+	} {
 		p := filepath.Join(t.TempDir(), "secrets.env")
-		writeFile(t, p, data, 0o600)
-		_, err := takeSecrets(p)
+		writeFile(t, p, tt.data, 0o600)
+		got, err := takeSecrets(p)
+		if (err != nil) != tt.wantErr || !reflect.DeepEqual(got, tt.want) {
+			t.Errorf("%q: got %q, %v", tt.data, got, err)
+		}
 		if err != nil && strings.Contains(err.Error(), sentinel) {
 			t.Errorf("error leaks the value: %v", err)
 		}
 		if _, serr := os.Stat(p); !os.IsNotExist(serr) {
-			t.Errorf("%q: secrets file still exists (err %v)", data, err)
+			t.Errorf("%q: secrets file still exists (err %v)", tt.data, err)
 		}
 	}
 	if _, err := takeSecrets(filepath.Join(t.TempDir(), "missing")); err == nil {
@@ -166,6 +177,14 @@ func TestAgentEnv(t *testing.T) {
 			extra:     []string{"TERM=xterm", "PATH=/opt/bin"},
 			secrets:   []string{"LANG=secret", "TOKEN=t"},
 			want:      append([]string{"TERM=xterm", "LANG=secret", "PATH=/opt/bin"}, append(fixed, "TOKEN=t")...),
+		},
+		{
+			name:      "Config.Env overrides a fixed name; a secret overrides Config.Env",
+			inherited: []string{"HOME=/elsewhere"},
+			extra:     []string{"SHELL=/bin/sh", "TOKEN=from-env"},
+			secrets:   []string{"TOKEN=from-secret"},
+			want: []string{"HOME=/Users/doug", "PATH=" + DefaultPath, "USER=doug", "LOGNAME=doug",
+				"SHELL=/bin/sh", "TOKEN=from-secret"},
 		},
 		{
 			name:    "entry without '=' rejected",
@@ -239,11 +258,15 @@ func TestPrepareHome(t *testing.T) {
 
 	// A second run keeps an existing ~/.claude.json and replaces the link.
 	writeFile(t, filepath.Join(root, home, ".claude.json"), "mine", 0o600)
+	cfg.Claude.Skills = "/Users/doug/other-skills"
 	if err := prepareHome(h, cfg); err != nil {
 		t.Fatal(err)
 	}
 	if got := readFile(t, filepath.Join(root, home, ".claude.json")); got != "mine" {
 		t.Errorf(".claude.json overwritten: %q", got)
+	}
+	if target, err := os.Readlink(filepath.Join(root, home, ".claude/skills")); err != nil || target != cfg.Claude.Skills {
+		t.Errorf("skills link after second run %q, %v", target, err)
 	}
 
 	// A directory where the symlink goes is never replaced.
@@ -446,6 +469,105 @@ func TestPrepareHomeRejectsFileAtAgentDir(t *testing.T) {
 		h.chown = func(string, int, int) error { return nil }
 		if err := prepareHome(h, cfg); err == nil || !strings.Contains(err.Error(), "is not a directory") {
 			t.Errorf("file at %s: err = %v", file, err)
+		}
+	}
+}
+
+func TestPrepareHomeLeavesDirMountAlone(t *testing.T) {
+	root := t.TempDir()
+	home := "/Users/doug"
+	writeFile(t, filepath.Join(root, home, ".claude/keep"), "keep", 0o644)
+	if err := os.Chmod(filepath.Join(root, home, ".claude"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	cfg := &initcfg.Config{
+		User:   initcfg.User{Name: "doug", UID: 501, GID: 20, Home: home},
+		Mounts: []initcfg.Mount{{Path: home + "/.claude", ReadOnly: true}},
+	}
+	h := newHomeFS(root, cfg)
+	var chowned []string
+	h.chown = func(p string, _, _ int) error {
+		chowned = append(chowned, strings.TrimPrefix(p, root))
+		return nil
+	}
+	if err := prepareHome(h, cfg); err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{home}; !reflect.DeepEqual(chowned, want) {
+		t.Errorf("chowned %q, want %q", chowned, want)
+	}
+	if got := readFile(t, filepath.Join(root, home, ".claude/keep")); got != "keep" {
+		t.Errorf("mounted dir content changed: %q", got)
+	}
+}
+
+func TestPrepareHomeErrors(t *testing.T) {
+	home := "/Users/doug"
+	user := initcfg.User{Name: "doug", UID: 501, GID: 20, Home: home}
+	t.Run("missing seed source", func(t *testing.T) {
+		root := t.TempDir()
+		cfg := &initcfg.Config{User: user, Claude: initcfg.ClaudeHome{
+			SeedFiles:  []string{"absent.json"},
+			ClaudeJSON: json.RawMessage(`{}`),
+		}}
+		h := newHomeFS(root, cfg)
+		h.chown = func(string, int, int) error { return nil }
+		if err := prepareHome(h, cfg); err == nil || !strings.Contains(err.Error(), "seed file") {
+			t.Errorf("err = %v", err)
+		}
+		if _, err := os.Lstat(filepath.Join(root, home, ".claude.json")); !os.IsNotExist(err) {
+			t.Errorf(".claude.json written after the failure: %v", err)
+		}
+	})
+	t.Run("chown failure", func(t *testing.T) {
+		root := t.TempDir()
+		cfg := &initcfg.Config{User: user, Claude: initcfg.ClaudeHome{ClaudeJSON: json.RawMessage(`{}`)}}
+		h := newHomeFS(root, cfg)
+		h.chown = func(string, int, int) error { return os.ErrPermission }
+		if err := prepareHome(h, cfg); !errors.Is(err, os.ErrPermission) {
+			t.Errorf("err = %v", err)
+		}
+		if _, err := os.Lstat(filepath.Join(root, home, ".claude.json")); !os.IsNotExist(err) {
+			t.Errorf(".claude.json written after the failure: %v", err)
+		}
+	})
+}
+
+func TestPrepareHomeOpensManagedSettingsDir(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, filepath.Dir(initcfg.ManagedSettingsPath))
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	cfg := &initcfg.Config{
+		User:   initcfg.User{Name: "doug", UID: 501, GID: 20, Home: "/Users/doug"},
+		Claude: initcfg.ClaudeHome{ManagedSettings: json.RawMessage(`{}`)},
+	}
+	h := newHomeFS(root, cfg)
+	h.chown = func(string, int, int) error { return nil }
+	if err := prepareHome(h, cfg); err != nil {
+		t.Fatal(err)
+	}
+	if st, err := os.Stat(dir); err != nil || st.Mode().Perm() != 0o755 {
+		t.Errorf("managed settings dir: %v %v", st, err)
+	}
+}
+
+func TestEnsureAccountReadError(t *testing.T) {
+	for _, db := range []string{"etc/group", "etc/passwd"} {
+		root := t.TempDir()
+		writeFile(t, filepath.Join(root, "etc/passwd"), basePasswd, 0o644)
+		writeFile(t, filepath.Join(root, "etc/group"), baseGroup, 0o644)
+		if err := os.Remove(filepath.Join(root, db)); err != nil {
+			t.Fatal(err)
+		}
+		// A symlink to itself fails to read, but a rename would replace it.
+		if err := os.Symlink(filepath.Base(db), filepath.Join(root, db)); err != nil {
+			t.Fatal(err)
+		}
+		a := account{"doug", "doug", 501, 77, "/Users/doug", agentShell}
+		if err := ensureAccount(root, a); err == nil {
+			t.Errorf("%s unreadable: no error", db)
 		}
 	}
 }

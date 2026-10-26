@@ -14,7 +14,8 @@ func TestWriteHosts(t *testing.T) {
 		"192.168.64.145 guest-name\n" +
 		"10.0.0.9 API.anthropic.com. mirror.internal # pinned elsewhere\n" +
 		"10.0.0.8 registry.npmjs.org\n" +
-		"192.0.2.1 stale.example\n"
+		"192.0.2.1 stale.example\n" +
+		"::ffff:192.0.2.1 mapped.example\n"
 	path := filepath.Join(t.TempDir(), "hosts")
 	writeFile(t, path, in, 0o600)
 	hosts := []string{"API.anthropic.com.", "registry.npmjs.org"}

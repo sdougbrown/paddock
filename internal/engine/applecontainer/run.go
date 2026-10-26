@@ -11,6 +11,7 @@ import (
 	"os/signal"
 	"os/user"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"sync"
 	"syscall"
@@ -414,7 +415,7 @@ type watchdog struct {
 
 // watchdogReadyTimeout is how long startWatchdog waits for the watchdog to
 // signal that it is holding the pipe.
-const watchdogReadyTimeout = 5 * time.Second
+var watchdogReadyTimeout = 5 * time.Second
 
 // startWatchdog re-executes paddock as a session leader holding the read end
 // of a pipe; only this process holds the write end. It returns once the
@@ -438,7 +439,12 @@ func (e *Engine) startWatchdog(name string, d runDirs) (*watchdog, error) {
 		w.Close()
 		return nil, err
 	}
-	cmd := exec.Command(exe, append([]string{WatchdogCommand, e.bin(), name}, d.removable()...)...)
+	entry := e.watchdogArgs
+	if entry == nil {
+		entry = []string{WatchdogCommand}
+	}
+	args := slices.Concat(entry, []string{e.bin(), name}, d.removable())
+	cmd := exec.Command(exe, args...)
 	cmd.ExtraFiles = []*os.File{r, readyW}
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	err = cmd.Start()
@@ -456,7 +462,7 @@ func (e *Engine) startWatchdog(name string, d runDirs) (*watchdog, error) {
 		cmd.Process.Kill()
 		cmd.Wait()
 		w.Close()
-		return nil, fmt.Errorf("watchdog %s did not become ready; the paddock binary must dispatch %s to RunWatchdog", exe, WatchdogCommand)
+		return nil, fmt.Errorf("watchdog %s did not become ready; the paddock binary must dispatch %q to RunWatchdog", exe, entry)
 	}
 	return &watchdog{w: w, cmd: cmd}, nil
 }

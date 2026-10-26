@@ -33,6 +33,7 @@ type Engine struct {
 	testEntrypoint string
 	testArgs       []string
 	selfExe        string        // watchdog executable; default os.Executable()
+	watchdogArgs   []string      // arguments that make selfExe run RunWatchdog; default [WatchdogCommand]
 	cancelGrace    time.Duration // how long after ctx is cancelled the host waits before `container stop`
 	secretsGrace   time.Duration // how long a running container may keep secrets.env before the host removes it
 	testStartDelay time.Duration // pause between preparing the run and starting `container run`

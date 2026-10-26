@@ -1,9 +1,12 @@
 package applecontainer
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -133,5 +136,52 @@ func TestWatchdogBoundsHungCLICalls(t *testing.T) {
 				t.Errorf("got %d stops and %d deletes, want %d and %d; calls: %q", stops, deletes, tt.stops, tt.delete, calls())
 			}
 		})
+	}
+}
+
+// TestStartWatchdogFailsWhenNotReady points the watchdog at a program that
+// never writes the ready byte. startWatchdog must fail after
+// watchdogReadyTimeout, name the entry arguments, and reap the child.
+func TestStartWatchdogFailsWhenNotReady(t *testing.T) {
+	dir := t.TempDir()
+	exe := filepath.Join(dir, "not-paddock")
+	script := "#!/bin/sh\necho $$ > \"${0%/*}/pid\"\nprintf '%s\\n' \"$@\" > \"${0%/*}/args\"\nexec sleep 30\n"
+	if err := os.WriteFile(exe, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	defer func(d time.Duration) { watchdogReadyTimeout = d }(watchdogReadyTimeout)
+	watchdogReadyTimeout = 2 * time.Second
+	dirs, err := createRunDirs(t.TempDir(), "paddock-test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	e := &Engine{Bin: "container", selfExe: exe, watchdogArgs: []string{"custom-watchdog"}}
+	start := time.Now()
+	wd, err := e.startWatchdog("paddock-test", dirs)
+	if err == nil {
+		wd.finish()
+		t.Fatal("startWatchdog succeeded; want a not-ready error")
+	}
+	if d := time.Since(start); d > 10*time.Second {
+		t.Errorf("startWatchdog returned after %s; want about %s", d, watchdogReadyTimeout)
+	}
+	if !strings.Contains(err.Error(), `did not become ready`) || !strings.Contains(err.Error(), `"custom-watchdog"`) {
+		t.Errorf("error %q does not name the readiness failure and the entry arguments", err)
+	}
+	args, err := os.ReadFile(filepath.Join(dir, "args"))
+	if err != nil || !strings.HasPrefix(string(args), "custom-watchdog\ncontainer\npaddock-test\n") {
+		t.Errorf("watchdog argv = %q, %v; want the entry arguments, the CLI, then the name", args, err)
+	}
+	b, err := os.ReadFile(filepath.Join(dir, "pid"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(b)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := syscall.Kill(pid, 0); !errors.Is(err, syscall.ESRCH) {
+		syscall.Kill(pid, syscall.SIGKILL)
+		t.Errorf("watchdog child %d still exists after startWatchdog returned (kill 0: %v)", pid, err)
 	}
 }

@@ -42,6 +42,8 @@ Agent-specific behavior (what to run, which prompt, which skills) belongs to the
   init config, per-run directories
 - `images`: the embedded base image Dockerfile and the Claude Code version it installs
 - `internal/guest/...`: in-guest enforcement (netpolicy, sniproxy)
+- `internal/guest/pinit`: paddock-init's guest setup steps: the agent and proxy accounts, the
+  agent's HOME and `~/.claude`, the agent environment and secrets, and `/etc/hosts`
 
 ## Notes
 

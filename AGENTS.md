@@ -27,7 +27,9 @@ Agent-specific behavior (what to run, which prompt, which skills) belongs to the
 
 ## Package layout
 
-- `cmd/paddock`: thin CLI (also the guest `paddock-init` role when argv[0] is `paddock-init`)
+- `cmd/paddock`: thin CLI. It also has two re-exec roles: the guest `paddock-init` when argv[0] is
+  `paddock-init`, and the host watchdog, which `main` hands to `applecontainer.Dispatch` before any
+  other argument handling. Without that call Run cannot start its watchdog, so every run fails.
 - `internal/config`: strict TOML types and loaders for profiles and specs, config root
 - `internal/resolve`: extends chain, trust rules, value sources, spec selection, mounts
 - `internal/plan`: the Plan struct produced by resolve and consumed by engines, and the mount rule
@@ -56,3 +58,7 @@ Agent-specific behavior (what to run, which prompt, which skills) belongs to the
   `/etc/hosts` cannot express wildcards, and they would let the agent make the proxy look up names
   of its choosing. List each host exactly.
 - `make verify` runs fmtcheck, vet, test, build, and build-init.
+- `make container-test` runs the engine tests that start real Apple `container` VMs and build
+  images. CI cannot run them: GitHub's macOS runners have no nested virtualization. A change to
+  `internal/engine/applecontainer` or the run loop needs a passing `make container-test` on Apple
+  silicon before merge.

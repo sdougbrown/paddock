@@ -1,4 +1,4 @@
-.PHONY: build build-init test vet fmtcheck lint verify
+.PHONY: build build-init test container-test vet fmtcheck lint verify
 
 build:
 	go build -o ./bin/paddock ./cmd/paddock
@@ -8,6 +8,11 @@ build-init:
 
 test:
 	go test -race ./...
+
+# Starts Apple container VMs and builds images; needs Apple silicon with the
+# container service running.
+container-test:
+	PADDOCK_CONTAINER_TESTS=1 PADDOCK_BUILD_TESTS=1 go test -race -count=1 ./internal/engine/applecontainer
 
 vet:
 	go vet ./...

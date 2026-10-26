@@ -25,7 +25,8 @@ type initInput struct {
 	TranscriptDir string
 	// Mounts is the full guest mount list, as passed to `container run`.
 	Mounts []guestMount
-	// Passthrough lists the invoking environment's TERM/COLORTERM/LANG as NAME=VALUE.
+	// Passthrough lists the invoking environment's passthroughEnv variables
+	// as NAME=VALUE.
 	Passthrough []string
 }
 

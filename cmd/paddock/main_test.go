@@ -104,10 +104,28 @@ func TestPlanCommandSelectsSpecFromOrigin(t *testing.T) {
 	}
 }
 
-func TestPlanCommandRejectsUnknownFlag(t *testing.T) {
-	var stdout, stderr bytes.Buffer
-	code := run([]string{"plan", "--bogus"}, &stdout, &stderr)
-	if code == 0 || !strings.Contains(stderr.String(), "paddock plan:") || !strings.Contains(stderr.String(), "bogus") || stdout.Len() != 0 {
-		t.Errorf("exit %d, stdout %q, stderr %q", code, stdout.String(), stderr.String())
+// TestFlagHelpAndParseErrors checks plan, run, and setup: -h exits 0 and
+// prints usage, an unknown flag exits 2, and the flag package's own report
+// is the only output.
+func TestFlagHelpAndParseErrors(t *testing.T) {
+	for _, cmd := range []string{"plan", "run", "setup"} {
+		for _, tc := range []struct {
+			arg  string
+			code int
+			want string
+		}{
+			{"-h", 0, "Usage of " + cmd + ":"},
+			{"--bogus", 2, "flag provided but not defined: -bogus"},
+		} {
+			t.Run(cmd+" "+tc.arg, func(t *testing.T) {
+				var stdout, stderr bytes.Buffer
+				code := run([]string{cmd, tc.arg}, &stdout, &stderr)
+				out := stderr.String()
+				if code != tc.code || !strings.Contains(out, tc.want) || !strings.Contains(out, "Usage of "+cmd+":") ||
+					strings.Contains(out, "paddock "+cmd+":") || stdout.Len() != 0 {
+					t.Errorf("exit %d (want %d), stdout %q, stderr %q", code, tc.code, stdout.String(), out)
+				}
+			})
+		}
 	}
 }

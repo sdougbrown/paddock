@@ -58,6 +58,13 @@ runs the allowlist proxy as a separate uid, and installs a firewall the agent ca
    spec whose Dockerfile or build context changed between them can remove the image the other run
    has prepared but not yet started, and that run's `container run` fails. Running it again
    recovers. A container that is already running keeps its image.
+9. **The setup cache lock ends with the paddock process, not with its VM.** `paddock setup` holds
+   an exclusive lock on the cache while the setup command runs. If paddock is killed, the lock is
+   released at once, but the VM keeps writing the cache until the watchdog stops it, a few seconds
+   later. A setup started in that window can write the same cache at the same time and leave a
+   mixed package tree. The killed run never marks the cache complete, and every setup runs its
+   install command again (risk 7), so an install that checks cached packages against the lockfile
+   repairs the tree on the next setup. Clearing `~/.cache/paddock/<spec>` also recovers.
 
 ## Notes on the network policy
 

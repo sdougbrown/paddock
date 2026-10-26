@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -293,13 +294,19 @@ func fakeContainer(t *testing.T, existing ...string) (bin string, calls func() [
 	if err := os.WriteFile(tags, []byte(strings.Join(existing, "\n")+"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	script := "#!/bin/sh\nprintf '%s\\037' \"$@\" >> " + log + "\necho >> " + log + "\n" +
+	script := "#!/bin/sh\n[ \"$1\" = __warm ] && exit 0\nprintf '%s\\037' \"$@\" >> " + log + "\necho >> " + log + "\n" +
 		"[ -e " + dir + "/fail-$1 ] && exit 1\n" +
 		"[ -e " + dir + "/fail-$1-$2 ] && exit 1\n" +
 		"[ -e " + dir + "/slow-$1 ] && exec sleep 30\n" +
+		"[ -e " + dir + "/slow-once-$1 ] && rm " + dir + "/slow-once-$1 && exec sleep 30\n" +
 		"case \"$1\" in\n image) if [ \"$2\" = ls ]; then [ $# -eq 3 ] && [ \"$3\" = --quiet ] || exit 2; cat " + tags + "; fi ;;\n build) for a; do c=$a; done; ls -A \"$c\" | tr '\\n' ' ' >> " + filepath.Join(dir, "contexts") + "; echo >> " + filepath.Join(dir, "contexts") + "\n  while [ $# -gt 0 ]; do [ \"$1\" = -t ] && echo \"$2\" >> " + tags + "; shift; done ;;\nesac\n"
 	bin = filepath.Join(dir, "container")
 	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// The first exec of a new script can be slow on a loaded host. One
+	// unlogged run keeps that out of the calls tests time or count.
+	if err := exec.Command(bin, "__warm").Run(); err != nil {
 		t.Fatal(err)
 	}
 	return bin, func() [][]string {
@@ -617,6 +624,23 @@ func TestBuildInitConfigRequiresWorkdir(t *testing.T) {
 	p := &plan.Plan{Workspace: "/w", Argv: []string{"x"}, Network: plan.Network{Policy: "none"}}
 	if _, err := buildInitConfig(p, initInput{User: testUser, TranscriptDir: "/t"}); err == nil {
 		t.Fatal("want an error for an empty workdir")
+	}
+}
+
+// TestBuildInitConfigVerifyWithoutArgv builds the init config for
+// `paddock run --verify`: no argv, Verify set. The config must carry Verify
+// and pass the guest's validation, which rejects an empty argv otherwise.
+func TestBuildInitConfigVerifyWithoutArgv(t *testing.T) {
+	p := &plan.Plan{Workspace: "/w", Workdir: "/w", Network: plan.Network{Policy: "none"}}
+	cfg, err := buildInitConfig(p, initInput{User: testUser, TranscriptDir: "/t", Verify: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.Verify || len(cfg.Argv) != 0 {
+		t.Errorf("Verify = %v, Argv = %q; want true and empty", cfg.Verify, cfg.Argv)
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("Validate: %v", err)
 	}
 }
 

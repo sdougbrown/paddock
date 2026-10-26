@@ -36,11 +36,11 @@ func run(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stdout, "paddock", version)
 		return 0
 	case "plan":
-		if err := planCmd(args[1:], stdout, stderr); err != nil {
+		code, err := planCmd(args[1:], stdout, stderr)
+		if err != nil {
 			fmt.Fprintln(stderr, "paddock plan:", err)
-			return 1
 		}
-		return 0
+		return code
 	case "run":
 		code, err := runCmd(args[1:], stderr)
 		if err != nil {
@@ -60,28 +60,34 @@ func run(args []string, stdout, stderr io.Writer) int {
 	return 2
 }
 
-func planCmd(args []string, stdout, stderr io.Writer) error {
+// planCmd resolves a plan and prints it as JSON, returning the exit code.
+func planCmd(args []string, stdout, stderr io.Writer) (int, error) {
 	var o resolve.Options
 	fs := planFlagSet("plan", stderr, &o)
 	fs.StringVar(&o.Phase, "phase", "run", "run or setup")
 	if err := fs.Parse(args); err != nil {
-		return err
+		return 2, nil
 	}
 	if o.Profile == "" {
-		return fmt.Errorf("--profile is required")
+		return 1, fmt.Errorf("--profile is required")
 	}
 	o.Argv = fs.Args()
 	p, err := resolvePlan(o)
 	if err != nil {
-		return err
+		return 1, err
 	}
 	enc := json.NewEncoder(stdout)
 	enc.SetIndent("", "  ")
-	return enc.Encode(p)
+	if err := enc.Encode(p); err != nil {
+		return 1, err
+	}
+	return 0, nil
 }
 
 // planFlagSet returns a flag set for the named command with the flags plan,
-// run, and setup share: --profile, --spec, and --workspace, stored in o.
+// run, and setup share: --profile, --spec, and --workspace, stored in o. A
+// parse error is reported by the flag set on output; the commands then
+// exit 2 without printing it again.
 func planFlagSet(name string, output io.Writer, o *resolve.Options) *flag.FlagSet {
 	fs := flag.NewFlagSet(name, flag.ContinueOnError)
 	fs.SetOutput(output)

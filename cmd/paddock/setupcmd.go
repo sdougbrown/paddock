@@ -23,9 +23,8 @@ func setupCmd(args []string, stderr io.Writer) (int, error) {
 	if o.Profile == "" {
 		return 1, fmt.Errorf("--profile is required")
 	}
-	if fs.NArg() > 0 {
-		return 1, fmt.Errorf("the setup command comes from the spec; unexpected arguments %q", fs.Args())
-	}
+	// The resolver rejects a command in the setup phase.
+	o.Argv = fs.Args()
 	p, err := resolvePlan(o)
 	if err != nil {
 		return 1, err

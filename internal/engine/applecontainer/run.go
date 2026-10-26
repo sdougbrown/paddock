@@ -313,14 +313,34 @@ func (e *Engine) stopContainer(name string, secs int) error {
 	return err
 }
 
+// signalQueue holds the signals that could not be delivered yet, in arrival
+// order. A signal equal to the last one queued is not queued again.
+type signalQueue []os.Signal
+
+func (q *signalQueue) push(s os.Signal) {
+	if n := len(*q); n > 0 && (*q)[n-1] == s {
+		return
+	}
+	*q = append(*q, s)
+}
+
+// deliver sends queued signals in order with send, stopping at the first one
+// send reports undelivered; that one and the rest stay queued.
+func (q *signalQueue) deliver(send func(os.Signal) bool) {
+	for len(*q) > 0 && send((*q)[0]) {
+		*q = (*q)[1:]
+	}
+}
+
 // forwardSignals delivers signals received by paddock to the guest process,
 // because `container run` does not forward them. A signal that cannot yet be
-// delivered, such as one that arrives while the VM is booting, stays pending
-// and is retried every pendingRetry until it is delivered or done closes. When ctx is cancelled the
-// guest gets SIGTERM, and `container stop` with stopGrace follows after
-// cancelGrace.
+// delivered, such as one that arrives while the VM is booting, is queued, and
+// the queue is retried in arrival order every pendingRetry until it is empty
+// or done closes. When ctx is cancelled the guest gets SIGTERM, and
+// `container stop` with stopGrace follows after cancelGrace.
 func (e *Engine) forwardSignals(ctx context.Context, name string, sigs <-chan os.Signal, done <-chan struct{}) {
-	var pending os.Signal
+	var pending signalQueue
+	send := func(s os.Signal) bool { return e.signalContainer(name, s) }
 	var stopAt <-chan time.Time
 	stopDue, stopped := false, false
 	cancelled := ctx.Done()
@@ -329,23 +349,19 @@ func (e *Engine) forwardSignals(ctx context.Context, name string, sigs <-chan os
 	for {
 		select {
 		case s := <-sigs:
-			if e.signalContainer(name, s) {
-				pending = nil
-			} else if _, ok := signalNames[s]; ok {
-				pending = s
+			if _, ok := signalNames[s]; ok {
+				pending.push(s)
+				pending.deliver(send)
 			}
 		case <-cancelled:
 			cancelled = nil
-			if !e.signalContainer(name, syscall.SIGTERM) {
-				pending = syscall.SIGTERM
-			}
+			pending.push(syscall.SIGTERM)
+			pending.deliver(send)
 			stopAt = time.After(e.cancelGrace)
 		case <-stopAt:
 			stopAt, stopDue = nil, true
 		case <-retry.C:
-			if pending != nil && e.signalContainer(name, pending) {
-				pending = nil
-			}
+			pending.deliver(send)
 		case <-done:
 			return
 		}

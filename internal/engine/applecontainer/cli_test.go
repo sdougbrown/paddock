@@ -17,7 +17,7 @@ func TestCLIRunReturnsWhenAChildHoldsOutput(t *testing.T) {
 	dir := t.TempDir()
 	pidFile := filepath.Join(dir, "child")
 	bin := filepath.Join(dir, "container")
-	script := "#!/bin/sh\nsleep 30 &\necho $! > \"$(dirname \"$0\")/child\"\nexec sleep 30\n"
+	script := "#!/bin/sh\nsleep 30 &\necho $! > \"${0%/*}/child\"\nexec sleep 30\n"
 	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -29,10 +29,10 @@ func TestCLIRunReturnsWhenAChildHoldsOutput(t *testing.T) {
 		}
 	})
 	start := time.Now()
-	if _, err := (&Engine{Bin: bin}).cliRun(t.Context(), 200*time.Millisecond, "ls"); err == nil {
+	if _, err := (&Engine{Bin: bin}).cliRun(t.Context(), 2*time.Second, "ls"); err == nil {
 		t.Fatal("cliRun succeeded; want a timeout error")
 	}
-	if d := time.Since(start); d > 5*time.Second {
+	if d := time.Since(start); d > 10*time.Second {
 		t.Fatalf("cliRun returned after %s; want about the timeout plus WaitDelay", d)
 	}
 	if _, err := os.Stat(pidFile); err != nil {

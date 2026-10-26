@@ -3,11 +3,15 @@ package pinit
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"slices"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 
 	"github.com/sdougbrown/paddock/internal/guest/verify"
 	"github.com/sdougbrown/paddock/internal/initcfg"
@@ -72,7 +76,7 @@ func TestVerifyArgv(t *testing.T) {
 		if err := json.Unmarshal([]byte(argv[2]), &p); err != nil {
 			t.Fatal(err)
 		}
-		if want := []string{"/Users/a", "/Users/a/.claude"}; !slices.Equal(p.Writable, want) {
+		if want := []string{"/Users/a", "/Users/a/.claude"}; !sameSet(p.Writable, want) {
 			t.Errorf("Writable = %q; want %q", p.Writable, want)
 		}
 	})
@@ -102,10 +106,10 @@ func TestVerifyArgv(t *testing.T) {
 			if p.Policy != initcfg.PolicyAllowlist || p.UID != 501 || p.DenyLog != tt.wantLog {
 				t.Errorf("policy %q uid %d deny log %q", p.Policy, p.UID, p.DenyLog)
 			}
-			if want := []string{"/opt/paddock", "/Users/a/.botfiles/skills"}; !slices.Equal(p.ReadOnly, want) {
+			if want := []string{"/opt/paddock", "/Users/a/.botfiles/skills"}; !sameSet(p.ReadOnly, want) {
 				t.Errorf("ReadOnly = %q; want %q", p.ReadOnly, want)
 			}
-			if want := []string{"/Users/a", "/Users/a/.claude", "/Users/a/.claude/projects/-ws"}; !slices.Equal(p.Writable, want) {
+			if want := []string{"/Users/a", "/Users/a/.claude", "/Users/a/.claude/projects/-ws"}; !sameSet(p.Writable, want) {
 				t.Errorf("Writable = %q; want %q", p.Writable, want)
 			}
 			if p.ProxyPID != tt.wantPID || p.AllowedHost != tt.wantAllowed || p.DeniedHost != tt.wantDenied {
@@ -114,6 +118,13 @@ func TestVerifyArgv(t *testing.T) {
 			}
 		})
 	}
+}
+
+// sameSet reports whether a and b hold the same strings in any order. Each
+// listed directory is its own independent check, so order is not part of
+// the verify plan's contract.
+func sameSet(a, b []string) bool {
+	return slices.Equal(slices.Sorted(slices.Values(a)), slices.Sorted(slices.Values(b)))
 }
 
 func TestNetworkChecksHostAndUnknown(t *testing.T) {
@@ -137,5 +148,93 @@ func TestNetworkChecksHostAndUnknown(t *testing.T) {
 				t.Errorf("results %d, output %q; want one line containing %q", len(results), buf.String(), tt.wantSub)
 			}
 		})
+	}
+}
+
+func TestVerifyMain(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "missing")
+	plan := func(p verifyPlan) string {
+		b, err := json.Marshal(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(b)
+	}
+	tests := []struct {
+		name     string
+		args     []string
+		want     int
+		wantLine string
+	}{
+		{"no argument", nil, ExitInit, ""},
+		{"two arguments", []string{"{}", "{}"}, ExitInit, ""},
+		{"malformed JSON", []string{"{"}, ExitInit, ""},
+		{"unknown policy", []string{plan(verifyPlan{Policy: "bogus"})}, 1, `FAIL network: unknown network policy "bogus"`},
+		{"missing writable dir", []string{plan(verifyPlan{Policy: initcfg.PolicyHost, Writable: []string{missing}})}, 1, "FAIL writable " + missing},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var code int
+			out := captureStdout(t, func() { code = verifyMain(tt.args) })
+			if code != tt.want {
+				t.Errorf("verifyMain = %d, want %d; output %q", code, tt.want, out)
+			}
+			if tt.wantLine != "" && !strings.Contains(out, tt.wantLine) {
+				t.Errorf("output %q; want a line containing %q", out, tt.wantLine)
+			}
+			if tt.wantLine == "" && out != "" {
+				t.Errorf("output %q; want none before the checks run", out)
+			}
+		})
+	}
+}
+
+// captureStdout returns what f writes to os.Stdout.
+func captureStdout(t *testing.T, f func()) string {
+	t.Helper()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	saved := os.Stdout
+	os.Stdout = w
+	defer func() { os.Stdout = saved }()
+	read := make(chan string)
+	go func() {
+		b, _ := io.ReadAll(r)
+		read <- string(b)
+	}()
+	f()
+	w.Close()
+	return <-read
+}
+
+func TestNetworkStop(t *testing.T) {
+	(*network)(nil).stop()
+	(&network{}).stop()
+
+	cmd := exec.Command("sleep", "60")
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	n := &network{proxy: cmd}
+	done := make(chan struct{})
+	go func() {
+		n.stop()
+		// A second stop finds the process gone and must not wait again.
+		n.stop()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		cmd.Process.Kill()
+		t.Fatal("stop did not return")
+	}
+	if cmd.ProcessState == nil {
+		t.Fatal("stop did not reap the proxy")
+	}
+	if ws, ok := cmd.ProcessState.Sys().(syscall.WaitStatus); !ok || !ws.Signaled() || ws.Signal() != syscall.SIGKILL {
+		t.Errorf("proxy ended with %v; want killed by SIGKILL", cmd.ProcessState)
 	}
 }

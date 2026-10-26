@@ -692,3 +692,15 @@ func TestWorkspaceModeDefaultsToReadonly(t *testing.T) {
 		t.Errorf("workspace mount = %+v, want read-only", p.Mounts[0])
 	}
 }
+
+func TestSeedFilesNeedDistinctNames(t *testing.T) {
+	r, _ := testResolver(t, "", errors.New("no remote"))
+	useProfile(t, r, "[claude]\nseed_files = [\"~/a/remote-settings.json\", \"~/b/remote-settings.json\"]\n")
+	if _, err := r.Resolve(Options{Profile: "p", Spec: "afresh"}); err == nil || !strings.Contains(err.Error(), "claude.seed_files") {
+		t.Errorf("colliding seed file names: err = %v", err)
+	}
+	useProfile(t, r, "[claude]\nseed_files = [\"~/a/remote-settings.json\", \"~/b/other.json\"]\n")
+	if _, err := r.Resolve(Options{Profile: "p", Spec: "afresh"}); err != nil {
+		t.Errorf("distinct seed file names: %v", err)
+	}
+}

@@ -370,11 +370,18 @@ func (r *Resolver) claude(prof *config.Profile, m *Merged, mounts []plan.Mount) 
 	if m.ManagedSettings != nil {
 		c.ManagedSettings = json.RawMessage(m.ManagedSettings)
 	}
+	// Seed files land in the guest's ~/.claude under their base names.
+	names := map[string]string{}
 	for _, f := range prof.Claude.SeedFiles {
 		p, err := ExpandHome(f, r.Home)
 		if err != nil {
 			return c, fmt.Errorf("claude.seed_files: %w", err)
 		}
+		base := filepath.Base(p)
+		if prev, dup := names[base]; dup {
+			return c, fmt.Errorf("claude.seed_files: %s and %s share the name %s", prev, p, base)
+		}
+		names[base] = p
 		c.SeedFiles = append(c.SeedFiles, p)
 	}
 	for _, t := range []struct {

@@ -70,7 +70,9 @@ func (d runDirs) remove() {
 	}
 }
 
-// copySeedFiles copies the plan's seed files into <state>/seed.
+// copySeedFiles copies the plan's seed files into <state>/seed. Resolve
+// already rejects seed files that share a base name; the check here keeps a
+// plan from another source from overwriting one seed file with another.
 func copySeedFiles(state string, files []string) error {
 	if len(files) == 0 {
 		return nil

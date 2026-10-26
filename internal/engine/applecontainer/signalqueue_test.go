@@ -136,8 +136,9 @@ func TestForwardSignalsDeliversQueuedSignalsInOrder(t *testing.T) {
 				cancel()
 				<-queued
 			}
-			// Every signal and the cancellation's TERM are now queued, and
-			// none could be delivered: the container is still booting.
+			// Every signal and the cancellation's TERM are now queued, and the
+			// delivery attempt right after each one has finished and failed:
+			// the container is still booting. Only a retry can deliver them.
 			if b, _ := os.ReadFile(kills); len(b) != 0 {
 				t.Fatalf("delivered %q while the container was booting", b)
 			}

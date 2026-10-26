@@ -40,7 +40,7 @@ type Engine struct {
 	secretsGrace     time.Duration   // how long a running container may keep secrets.env before the host removes it
 	secretsStartWait time.Duration   // how long the host waits for the container to run before it removes secrets.env anyway
 	testStartDelay   time.Duration   // pause between preparing the run and starting `container run`
-	signalQueued     func(os.Signal) // called each time forwardSignals queues a signal
+	signalQueued     func(os.Signal) // called after forwardSignals queues a signal and tries the queue once
 }
 
 func (e *Engine) bin() string {

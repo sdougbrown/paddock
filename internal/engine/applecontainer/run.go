@@ -343,10 +343,10 @@ func (e *Engine) forwardSignals(ctx context.Context, name string, sigs <-chan os
 	send := func(s os.Signal) bool { return e.signalContainer(name, s) }
 	queue := func(s os.Signal) {
 		pending.push(s)
+		pending.deliver(send)
 		if e.signalQueued != nil {
 			e.signalQueued(s)
 		}
-		pending.deliver(send)
 	}
 	var stopAt <-chan time.Time
 	stopDue, stopped := false, false

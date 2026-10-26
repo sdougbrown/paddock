@@ -272,7 +272,9 @@ func TestContainerWatchdogStopsAfterSIGKILL(t *testing.T) {
 	}
 	h.cmd.Wait()
 	eventually(t, 20*time.Second, "container to disappear", func() bool { return gone(name) })
-	eventually(t, 20*time.Second, "state dirs to be removed", func() bool {
+	// The watchdog removes the directories after `container delete` returns,
+	// which can lag the container leaving `container ls`.
+	eventually(t, 30*time.Second, "state dirs to be removed", func() bool {
 		_, e1 := os.Stat(filepath.Join(h.runDir(), "state"))
 		_, e2 := os.Stat(filepath.Join(h.runDir(), "secrets"))
 		_, e3 := os.Stat(filepath.Join(h.runDir(), "settings"))

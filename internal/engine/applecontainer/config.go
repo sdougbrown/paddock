@@ -30,14 +30,15 @@ type Engine struct {
 
 	// Test hooks: a non-empty testImage skips image builds and the
 	// paddock-init mount and runs testEntrypoint with testArgs instead.
-	testImage      string
-	testEntrypoint string
-	testArgs       []string
-	selfExe        string        // watchdog executable; default os.Executable()
-	watchdogArgs   []string      // arguments that make selfExe run RunWatchdog; default [WatchdogCommand]
-	cancelGrace    time.Duration // how long after ctx is cancelled the host waits before `container stop`
-	secretsGrace   time.Duration // how long a running container may keep secrets.env before the host removes it
-	testStartDelay time.Duration // pause between preparing the run and starting `container run`
+	testImage        string
+	testEntrypoint   string
+	testArgs         []string
+	selfExe          string        // watchdog executable; default os.Executable()
+	watchdogArgs     []string      // arguments that make selfExe run RunWatchdog; default [WatchdogCommand]
+	cancelGrace      time.Duration // how long after ctx is cancelled the host waits before `container stop`
+	secretsGrace     time.Duration // how long a running container may keep secrets.env before the host removes it
+	secretsStartWait time.Duration // how long the host waits for the container to run before it removes secrets.env anyway
+	testStartDelay   time.Duration // pause between preparing the run and starting `container run`
 }
 
 func (e *Engine) bin() string {

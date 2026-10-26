@@ -70,6 +70,9 @@ func (e *Engine) defaults() error {
 	if e.secretsGrace == 0 {
 		e.secretsGrace = 30 * time.Second
 	}
+	if e.secretsStartWait == 0 {
+		e.secretsStartWait = 2 * time.Minute
+	}
 	return nil
 }
 
@@ -188,7 +191,7 @@ func (e *Engine) Run(ctx context.Context, p *plan.Plan, o engine.Options) (int, 
 	if err != nil {
 		return 1, err
 	}
-	if err := initcfg.Write(filepath.Join(dirs.State, "init.json"), cfg); err != nil {
+	if err := initcfg.Write(filepath.Join(dirs.State, filepath.Base(initcfg.ConfigPath)), cfg); err != nil {
 		return 1, err
 	}
 	if err := copySeedFiles(dirs.State, p.Claude.SeedFiles); err != nil {
@@ -222,10 +225,15 @@ func (e *Engine) Run(ctx context.Context, p *plan.Plan, o engine.Options) (int, 
 	cmd := exec.Command(e.bin(), argv...)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = e.Stdin, e.Stdout, e.Stderr
 
+	if e.testStartDelay > 0 {
+		select {
+		case <-ctx.Done():
+		case <-time.After(e.testStartDelay):
+		}
+	}
 	if err := ctx.Err(); err != nil {
 		return 1, err
 	}
-	time.Sleep(e.testStartDelay)
 	if err := cmd.Start(); err != nil {
 		return 1, fmt.Errorf("container run: %w", err)
 	}
@@ -367,33 +375,36 @@ func (e *Engine) signalContainer(name string, s os.Signal) bool {
 
 // removeSecretsOnceRunning polls until the container is running, then waits
 // up to secretsGrace for paddock-init to unlink secrets.env itself before
-// removing it. It gives up waiting for the container after 30 seconds or when
-// done closes.
+// removing it. If the container is not running within secretsStartWait, it
+// removes secrets.env anyway, so a slow or failed boot cannot leave it on the
+// host for the whole run. When done closes it returns at once; Run then
+// removes the secrets dir.
 func (e *Engine) removeSecretsOnceRunning(name, dir string, done <-chan struct{}) {
 	file := filepath.Join(dir, secretsFile)
-	deadline := time.Now().Add(30 * time.Second)
-	for time.Now().Before(deadline) {
+	startBy := time.Now().Add(e.secretsStartWait)
+	for !e.isRunning(name) {
+		if time.Now().After(startBy) {
+			os.Remove(file)
+			return
+		}
 		select {
 		case <-done:
 			return
 		case <-time.After(200 * time.Millisecond):
 		}
-		if e.isRunning(name) {
-			grace := time.Now().Add(e.secretsGrace)
-			for time.Now().Before(grace) {
-				if _, err := os.Stat(file); err != nil {
-					return
-				}
-				select {
-				case <-done:
-					return
-				case <-time.After(50 * time.Millisecond):
-				}
-			}
-			os.Remove(file)
+	}
+	grace := time.Now().Add(e.secretsGrace)
+	for time.Now().Before(grace) {
+		if _, err := os.Stat(file); err != nil {
 			return
 		}
+		select {
+		case <-done:
+			return
+		case <-time.After(50 * time.Millisecond):
+		}
 	}
+	os.Remove(file)
 }
 
 func (e *Engine) isRunning(name string) bool {

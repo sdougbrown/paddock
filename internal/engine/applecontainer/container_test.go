@@ -250,6 +250,28 @@ func TestContainerSIGTERMBeforeRunningStillExits143(t *testing.T) {
 	}
 }
 
+// TestContainerCancelBeforeStartNeverStarts cancels Run's context during
+// the start delay, before `container run`. Run must return the cancellation
+// promptly without ever creating the container.
+func TestContainerCancelBeforeStartNeverStarts(t *testing.T) {
+	h := startHelper(t, "exec sleep 300", "HELPER_START_DELAY=20s")
+	eventually(t, 30*time.Second, "run dir to appear", func() bool { return h.name() != "" })
+	name := h.name()
+	start := time.Now()
+	if err := h.cmd.Process.Signal(syscall.SIGUSR1); err != nil {
+		t.Fatal(err)
+	}
+	if code := h.wait(t); code != 1 || !strings.Contains(h.out.String(), "context canceled") {
+		t.Fatalf("exit code %d, want 1 with the cancellation; output:\n%s", code, h.out.String())
+	}
+	if d := time.Since(start); d > 10*time.Second {
+		t.Errorf("Run returned %s after cancellation; want before the 20s start delay ends", d)
+	}
+	if !gone(name) {
+		t.Error("container was created after cancellation")
+	}
+}
+
 // TestContainerCancelStopsGuest cancels Run's context while the guest ignores
 // SIGTERM, so the container ends only through the `container stop` that
 // follows cancelGrace.

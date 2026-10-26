@@ -621,6 +621,23 @@ func TestBuildInitConfigRequiresWorkdir(t *testing.T) {
 	}
 }
 
+// TestBuildInitConfigVerifyWithoutArgv builds the init config for
+// `paddock run --verify`: no argv, Verify set. The config must carry Verify
+// and pass the guest's validation, which rejects an empty argv otherwise.
+func TestBuildInitConfigVerifyWithoutArgv(t *testing.T) {
+	p := &plan.Plan{Workspace: "/w", Workdir: "/w", Network: plan.Network{Policy: "none"}}
+	cfg, err := buildInitConfig(p, initInput{User: testUser, TranscriptDir: "/t", Verify: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.Verify || len(cfg.Argv) != 0 {
+		t.Errorf("Verify = %v, Argv = %q; want true and empty", cfg.Verify, cfg.Argv)
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("Validate: %v", err)
+	}
+}
+
 func TestBuildInitConfigPlanEnvBeatsPassthrough(t *testing.T) {
 	p := &plan.Plan{
 		Workspace: "/w", Workdir: "/w", Argv: []string{"x"}, Network: plan.Network{Policy: "none"},

@@ -163,8 +163,10 @@ func TestStartWatchdogFailsWhenNotReady(t *testing.T) {
 		wd.finish()
 		t.Fatal("startWatchdog succeeded; want a not-ready error")
 	}
-	if d := time.Since(start); d > 10*time.Second {
-		t.Errorf("startWatchdog returned after %s; want about %s", d, watchdogReadyTimeout)
+	// The wait must be the configured timeout: not cut short, and not much
+	// longer than it, with room for oversleeping under -race load.
+	if d, lo, hi := time.Since(start), watchdogReadyTimeout*9/10, watchdogReadyTimeout+3*time.Second; d < lo || d > hi {
+		t.Errorf("startWatchdog returned after %s; want between %s and %s", d, lo, hi)
 	}
 	if want := `the program must dispatch the arguments ["custom-watchdog"] to applecontainer.RunWatchdog`; !strings.Contains(err.Error(), "did not become ready") || !strings.Contains(err.Error(), want) {
 		t.Errorf("error %q does not name the readiness failure and the missing dispatch %q", err, want)

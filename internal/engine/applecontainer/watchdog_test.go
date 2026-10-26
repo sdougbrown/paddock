@@ -237,6 +237,14 @@ func TestWatchdogRefusesNonPipe(t *testing.T) {
 	}
 }
 
+func TestRunWatchdogNeedsBinAndName(t *testing.T) {
+	for _, args := range [][]string{nil, {"bin"}} {
+		if code := RunWatchdog(args); code != 2 {
+			t.Errorf("RunWatchdog(%q) = %d, want 2", args, code)
+		}
+	}
+}
+
 // TestDispatch checks that Dispatch hands WatchdogCommand to RunWatchdog
 // and leaves every other argument list to the caller. The watchdog's own
 // tests re-execute this binary through Dispatch in TestMain.

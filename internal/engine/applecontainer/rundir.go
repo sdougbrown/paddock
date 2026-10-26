@@ -22,7 +22,7 @@ type runDirs struct {
 }
 
 func newRunName() (string, error) {
-	var b [4]byte
+	var b [8]byte
 	if _, err := rand.Read(b[:]); err != nil {
 		return "", err
 	}
@@ -39,6 +39,13 @@ func createRunDirs(stateRoot, name string) (runDirs, error) {
 		// A file mount shares its parent directory, so the settings file
 		// gets a directory of its own.
 		Settings: filepath.Join(root, "settings"),
+	}
+	if err := os.MkdirAll(filepath.Dir(root), 0o700); err != nil {
+		return runDirs{}, err
+	}
+	// Mkdir fails if the run directory exists, so two runs never share one.
+	if err := os.Mkdir(root, 0o700); err != nil {
+		return runDirs{}, err
 	}
 	for _, dir := range []string{filepath.Dir(root), root, d.State, d.Secrets, d.Log, d.Settings} {
 		if err := os.MkdirAll(dir, 0o700); err != nil {

@@ -536,6 +536,16 @@ func TestCreateRunDirsAreOwnerOnly(t *testing.T) {
 	}
 }
 
+func TestCreateRunDirsRefusesAnExistingRun(t *testing.T) {
+	root := t.TempDir()
+	if _, err := createRunDirs(root, "paddock-x"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := createRunDirs(root, "paddock-x"); err == nil {
+		t.Error("a second run with the same name shared its directories")
+	}
+}
+
 func TestWorkdirDrivesArgvTranscriptAndTrust(t *testing.T) {
 	p := &plan.Plan{
 		Workspace: "/run/x", Workdir: "/run/x/review", Argv: []string{"claude"},
@@ -873,7 +883,7 @@ func TestLocateInitBinary(t *testing.T) {
 }
 
 func TestNewRunName(t *testing.T) {
-	re := regexp.MustCompile(`^paddock-[0-9a-f]{8}$`)
+	re := regexp.MustCompile(`^paddock-[0-9a-f]{16}$`)
 	a, err := newRunName()
 	if err != nil || !re.MatchString(a) {
 		t.Fatalf("newRunName() = %q, %v", a, err)

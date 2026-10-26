@@ -296,10 +296,10 @@ func (e *Engine) cli(args ...string) error {
 
 // orphanStopGrace is the stop grace, in seconds, for a container whose
 // paddock side is gone: the `container run` client died (Run) or paddock
-// itself died (the watchdog). Nobody is waiting on the guest's exit and it
-// got no signal of its own, so it is stopped promptly. A cancellation uses
-// Engine.stopGrace instead: the guest has already had SIGTERM and
-// cancelGrace, and the stop is the caller's last word.
+// itself died (the watchdog). Nothing is left to wait on the guest, so
+// cleanup is prompt. A cancellation uses Engine.stopGrace instead: it is the
+// last step of an escalation that has already tried SIGTERM and waited
+// cancelGrace, and the caller chooses how long it lasts.
 const orphanStopGrace = 2
 
 // stopArgs is the `container stop` argv that stops name, killing it after

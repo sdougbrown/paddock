@@ -42,17 +42,28 @@ func setupCmd(args []string, stderr io.Writer) (int, error) {
 	if err != nil {
 		return 1, err
 	}
+	eng, err := newEngine(p.Engine)
+	if err != nil {
+		return 1, err
+	}
+	return runSetup(context.Background(), eng, p, stderr)
+}
+
+// runSetup runs a setup-phase plan holding its cache lock, marks the cache
+// complete only when the command exits 0, and prints the summary line.
+//
+// The lock belongs to this process. If paddock is killed, the lock is
+// released while the engine's watchdog is still stopping the VM, so a setup
+// started in those few seconds can write the same cache as the dying one.
+// The dying run never marks the cache complete.
+func runSetup(ctx context.Context, eng engine.Engine, p *plan.Plan, stderr io.Writer) (int, error) {
 	hit, release, err := resolve.PrepareSetupCache(p.Setup)
 	if err != nil {
 		return 1, err
 	}
 	defer release()
-	eng, err := newEngine(p.Engine)
-	if err != nil {
-		return 1, err
-	}
 	start := time.Now()
-	code, err := eng.Run(context.Background(), p, engine.Options{})
+	code, err := eng.Run(ctx, p, engine.Options{})
 	if err == nil && code == 0 {
 		if err = resolve.CompleteSetupCache(p.Setup); err != nil {
 			code = 1

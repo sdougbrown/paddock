@@ -22,6 +22,10 @@ const watchdogReady = 'r'
 // hung container service cannot keep it from removing the run's directories.
 var watchdogCLITimeout = cliTimeout + 2*time.Second
 
+// watchdogStopTries is how many times the watchdog tries `container stop`
+// before it deletes the container anyway.
+const watchdogStopTries = 10
+
 // watchdogRetry is the pause between the watchdog's `container stop` attempts.
 var watchdogRetry = time.Second
 
@@ -47,7 +51,7 @@ func RunWatchdog(args []string) int {
 	if len(data) > 0 && data[0] == watchdogDone {
 		return 0
 	}
-	for range 10 {
+	for range watchdogStopTries {
 		if _, err := e.cliRun(context.Background(), watchdogCLITimeout, "stop", "--time", "2", name); err == nil {
 			break
 		}

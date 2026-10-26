@@ -94,7 +94,7 @@ func TestWatchdogBoundsHungCLICalls(t *testing.T) {
 		delete int
 	}{
 		{"first stop and delete hang", []string{"slow-once-stop", "slow-once-delete"}, 2, 1},
-		{"every stop hangs", []string{"slow-stop"}, 10, 1},
+		{"every stop hangs", []string{"slow-stop"}, watchdogStopTries, 1},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

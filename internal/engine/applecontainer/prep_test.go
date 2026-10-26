@@ -196,10 +196,40 @@ func TestImageHash(t *testing.T) {
 }
 
 func TestLayerTag(t *testing.T) {
-	for _, spec := range []string{"afresh/scanner", "Afresh/Scanner"} {
-		if got := layerTag(spec, "0123456789abcdef"); got != "paddock/afresh-scanner:0123456789ab" {
-			t.Fatalf("layerTag(%q) = %q", spec, got)
+	re := regexp.MustCompile(`^paddock/afresh-scanner-[0-9a-f]{8}:0123456789ab$`)
+	if got := layerTag("Afresh/Scanner", "0123456789abcdef"); !re.MatchString(got) {
+		t.Fatalf("layerTag = %q", got)
+	}
+	repos := map[string]string{}
+	for _, spec := range []string{"x/y", "x-y", "X/Y", "base", "x"} {
+		repo, _, _ := strings.Cut(layerTag(spec, "0123456789abcdef"), ":")
+		if prev, dup := repos[repo]; dup || repo == "paddock/base" {
+			t.Errorf("specs %q and %q share the repository %s", prev, spec, repo)
 		}
+		repos[repo] = spec
+	}
+}
+
+func TestPruneKeepsSpecsWithSimilarRefs(t *testing.T) {
+	plans := map[string]*plan.Plan{}
+	for _, spec := range []string{"x/y", "x-y"} {
+		df := writeTree(t, map[string]string{"Dockerfile": "ARG PADDOCK_PARENT\nFROM ${PADDOCK_PARENT}\nLABEL spec=" + spec + "\n"})
+		plans[spec] = &plan.Plan{Image: plan.ImagePlan{Layers: []plan.ImageLayer{{Spec: spec, Dockerfile: filepath.Join(df, "Dockerfile")}}}}
+	}
+	bin, calls := fakeContainer(t)
+	e := &Engine{Bin: bin, Stderr: io.Discard}
+	for _, spec := range []string{"x/y", "x-y", "x/y"} {
+		if _, err := e.ensureImages(t.Context(), plans[spec]); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, c := range calls() {
+		if len(c) > 1 && c[0] == "image" && c[1] == "rm" {
+			t.Errorf("removed %q", c)
+		}
+	}
+	if b := buildCalls(calls()); len(b) != 3 {
+		t.Errorf("builds = %d, want the base and one layer per spec", len(b))
 	}
 }
 
@@ -300,7 +330,7 @@ func TestEnsureImagesChainsParentsAndSkipsExisting(t *testing.T) {
 	for _, b := range builds {
 		tags = append(tags, flagValue(b, "-t"))
 	}
-	if !strings.HasPrefix(tags[0], "paddock/base:") || !strings.HasPrefix(tags[1], "paddock/a:") || tags[2] != last {
+	if !strings.HasPrefix(tags[0], "paddock/base:") || !strings.HasPrefix(tags[1], "paddock/a-") || tags[2] != last {
 		t.Fatalf("tags = %v, last = %s", tags, last)
 	}
 	if flagValue(builds[0], "--build-arg") != "" {
@@ -774,13 +804,15 @@ func TestEnsureImagesPrunesSupersededTags(t *testing.T) {
 	}
 	builds := buildCalls(calls())
 	base, layer := flagValue(builds[0], "-t"), flagValue(builds[1], "-t")
+	repo, _, _ := strings.Cut(layer, ":")
 
 	bin, calls = fakeContainer(t,
 		base, layer,
-		"docker.io/paddock/afresh:oldlayer11111",
+		"docker.io/"+repo+":oldlayer11111",
 		"paddock/base:oldbase000000",
 		"docker.io/paddock/base:oldbase111111",
-		"paddock/afresh:oldlayer00000",
+		repo+":oldlayer00000",
+		"paddock/afresh:abcdef012345",
 		"paddock/other:abcdef012345",
 		"alpine:3.22",
 		"example.com/paddock/base:notours00000",
@@ -796,10 +828,10 @@ func TestEnsureImagesPrunesSupersededTags(t *testing.T) {
 		}
 	}
 	want := []string{
-		"docker.io/paddock/afresh:oldlayer11111",
+		"docker.io/" + repo + ":oldlayer11111",
 		"paddock/base:oldbase000000",
 		"docker.io/paddock/base:oldbase111111",
-		"paddock/afresh:oldlayer00000",
+		repo + ":oldlayer00000",
 	}
 	if strings.Join(removed, " ") != strings.Join(want, " ") {
 		t.Errorf("removed = %q, want %q", removed, want)

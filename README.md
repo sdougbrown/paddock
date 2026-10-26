@@ -22,7 +22,8 @@ ARG PADDOCK_PARENT
 FROM ${PADDOCK_PARENT}
 ```
 
-Layer tags are `paddock/<lowercased spec, "/" as "-">:<hash>`, where the hash covers the Dockerfile,
+Layer tags are `paddock/<lowercased spec, "/" as "-">-<ref8>:<hash>`, where `ref8` is the first 8 hex
+digits of the sha256 of the spec ref, so every spec has its own repository. The hash covers the Dockerfile,
 the build context (symlinks in the context path are resolved first), and the parent tag. Layers
 whose tag already exists are not rebuilt. After the chain is built or reused, paddock removes other
 tags of `paddock/base` and the chain's layer repositories; images in use, and all other images, are left alone.

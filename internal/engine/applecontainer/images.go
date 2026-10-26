@@ -76,9 +76,14 @@ func writeField(h io.Writer, label string, b []byte) {
 	h.Write(b)
 }
 
-// layerTag is the image tag for a spec layer: paddock/<lowercased spec with "/" as "-">:<hash12>.
+// layerTag is the image tag for a spec layer:
+// paddock/<lowercased spec with "/" as "-">-<ref8>:<hash12>, where ref8 is the
+// first 8 hex digits of the sha256 of the spec ref as given. The digest keeps
+// specs whose readable names coincide (x/y and x-y, case variants, or a spec
+// named base) in separate repositories, so pruning one never touches another.
 func layerTag(spec, hash string) string {
-	return "paddock/" + strings.ReplaceAll(strings.ToLower(spec), "/", "-") + ":" + hash[:12]
+	ref := sha256.Sum256([]byte(spec))
+	return "paddock/" + strings.ReplaceAll(strings.ToLower(spec), "/", "-") + "-" + hex.EncodeToString(ref[:4]) + ":" + hash[:12]
 }
 
 // ensureImages builds the base image and each plan layer that is not already

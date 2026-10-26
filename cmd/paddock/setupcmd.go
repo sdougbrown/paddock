@@ -2,13 +2,10 @@ package main
 
 import (
 	"context"
-	"flag"
 	"fmt"
 	"io"
-	"os"
 	"time"
 
-	"github.com/sdougbrown/paddock/internal/config"
 	"github.com/sdougbrown/paddock/internal/engine"
 	"github.com/sdougbrown/paddock/internal/plan"
 	"github.com/sdougbrown/paddock/internal/resolve"
@@ -18,12 +15,8 @@ import (
 // cache mounted, prints one summary line to stderr, and returns the
 // command's exit code.
 func setupCmd(args []string, stderr io.Writer) (int, error) {
-	fs := flag.NewFlagSet("setup", flag.ContinueOnError)
-	fs.SetOutput(stderr)
 	o := resolve.Options{Phase: plan.PhaseSetup}
-	fs.StringVar(&o.Profile, "profile", "", "profile name (required)")
-	fs.StringVar(&o.Spec, "spec", "", "spec ref (default: from git origin, else profile default_spec)")
-	fs.StringVar(&o.Workspace, "workspace", "", "workspace directory (default: current directory)")
+	fs := planFlagSet("setup", stderr, &o)
 	if err := fs.Parse(args); err != nil {
 		return 2, nil
 	}
@@ -33,12 +26,7 @@ func setupCmd(args []string, stderr io.Writer) (int, error) {
 	if fs.NArg() > 0 {
 		return 1, fmt.Errorf("the setup command comes from the spec; unexpected arguments %q", fs.Args())
 	}
-	home, _ := os.UserHomeDir()
-	root, err := config.ResolveRoot(os.Getenv, home)
-	if err != nil {
-		return 1, err
-	}
-	p, err := resolve.New(root, home).Resolve(o)
+	p, err := resolvePlan(o)
 	if err != nil {
 		return 1, err
 	}
@@ -55,7 +43,7 @@ func setupCmd(args []string, stderr io.Writer) (int, error) {
 // The lock belongs to this process. If paddock is killed, the lock is
 // released while the engine's watchdog is still stopping the VM, so a setup
 // started in those few seconds can write the same cache as the dying one.
-// The dying run never marks the cache complete.
+// The dying run never marks the cache complete (SECURITY.md risk 9).
 func runSetup(ctx context.Context, eng engine.Engine, p *plan.Plan, stderr io.Writer) (int, error) {
 	hit, release, err := resolve.PrepareSetupCache(p.Setup)
 	if err != nil {

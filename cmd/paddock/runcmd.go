@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -15,13 +14,9 @@ import (
 
 // runCmd resolves a plan and runs it, returning the command's exit code.
 func runCmd(args []string, stderr io.Writer) (int, error) {
-	fs := flag.NewFlagSet("run", flag.ContinueOnError)
-	fs.SetOutput(stderr)
 	var o resolve.Options
 	var verify bool
-	fs.StringVar(&o.Profile, "profile", "", "profile name (required)")
-	fs.StringVar(&o.Spec, "spec", "", "spec ref (default: from git origin, else profile default_spec)")
-	fs.StringVar(&o.Workspace, "workspace", "", "workspace directory (default: current directory)")
+	fs := planFlagSet("run", stderr, &o)
 	fs.BoolVar(&verify, "verify", false, "run the in-guest isolation checks instead of a command")
 	if err := fs.Parse(args); err != nil {
 		return 2, nil
@@ -36,12 +31,7 @@ func runCmd(args []string, stderr io.Writer) (int, error) {
 	if len(o.Argv) > 0 && verify {
 		return 1, fmt.Errorf("--verify takes no command")
 	}
-	home, _ := os.UserHomeDir()
-	root, err := config.ResolveRoot(os.Getenv, home)
-	if err != nil {
-		return 1, err
-	}
-	p, err := resolve.New(root, home).Resolve(o)
+	p, err := resolvePlan(o)
 	if err != nil {
 		return 1, err
 	}

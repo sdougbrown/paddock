@@ -33,3 +33,20 @@ func TestRunAndSetupArgumentGuards(t *testing.T) {
 		})
 	}
 }
+
+func TestRunAndSetupReportHomeLookupError(t *testing.T) {
+	t.Setenv("HOME", "")
+	t.Setenv("PADDOCK_CONFIG_DIR", "")
+	t.Setenv("XDG_CONFIG_HOME", "")
+	for _, args := range [][]string{{"run", "--profile", "p", "--", "claude"}, {"setup", "--profile", "p"}} {
+		t.Run(args[0], func(t *testing.T) {
+			var stdout, stderr bytes.Buffer
+			if code := run(args, &stdout, &stderr); code != 1 {
+				t.Errorf("exit %d, want 1", code)
+			}
+			if want := "paddock " + args[0] + ": home directory: "; !strings.Contains(stderr.String(), want) {
+				t.Errorf("stderr %q lacks %q", stderr.String(), want)
+			}
+		})
+	}
+}

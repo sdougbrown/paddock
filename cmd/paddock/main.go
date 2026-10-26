@@ -12,6 +12,7 @@ import (
 
 	"github.com/sdougbrown/paddock/internal/config"
 	"github.com/sdougbrown/paddock/internal/engine/applecontainer"
+	"github.com/sdougbrown/paddock/internal/plan"
 	"github.com/sdougbrown/paddock/internal/resolve"
 )
 
@@ -35,7 +36,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stdout, "paddock", version)
 		return 0
 	case "plan":
-		if err := planCmd(args[1:], stdout); err != nil {
+		if err := planCmd(args[1:], stdout, stderr); err != nil {
 			fmt.Fprintln(stderr, "paddock plan:", err)
 			return 1
 		}
@@ -59,12 +60,9 @@ func run(args []string, stdout, stderr io.Writer) int {
 	return 2
 }
 
-func planCmd(args []string, stdout io.Writer) error {
-	fs := flag.NewFlagSet("plan", flag.ContinueOnError)
+func planCmd(args []string, stdout, stderr io.Writer) error {
 	var o resolve.Options
-	fs.StringVar(&o.Profile, "profile", "", "profile name (required)")
-	fs.StringVar(&o.Spec, "spec", "", "spec ref (default: from git origin, else profile default_spec)")
-	fs.StringVar(&o.Workspace, "workspace", "", "workspace directory (default: current directory)")
+	fs := planFlagSet("plan", stderr, &o)
 	fs.StringVar(&o.Phase, "phase", "run", "run or setup")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -73,19 +71,35 @@ func planCmd(args []string, stdout io.Writer) error {
 		return fmt.Errorf("--profile is required")
 	}
 	o.Argv = fs.Args()
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return fmt.Errorf("home directory: %w", err)
-	}
-	root, err := config.ResolveRoot(os.Getenv, home)
-	if err != nil {
-		return err
-	}
-	p, err := resolve.New(root, home).Resolve(o)
+	p, err := resolvePlan(o)
 	if err != nil {
 		return err
 	}
 	enc := json.NewEncoder(stdout)
 	enc.SetIndent("", "  ")
 	return enc.Encode(p)
+}
+
+// planFlagSet returns a flag set for the named command with the flags plan,
+// run, and setup share: --profile, --spec, and --workspace, stored in o.
+func planFlagSet(name string, output io.Writer, o *resolve.Options) *flag.FlagSet {
+	fs := flag.NewFlagSet(name, flag.ContinueOnError)
+	fs.SetOutput(output)
+	fs.StringVar(&o.Profile, "profile", "", "profile name (required)")
+	fs.StringVar(&o.Spec, "spec", "", "spec ref (default: from git origin, else profile default_spec)")
+	fs.StringVar(&o.Workspace, "workspace", "", "workspace directory (default: current directory)")
+	return fs
+}
+
+// resolvePlan resolves o against the user's config root.
+func resolvePlan(o resolve.Options) (*plan.Plan, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return nil, fmt.Errorf("home directory: %w", err)
+	}
+	root, err := config.ResolveRoot(os.Getenv, home)
+	if err != nil {
+		return nil, err
+	}
+	return resolve.New(root, home).Resolve(o)
 }

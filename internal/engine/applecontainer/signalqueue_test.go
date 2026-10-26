@@ -105,17 +105,12 @@ func TestForwardSignalsDeliversQueuedSignalsInOrder(t *testing.T) {
 			}
 			kills := filepath.Join(dir, "kills")
 			bin := filepath.Join(dir, "container")
-			// Each `ls` logs a line after it has read ls.json, so the test can
-			// tell when the loop's checks have seen the booting state.
-			script := "#!/bin/sh\nd=\"${0%/*}\"\ncase \"$1\" in\n ls) cat \"$d/ls.json\"; echo >> \"$d/ls.log\" ;;\n kill) echo \"$3\" >> \"$d/kills\" ;;\nesac\n"
-			lsCalls := func() int {
-				b, _ := os.ReadFile(filepath.Join(dir, "ls.log"))
-				return strings.Count(string(b), "\n")
-			}
+			script := "#!/bin/sh\nd=\"${0%/*}\"\ncase \"$1\" in\n ls) cat \"$d/ls.json\" ;;\n kill) echo \"$3\" >> \"$d/kills\" ;;\nesac\n"
 			if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
 				t.Fatal(err)
 			}
-			e := &Engine{Bin: bin, cancelGrace: time.Hour, stopGrace: 1}
+			queued := make(chan os.Signal, 8)
+			e := &Engine{Bin: bin, cancelGrace: time.Hour, stopGrace: 1, signalQueued: func(s os.Signal) { queued <- s }}
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
 			sigs := make(chan os.Signal, 4)
@@ -133,16 +128,16 @@ func TestForwardSignalsDeliversQueuedSignalsInOrder(t *testing.T) {
 				sigs <- s
 			}
 			// A select with both a signal and the cancellation ready picks
-			// either, so cancel only once the loop has taken the signals.
-			eventually(t, 5*time.Second, "signals to be received", func() bool { return len(sigs) == 0 })
+			// either, so cancel only once the loop has queued the signals.
+			for range tt.sigs {
+				<-queued
+			}
 			if tt.cancel {
 				cancel()
+				<-queued
 			}
-			// The loop runs one check per iteration. A few more completed
-			// checks mean it has handled every signal and the cancellation
-			// while the container was still booting.
-			n := lsCalls()
-			eventually(t, 10*time.Second, "checks while booting", func() bool { return lsCalls() >= n+3 })
+			// Every signal and the cancellation's TERM are now queued, and
+			// none could be delivered: the container is still booting.
 			if b, _ := os.ReadFile(kills); len(b) != 0 {
 				t.Fatalf("delivered %q while the container was booting", b)
 			}

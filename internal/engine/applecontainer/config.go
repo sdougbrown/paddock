@@ -33,13 +33,14 @@ type Engine struct {
 	testImage        string
 	testEntrypoint   string
 	testArgs         []string
-	selfExe          string        // watchdog executable; default os.Executable()
-	watchdogArgs     []string      // arguments that make selfExe run RunWatchdog; default [WatchdogCommand]
-	cancelGrace      time.Duration // how long after ctx is cancelled the host waits before `container stop`
-	stopGrace        int           // seconds that `container stop` after a cancel gives the guest before killing it
-	secretsGrace     time.Duration // how long a running container may keep secrets.env before the host removes it
-	secretsStartWait time.Duration // how long the host waits for the container to run before it removes secrets.env anyway
-	testStartDelay   time.Duration // pause between preparing the run and starting `container run`
+	selfExe          string          // watchdog executable; default os.Executable()
+	watchdogArgs     []string        // arguments that make selfExe run RunWatchdog; default [WatchdogCommand]
+	cancelGrace      time.Duration   // how long after ctx is cancelled the host waits before `container stop`
+	stopGrace        int             // seconds that `container stop` after a cancel gives the guest before killing it
+	secretsGrace     time.Duration   // how long a running container may keep secrets.env before the host removes it
+	secretsStartWait time.Duration   // how long the host waits for the container to run before it removes secrets.env anyway
+	testStartDelay   time.Duration   // pause between preparing the run and starting `container run`
+	signalQueued     func(os.Signal) // called each time forwardSignals queues a signal
 }
 
 func (e *Engine) bin() string {

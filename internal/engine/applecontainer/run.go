@@ -341,6 +341,13 @@ func (q *signalQueue) deliver(send func(os.Signal) bool) {
 func (e *Engine) forwardSignals(ctx context.Context, name string, sigs <-chan os.Signal, done <-chan struct{}) {
 	var pending signalQueue
 	send := func(s os.Signal) bool { return e.signalContainer(name, s) }
+	queue := func(s os.Signal) {
+		pending.push(s)
+		if e.signalQueued != nil {
+			e.signalQueued(s)
+		}
+		pending.deliver(send)
+	}
 	var stopAt <-chan time.Time
 	stopDue, stopped := false, false
 	cancelled := ctx.Done()
@@ -350,13 +357,11 @@ func (e *Engine) forwardSignals(ctx context.Context, name string, sigs <-chan os
 		select {
 		case s := <-sigs:
 			if _, ok := signalNames[s]; ok {
-				pending.push(s)
-				pending.deliver(send)
+				queue(s)
 			}
 		case <-cancelled:
 			cancelled = nil
-			pending.push(syscall.SIGTERM)
-			pending.deliver(send)
+			queue(syscall.SIGTERM)
 			stopAt = time.After(e.cancelGrace)
 		case <-stopAt:
 			stopAt, stopDue = nil, true

@@ -102,8 +102,12 @@ func (r *Resolver) setupCache(p *plan.Plan) error {
 			return fmt.Errorf("setup.cache_dir %q overlaps the mount at %q", s.CacheDir, m.Guest)
 		}
 	}
+	m := plan.Mount{Host: host, Guest: s.CacheDir}
+	if err := m.Check(); err != nil {
+		return fmt.Errorf("setup.cache_dir: %w", err)
+	}
 	s.CacheHost = host
-	p.Mounts = append(p.Mounts, plan.Mount{Host: host, Guest: s.CacheDir})
+	p.Mounts = append(p.Mounts, m)
 	return nil
 }
 

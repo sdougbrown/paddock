@@ -346,3 +346,15 @@ func TestPrepareSetupCacheErrorsAfterLockingReleaseTheLock(t *testing.T) {
 		})
 	}
 }
+
+func TestSetupCacheMountFollowsMountRules(t *testing.T) {
+	wd := t.TempDir()
+	if err := os.WriteFile(filepath.Join(wd, "yarn.lock"), []byte("a"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	r := &Resolver{Home: t.TempDir()}
+	p := &plan.Plan{Spec: "s", Workdir: wd, Setup: &plan.SetupPlan{CacheDir: "/var/cache/paddock/a:b", CacheKeyFile: "yarn.lock"}}
+	if err := r.setupCache(p); err == nil || !strings.Contains(err.Error(), "':'") {
+		t.Errorf("cache_dir with ':': err = %v", err)
+	}
+}

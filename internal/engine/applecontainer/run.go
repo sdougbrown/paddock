@@ -67,6 +67,9 @@ func (e *Engine) defaults() error {
 	if e.cancelGrace == 0 {
 		e.cancelGrace = 10 * time.Second
 	}
+	if e.stopGrace == 0 {
+		e.stopGrace = 10
+	}
 	if e.secretsGrace == 0 {
 		e.secretsGrace = 30 * time.Second
 	}
@@ -314,7 +317,8 @@ func (e *Engine) stopContainer(name string, secs int) error {
 // because `container run` does not forward them. A signal that cannot yet be
 // delivered, such as one that arrives while the VM is booting, stays pending
 // and is retried every pendingRetry until it is delivered or done closes. When ctx is cancelled the
-// guest gets SIGTERM, and `container stop` follows after cancelGrace.
+// guest gets SIGTERM, and `container stop` with stopGrace follows after
+// cancelGrace.
 func (e *Engine) forwardSignals(ctx context.Context, name string, sigs <-chan os.Signal, done <-chan struct{}) {
 	var pending os.Signal
 	var stopAt <-chan time.Time
@@ -347,7 +351,7 @@ func (e *Engine) forwardSignals(ctx context.Context, name string, sigs <-chan os
 		}
 		if stopDue && !stopped {
 			e.debugf("stopping %s after cancellation", name)
-			stopped = e.stopContainer(name, 10) == nil
+			stopped = e.stopContainer(name, e.stopGrace) == nil
 		}
 	}
 }

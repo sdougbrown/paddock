@@ -54,6 +54,7 @@ func helperMain() int {
 		selfExe:        os.Args[0],
 		secretsGrace:   time.Second,
 		cancelGrace:    time.Second,
+		stopGrace:      1,
 	}
 	if d, err := time.ParseDuration(os.Getenv("HELPER_START_DELAY")); err == nil {
 		e.testStartDelay = d
@@ -278,15 +279,20 @@ func TestContainerCancelBeforeStartNeverStarts(t *testing.T) {
 
 // TestContainerCancelStopsGuest cancels Run's context while the guest ignores
 // SIGTERM, so the container ends only through the `container stop` that
-// follows cancelGrace.
+// follows cancelGrace. The helper's cancelGrace and stopGrace are 1s each,
+// so the run ends well before the default 10s stop grace would allow.
 func TestContainerCancelStopsGuest(t *testing.T) {
 	h := startHelper(t, "trap '' TERM; while :; do sleep 1; done")
 	name := waitRunning(t, h)
+	start := time.Now()
 	if err := h.cmd.Process.Signal(syscall.SIGUSR1); err != nil {
 		t.Fatal(err)
 	}
 	if code := h.wait(t); code != 137 {
 		t.Fatalf("exit code %d, want 137 (SIGKILL from container stop); output:\n%s", code, h.out.String())
+	}
+	if d := time.Since(start); d > 8*time.Second {
+		t.Errorf("run ended %s after cancellation; want under 8s with a 1s stop grace", d)
 	}
 	eventually(t, 20*time.Second, "container to be gone", func() bool { return gone(name) })
 }

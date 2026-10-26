@@ -210,6 +210,17 @@ func TestLayerTag(t *testing.T) {
 	}
 }
 
+func TestBaseBuildContextHoldsOnlyTheDockerfile(t *testing.T) {
+	bin, _ := fakeContainer(t)
+	if _, err := (&Engine{Bin: bin, Stderr: io.Discard}).ensureImages(t.Context(), &plan.Plan{}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(filepath.Join(filepath.Dir(bin), "contexts"))
+	if err != nil || strings.TrimSpace(string(got)) != "Dockerfile" {
+		t.Errorf("base build context = %q, %v; the base tag hashes only the Dockerfile", got, err)
+	}
+}
+
 func TestPruneKeepsSpecsWithSimilarRefs(t *testing.T) {
 	plans := map[string]*plan.Plan{}
 	for _, spec := range []string{"x/y", "x-y"} {
@@ -267,7 +278,7 @@ func fakeContainer(t *testing.T, existing ...string) (bin string, calls func() [
 		"[ -e " + dir + "/fail-$1 ] && exit 1\n" +
 		"[ -e " + dir + "/fail-$1-$2 ] && exit 1\n" +
 		"[ -e " + dir + "/slow-$1 ] && exec sleep 30\n" +
-		"case \"$1\" in\n image) cat " + tags + " ;;\n build) while [ $# -gt 0 ]; do [ \"$1\" = -t ] && echo \"$2\" >> " + tags + "; shift; done ;;\nesac\n"
+		"case \"$1\" in\n image) cat " + tags + " ;;\n build) for a; do c=$a; done; ls -A \"$c\" | tr '\\n' ' ' >> " + filepath.Join(dir, "contexts") + "; echo >> " + filepath.Join(dir, "contexts") + "\n  while [ $# -gt 0 ]; do [ \"$1\" = -t ] && echo \"$2\" >> " + tags + "; shift; done ;;\nesac\n"
 	bin = filepath.Join(dir, "container")
 	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
 		t.Fatal(err)

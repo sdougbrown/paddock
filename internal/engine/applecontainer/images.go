@@ -192,6 +192,8 @@ func (e *Engine) imageExists(ctx context.Context, tag string) (bool, error) {
 	return false, nil
 }
 
+// buildBase builds the base image from a context holding only its
+// Dockerfile, which is all the base tag's hash covers.
 func (e *Engine) buildBase(ctx context.Context, tag string) error {
 	dir, err := os.MkdirTemp("", "paddock-base-")
 	if err != nil {

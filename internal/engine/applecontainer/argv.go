@@ -27,54 +27,46 @@ type mountLayout struct {
 	UserSettingsAt string
 }
 
-// guestMounts lists the plan's mounts followed by the paddock-managed ones. A
-// plan mount whose guest path is paddock-managed is an error, and so is any
-// path containing ':', which `-v host:guest[:ro]` cannot express.
-//
-// These checks repeat resolve's mount rules (resolver.go, Resolver.mounts) at
-// the point where the engine builds `container run` arguments, and also cover
-// the workspace mount and the paddock-managed mounts, which resolve does not
-// check. A new mount rule belongs in both places.
+// guestMounts lists the plan's mounts followed by the paddock-managed ones.
+// Each plan mount must pass plan.Mount.Check, the rule resolve applies, and
+// must not target the engine's own transcript or user-settings paths. A
+// managed mount whose host path contains ':' is an error, since
+// `-v host:guest[:ro]` cannot express it.
 func guestMounts(p *plan.Plan, l mountLayout) ([]guestMount, error) {
-	ms, err := listMounts(p, l)
-	if err != nil {
-		return nil, err
+	engineOwned := []string{l.TranscriptDir}
+	if l.UserSettings != "" {
+		engineOwned = append(engineOwned, l.UserSettingsAt)
 	}
-	for _, m := range ms {
+	var ms []guestMount
+	for _, m := range p.Mounts {
+		if err := m.Check(); err != nil {
+			return nil, fmt.Errorf("plan mount %s: %w", m.Host, err)
+		}
+		if slices.ContainsFunc(engineOwned, func(d string) bool { return atOrUnder(m.Guest, d) }) {
+			return nil, fmt.Errorf("plan mount %q targets paddock-managed guest path %s", m.Host, m.Guest)
+		}
+		ms = append(ms, guestMount{m.Host, m.Guest, m.ReadOnly})
+	}
+	managed := []guestMount{
+		{l.Dirs.State, initcfg.StateDir, true},
+		{l.Dirs.Secrets, initcfg.SecretsDir, false},
+		{l.Dirs.Log, initcfg.LogDir, false},
+	}
+	if l.BinDir != "" {
+		managed = append(managed, guestMount{l.BinDir, initcfg.BinDir, true})
+	}
+	managed = append(managed, guestMount{l.TranscriptDir, l.TranscriptDir, false})
+	if l.UserSettings != "" {
+		managed = append(managed, guestMount{l.UserSettings, l.UserSettingsAt, true})
+	}
+	for _, m := range managed {
 		for _, s := range []string{m.Host, m.Guest} {
 			if strings.Contains(s, ":") {
 				return nil, fmt.Errorf("mount path %q contains ':'", s)
 			}
 		}
 	}
-	return ms, nil
-}
-
-func listMounts(p *plan.Plan, l mountLayout) ([]guestMount, error) {
-	managed := []string{l.TranscriptDir}
-	if l.UserSettings != "" {
-		managed = append(managed, l.UserSettingsAt)
-	}
-	var ms []guestMount
-	for _, m := range p.Mounts {
-		if initcfg.Reserved(m.Guest) || slices.ContainsFunc(managed, func(d string) bool { return atOrUnder(m.Guest, d) }) {
-			return nil, fmt.Errorf("plan mount %q targets paddock-managed guest path %s", m.Host, m.Guest)
-		}
-		ms = append(ms, guestMount{m.Host, m.Guest, m.ReadOnly})
-	}
-	ms = append(ms,
-		guestMount{l.Dirs.State, initcfg.StateDir, true},
-		guestMount{l.Dirs.Secrets, initcfg.SecretsDir, false},
-		guestMount{l.Dirs.Log, initcfg.LogDir, false},
-	)
-	if l.BinDir != "" {
-		ms = append(ms, guestMount{l.BinDir, initcfg.BinDir, true})
-	}
-	ms = append(ms, guestMount{l.TranscriptDir, l.TranscriptDir, false})
-	if l.UserSettings != "" {
-		ms = append(ms, guestMount{l.UserSettings, l.UserSettingsAt, true})
-	}
-	return ms, nil
+	return append(ms, managed...), nil
 }
 
 // atOrUnder reports whether guest path p is dir or lies under it.

@@ -30,7 +30,8 @@ Agent-specific behavior (what to run, which prompt, which skills) belongs to the
 - `cmd/paddock`: thin CLI (also the guest `paddock-init` role when argv[0] is `paddock-init`)
 - `internal/config`: strict TOML types and loaders for profiles and specs, config root
 - `internal/resolve`: extends chain, trust rules, value sources, spec selection, mounts
-- `internal/plan`: the Plan struct produced by resolve and consumed by engines
+- `internal/plan`: the Plan struct produced by resolve and consumed by engines, and the mount rule
+  (`Mount.Check`) both apply
 - `internal/initcfg`: the init config the host writes and paddock-init reads, the guest paths both
   sides share, and the network policy names
 - `internal/egresshost`: the egress host validator shared by config, resolve, and the guest proxy

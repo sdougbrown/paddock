@@ -2,7 +2,13 @@
 // carries references to secrets, never their values.
 package plan
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"fmt"
+	"strings"
+
+	"github.com/sdougbrown/paddock/internal/initcfg"
+)
 
 // Phases a command runs in.
 const (
@@ -47,6 +53,21 @@ type Mount struct {
 	Host     string `json:"host"`
 	Guest    string `json:"guest"`
 	ReadOnly bool   `json:"read_only"`
+}
+
+// Check reports a mount that a bind-mount flag cannot express (a ':' in
+// either path) or whose guest path is paddock-managed. Resolve applies it to
+// every plan mount, and engines apply it again to the plans they are given.
+func (m Mount) Check() error {
+	for _, p := range []string{m.Host, m.Guest} {
+		if strings.Contains(p, ":") {
+			return fmt.Errorf("%q must not contain ':'", p)
+		}
+	}
+	if initcfg.Reserved(m.Guest) {
+		return fmt.Errorf("%q is a paddock-managed guest path", m.Guest)
+	}
+	return nil
 }
 
 // Environment value sources.

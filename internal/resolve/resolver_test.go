@@ -704,3 +704,15 @@ func TestSeedFilesNeedDistinctNames(t *testing.T) {
 		t.Errorf("distinct seed file names: %v", err)
 	}
 }
+
+func TestWorkspaceMountRules(t *testing.T) {
+	r, _ := testResolver(t, "", errors.New("no remote"))
+	ws := filepath.Join(t.TempDir(), "a:b")
+	if err := os.Mkdir(ws, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	useProfile(t, r, "")
+	if _, err := r.Resolve(Options{Profile: "p", Spec: "afresh", Workspace: ws}); err == nil || !strings.Contains(err.Error(), "':'") {
+		t.Errorf("workspace with ':': err = %v", err)
+	}
+}

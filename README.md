@@ -1,15 +1,17 @@
 # paddock
 
-Run one command in a sandbox with explicit mounts, limits, and an egress allowlist.
+Run one command in an Apple `container` VM with explicit mounts, limits, and a network policy.
+
+To inspect a plan without starting a VM, run this from a checkout of paddock:
 
 ```sh
 make build
-PADDOCK_CONFIG_DIR=./internal/resolve/testdata/root bin/paddock plan --profile fixer --workspace <dir> -- claude
+mkdir -p /tmp/paddock-example/repo
+PADDOCK_CONFIG_DIR="$PWD/internal/resolve/testdata/root" bin/paddock plan \
+  --profile fixer --spec afresh --workspace /tmp/paddock-example -- claude
 ```
 
-`paddock plan` prints the resolved plan as JSON. `--workspace` defaults to the current directory;
-the fixer profile mounts `repo` from the workspace read-only, so the directory must contain a `repo/`. Config lives in `~/.config/paddock`
-(`profiles/<role>.toml`, `projects/<owner>[/<repo>].toml`). See `AGENTS.md` for the trust rules and `SECURITY.md` for the threat model and residual risks.
+The fixture profile mounts the `repo` subdirectory read-only. The command prints JSON; it does not run Claude. For your own configuration, start with the [profile walkthrough](docs/profiles.md) and use the [configuration reference](docs/config.md) for all keys and defaults. Read [Security](SECURITY.md) for the threat model and residual risks.
 
 ## Install
 
@@ -21,44 +23,24 @@ mkdir -p ~/.local/bin
 tar -xzf paddock_darwin_arm64.tar.gz -C ~/.local/bin
 ```
 
-The binaries are not notarized. `gh` and `curl` downloads carry no quarantine attribute; for an archive
-downloaded in a browser, run `xattr -d com.apple.quarantine ~/.local/bin/paddock` before the first run.
+The binaries are not notarized. `gh` and `curl` downloads carry no quarantine attribute; for an archive downloaded in a browser, run `xattr -d com.apple.quarantine ~/.local/bin/paddock` before the first run. The archive includes `paddock-init`, the Linux guest entrypoint. paddock looks for it beside its own executable; set `PADDOCK_INIT` to use another path.
 
-The archive holds `paddock` and `paddock-init` (the linux/arm64 guest entrypoint). paddock looks for
-`paddock-init` beside its own executable; set `$PADDOCK_INIT` to use one elsewhere.
+## Commands
 
-## Image layers
+`plan`, `run`, and `setup` take `--profile <name>` (required), `--spec <ref>` (otherwise selected from Git origin or the profile default), and `--workspace <dir>` (default: current directory). Put flags before `--` and the command.
 
-A spec may ship `images/<spec>/Dockerfile`. paddock builds the base image `paddock/base`, then each spec layer in
-chain order, passing the previous image as the build argument `PADDOCK_PARENT`. A layer's
-Dockerfile must start with:
+- `paddock plan [flags] [-- command ...]` prints the resolved plan as JSON. `--phase run|setup` defaults to `run`; a setup plan takes no command.
+- `paddock run [flags] -- command ...` starts the command. `--verify` runs isolation checks instead and takes no command.
+- `paddock setup [flags]` runs the spec's setup command; it takes no command argument and needs a writable workspace.
+- `paddock version` prints the version.
 
-```dockerfile
-ARG PADDOCK_PARENT
-FROM ${PADDOCK_PARENT}
-```
+Help is per command: use `paddock plan -h`, for example, or `-h` or `--help` on `run` or `setup`. Top-level `paddock --help` reports an unknown command. `plan` does not start a VM; `run` and `setup` do.
 
-Layer tags are `paddock/<lowercased spec, "/" as "-">-<ref8>:<hash>`, where `ref8` is the first 8 hex
-digits of the sha256 of the spec ref, so every spec has its own repository. The hash covers the Dockerfile,
-the build context (symlinks in the context path are resolved first), and the parent tag. Layers
-whose tag already exists are not rebuilt. After the chain is built or reused, paddock removes other
-tags of `paddock/base` and the chain's layer repositories; images in use, and all other images, are left alone.
+## Troubleshooting
 
-## Setup cache
-
-`paddock setup` mounts a host cache directory at the spec's `setup.cache_dir`. The directory is
-`~/.cache/paddock/<lowercased spec ref>/<hash of the setup.cache_key file>`, so the cache is shared
-per spec and lockfile across workspaces; Yarn verifies package checksums against the lockfile. The
-completion marker is `<cache dir>.complete`, beside the mounted directory, and is cleared before each
-setup run. `setup.cache_dir` must be a clean absolute guest path strictly under
-`/var/cache/paddock/` and may not equal, contain, or lie under another plan mount. Setups for the
-same cache serialize on an exclusive flock of `<cache dir>.lock`, held until the setup run ends.
-The setup phase uses the profile's `workspace.mode`; a profile whose workspace is `ro` cannot run
-setup.
-
-## Claude Code inside paddock
-
-Turn Claude Code's own sandbox off for a command that runs in a paddock: settings written for it set
-`sandbox.enabled: false`. paddock's mounts, egress allowlist, and dropped privileges, together with the
-caller's permission hook, are the boundary. Claude Code's Linux sandbox needs bubblewrap and socat,
-which paddock images do not ship, and it cannot mount a fresh /proc inside the guest.
+- **Claude stops at “Managed settings require approval”.** If your organization pushes managed settings, list the host's `~/.claude/remote-settings.json` in the profile's `[claude] seed_files`.
+- **Claude's own sandbox fails in the guest.** Set `sandbox.enabled` to `false` in Claude settings. Do not use `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB`: it crashes Claude in the guest because it needs bubblewrap, which cannot mount `/proc` there.
+- **`container system status` says “not running”.** It can report that while the service works. Check with `container list`.
+- **A memory-heavy run stalls.** This is a known issue at the default memory limit. A run can stop producing output and use no CPU, and `container kill` and `container exec` may also hang. Send SIGTERM to the `paddock run` process, then SIGKILL if it does not exit. After paddock dies, its watchdog attempts to stop and delete the VM. A hung container service can prevent cleanup. Check `container list`. For a Node monorepo test run, try `memory = "4G"` in the run profile's `[limits]`; see [Networked setup, offline run](docs/profiles.md#networked-setup-offline-run).
+- **An experimental config edit changed the live config.** If `~/.config/paddock` is a symlink, copy it with `cp -RL` for experiments. Otherwise edits through the symlink land in the live config. Point `PADDOCK_CONFIG_DIR` at the copy.
+- **An image disappears during concurrent runs.** An image chain rebuild prunes the chain's other tags. A concurrent run can lose an image before it starts; retry it. See [Security](SECURITY.md) for the image-pruning residual risk.

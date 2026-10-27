@@ -8,7 +8,7 @@ project_name: paddock
 # archive.
 before:
   hooks:
-    - make build-init LDFLAGS='-s -w -X main.version={{ .Version }}'
+    - make build-init GO_LDFLAGS='-s -w -X main.version={{ .Version }}'
 
 builds:
   - id: paddock

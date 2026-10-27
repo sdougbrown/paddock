@@ -11,6 +11,18 @@ PADDOCK_CONFIG_DIR=./internal/resolve/testdata/root bin/paddock plan --profile f
 the fixer profile mounts `repo` from the workspace read-only, so the directory must contain a `repo/`. Config lives in `~/.config/paddock`
 (`profiles/<role>.toml`, `projects/<owner>[/<repo>].toml`). See `AGENTS.md` for the trust rules and `SECURITY.md` for the threat model and residual risks.
 
+## Install
+
+Download `paddock_darwin_arm64.tar.gz` from the latest release and extract it into a directory on `PATH`:
+
+```sh
+mkdir -p ~/.local/bin
+tar -xzf paddock_darwin_arm64.tar.gz -C ~/.local/bin
+```
+
+The archive holds `paddock` and `paddock-init` (the linux/arm64 guest entrypoint). paddock looks for
+`paddock-init` beside its own executable; set `$PADDOCK_INIT` to use one elsewhere.
+
 ## Image layers
 
 A spec may ship `images/<spec>/Dockerfile`. paddock builds the base image `paddock/base`, then each spec layer in

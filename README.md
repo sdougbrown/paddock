@@ -13,12 +13,16 @@ the fixer profile mounts `repo` from the workspace read-only, so the directory m
 
 ## Install
 
-Download `paddock_darwin_arm64.tar.gz` from the latest release and extract it into a directory on `PATH`:
+Download the latest release archive and extract it into a directory on `PATH`:
 
 ```sh
+gh release download --repo sdougbrown/paddock --pattern paddock_darwin_arm64.tar.gz
 mkdir -p ~/.local/bin
 tar -xzf paddock_darwin_arm64.tar.gz -C ~/.local/bin
 ```
+
+The binaries are not notarized. `gh` and `curl` downloads carry no quarantine attribute; for an archive
+downloaded in a browser, run `xattr -d com.apple.quarantine ~/.local/bin/paddock` before the first run.
 
 The archive holds `paddock` and `paddock-init` (the linux/arm64 guest entrypoint). paddock looks for
 `paddock-init` beside its own executable; set `$PADDOCK_INIT` to use one elsewhere.

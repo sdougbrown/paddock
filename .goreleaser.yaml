@@ -1,0 +1,46 @@
+# yaml-language-server: $schema=https://goreleaser.com/static/schema.json
+version: 2
+
+project_name: paddock
+
+# paddock-init is the same ./cmd/paddock main built for the linux/arm64
+# guest; paddock finds it beside its own executable, so both ship in one
+# archive.
+before:
+  hooks:
+    - make build-init GO_LDFLAGS='-s -w -X main.version={{ .Version }}'
+
+builds:
+  - id: paddock
+    binary: paddock
+    main: ./cmd/paddock
+    env:
+      - CGO_ENABLED=0
+    ldflags:
+      - -s -w -X main.version={{ .Version }}
+    goos:
+      - darwin
+    goarch:
+      - arm64
+    mod_timestamp: "{{ .CommitTimestamp }}"
+
+archives:
+  - formats: [tar.gz]
+    name_template: "{{ .ProjectName }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - src: bin/paddock-init
+        dst: .
+        strip_parent: true
+        info:
+          mode: 0755
+          mtime: "{{ .CommitDate }}"
+
+checksum:
+  name_template: checksums.txt
+
+changelog:
+  disable: true
+
+release:
+  draft: false
+  prerelease: false

@@ -1,10 +1,12 @@
+GO_LDFLAGS ?= -X main.version=dev
+
 .PHONY: build build-init test container-test vet fmtcheck lint verify
 
 build:
-	go build -o ./bin/paddock ./cmd/paddock
+	go build -ldflags '$(GO_LDFLAGS)' -o ./bin/paddock ./cmd/paddock
 
 build-init:
-	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -o ./bin/paddock-init ./cmd/paddock
+	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -ldflags '$(GO_LDFLAGS)' -o ./bin/paddock-init ./cmd/paddock
 
 test:
 	go test -race ./...

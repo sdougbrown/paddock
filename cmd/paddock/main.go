@@ -18,7 +18,8 @@ import (
 	"github.com/sdougbrown/paddock/internal/resolve"
 )
 
-const version = "0.1.0-dev"
+// version is set at release time with -ldflags "-X main.version=<v>".
+var version = "dev"
 
 func main() {
 	if filepath.Base(os.Args[0]) == "paddock-init" {

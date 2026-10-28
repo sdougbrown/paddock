@@ -53,7 +53,7 @@ type arrivals struct {
 	at map[string][]time.Time
 }
 
-func (a *arrivals) record(t *testing.T, query []byte) {
+func (a *arrivals) record(query []byte) {
 	var m dnsmessage.Message
 	if err := m.Unpack(query); err != nil || len(m.Questions) != 1 {
 		return
@@ -126,7 +126,7 @@ func serveDNS(t *testing.T, s *dnsServer) *dnsServer {
 			if err != nil {
 				return
 			}
-			s.udp.record(t, buf[:n])
+			s.udp.record(buf[:n])
 			s.mu.Lock()
 			s.received++
 			drop := s.received <= s.dropFirst
@@ -623,7 +623,7 @@ func TestDNSResolverResendsPastStrayDatagrams(t *testing.T) {
 				return
 			}
 			query := slices.Clone(buf[:size])
-			sent.record(t, query)
+			sent.record(query)
 			switch {
 			case n == 1:
 			case n == 2:

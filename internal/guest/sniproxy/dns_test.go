@@ -15,6 +15,8 @@ import (
 	"time"
 
 	"golang.org/x/net/dns/dnsmessage"
+
+	"github.com/sdougbrown/paddock/internal/guest/dnsclient"
 )
 
 // dnsServer is a fake DNS server on loopback, answering over UDP and TCP on
@@ -39,6 +41,7 @@ type dnsServer struct {
 	mu       sync.Mutex
 	asked    []string
 	received int
+	tcpAsked int
 }
 
 func startDNS(t *testing.T, answer func(dnsmessage.Question, bool) (dnsmessage.Header, []dnsmessage.Resource)) *dnsServer {
@@ -136,6 +139,9 @@ func (s *dnsServer) respond(t *testing.T, query []byte, tcp bool) []byte {
 	q := m.Questions[0]
 	s.mu.Lock()
 	s.asked = append(s.asked, q.Name.String()+" "+q.Type.String())
+	if tcp {
+		s.tcpAsked++
+	}
 	s.mu.Unlock()
 	h, answers := s.answer(q, tcp)
 	h.ID, h.Response = m.ID, true
@@ -191,14 +197,15 @@ func ServeDNSAt(t *testing.T, addr netip.AddrPort, a map[string]netip.Addr) func
 	return s.queries
 }
 
-// queries returns the questions asked, sorted: the resolver asks the record
-// types concurrently, so arrival order is not defined.
+// queries returns the distinct questions asked, sorted: the resolver asks
+// the record types concurrently, so arrival order is not defined, and a
+// query that is answered late is sent again.
 func (s *dnsServer) queries() []string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	out := slices.Clone(s.asked)
 	slices.Sort(out)
-	return out
+	return slices.Compact(out)
 }
 
 func rr(name string, body dnsmessage.ResourceBody) dnsmessage.Resource {
@@ -421,8 +428,13 @@ func TestDNSResolverTruncatedOverTCPTriesNextServer(t *testing.T) {
 	if want := []netip.Addr{netip.MustParseAddr("203.0.113.12")}; !slices.Equal(got, want) {
 		t.Errorf("got %v, want %v", got, want)
 	}
-	if want := []string{"big.test. TypeA", "big.test. TypeA"}; !slices.Equal(truncated.queries(), want) {
-		t.Errorf("truncating server saw %q, want %q (UDP then TCP)", truncated.queries(), want)
+	if want := []string{"big.test. TypeA"}; !slices.Equal(truncated.queries(), want) {
+		t.Errorf("truncating server saw %q, want %q", truncated.queries(), want)
+	}
+	truncated.mu.Lock()
+	defer truncated.mu.Unlock()
+	if truncated.tcpAsked != 1 {
+		t.Errorf("truncating server saw %d TCP queries, want 1 after the truncated UDP answer", truncated.tcpAsked)
 	}
 }
 
@@ -535,16 +547,86 @@ func TestDNSResolverResendsLostQuery(t *testing.T) {
 }
 
 // TestDNSResolverSilentServerFailsAtTimeout: resending does not stretch the
-// per-query timeout, which is not a multiple of the resend interval.
+// per-query timeout. The timeout falls just after the first resend, so a
+// read that ran a whole further interval would end past the upper bound.
 func TestDNSResolverSilentServerFailsAtTimeout(t *testing.T) {
-	r := &DNSResolver{Servers: []netip.AddrPort{silentUDP(t)}, Timeout: 1200 * time.Millisecond}
+	const margin = 50 * time.Millisecond
+	timeout := dnsclient.ResendInterval + margin
+	r := &DNSResolver{Servers: []netip.AddrPort{silentUDP(t)}, Timeout: timeout}
 	start := time.Now()
 	_, err := r.LookupNetIP(context.Background(), "ip4", "x.test")
 	if !errors.Is(err, os.ErrDeadlineExceeded) {
 		t.Fatalf("err = %v; want a timeout", err)
 	}
-	if d := time.Since(start); d < 1200*time.Millisecond || d > 1500*time.Millisecond {
-		t.Errorf("lookup took %v; want the 1.2s timeout", d)
+	if d := time.Since(start); d < timeout || d >= 2*dnsclient.ResendInterval-margin {
+		t.Errorf("lookup took %v; want the %v timeout", d, timeout)
+	}
+}
+
+// TestDNSResolverResendsPastStrayDatagrams: strays that keep arriving do not
+// postpone the resend, so the query is still answered long before the
+// timeout.
+func TestDNSResolverResendsPastStrayDatagrams(t *testing.T) {
+	pc, err := net.ListenPacket("udp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan struct{})
+	t.Cleanup(func() { close(done); pc.Close() })
+	go func() {
+		buf := make([]byte, 1500)
+		for n := 1; ; n++ {
+			size, from, err := pc.ReadFrom(buf)
+			if err != nil {
+				return
+			}
+			query := slices.Clone(buf[:size])
+			switch {
+			case n == 1:
+			case n == 2:
+				go func() {
+					for {
+						for _, b := range strayResponses(t, query) {
+							_, _ = pc.WriteTo(b, from)
+						}
+						select {
+						case <-done:
+							return
+						case <-time.After(dnsclient.ResendInterval / 5):
+						}
+					}
+				}()
+			default:
+				var m dnsmessage.Message
+				if err := m.Unpack(query); err != nil {
+					t.Errorf("fake dns: bad query: %v", err)
+					return
+				}
+				q := m.Questions[0]
+				resp, err := (&dnsmessage.Message{
+					Header:    dnsmessage.Header{ID: m.ID, Response: true},
+					Questions: m.Questions,
+					Answers:   []dnsmessage.Resource{rr(q.Name.String(), a4("203.0.113.9"))},
+				}).Pack()
+				if err != nil {
+					t.Errorf("fake dns: pack: %v", err)
+					return
+				}
+				_, _ = pc.WriteTo(resp, from)
+			}
+		}
+	}()
+	r := &DNSResolver{Servers: []netip.AddrPort{pc.LocalAddr().(*net.UDPAddr).AddrPort()}, Timeout: 10 * dnsclient.ResendInterval}
+	start := time.Now()
+	got, err := r.LookupNetIP(context.Background(), "ip4", "x.test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []netip.Addr{netip.MustParseAddr("203.0.113.9")}; !slices.Equal(got, want) {
+		t.Errorf("got %v, want %v", got, want)
+	}
+	if d := time.Since(start); d > 5*dnsclient.ResendInterval {
+		t.Errorf("lookup took %v; want it answered by the third send", d)
 	}
 }
 

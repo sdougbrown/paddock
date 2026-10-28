@@ -42,6 +42,44 @@ type dnsServer struct {
 	asked    []string
 	received int
 	tcpAsked int
+	udp      arrivals
+}
+
+// arrivals records when each UDP query datagram reached a fake server, so a
+// test can tell a resend, which waits out dnsclient.ResendInterval, from a
+// duplicate send, which does not.
+type arrivals struct {
+	mu sync.Mutex
+	at map[string][]time.Time
+}
+
+func (a *arrivals) record(t *testing.T, query []byte) {
+	var m dnsmessage.Message
+	if err := m.Unpack(query); err != nil || len(m.Questions) != 1 {
+		return
+	}
+	key := m.Questions[0].Name.String() + " " + m.Questions[0].Type.String()
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.at == nil {
+		a.at = map[string][]time.Time{}
+	}
+	a.at[key] = append(a.at[key], time.Now())
+}
+
+// checkSpaced fails t if two datagrams for one question arrived less than
+// half a resend interval apart.
+func (a *arrivals) checkSpaced(t *testing.T) {
+	t.Helper()
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	for q, times := range a.at {
+		for i := 1; i < len(times); i++ {
+			if gap := times[i].Sub(times[i-1]); gap < dnsclient.ResendInterval/2 {
+				t.Errorf("query %q sent twice %v apart; a resend waits %v", q, gap, dnsclient.ResendInterval)
+			}
+		}
+	}
 }
 
 func startDNS(t *testing.T, answer func(dnsmessage.Question, bool) (dnsmessage.Header, []dnsmessage.Resource)) *dnsServer {
@@ -88,6 +126,7 @@ func serveDNS(t *testing.T, s *dnsServer) *dnsServer {
 			if err != nil {
 				return
 			}
+			s.udp.record(t, buf[:n])
 			s.mu.Lock()
 			s.received++
 			drop := s.received <= s.dropFirst
@@ -431,6 +470,7 @@ func TestDNSResolverTruncatedOverTCPTriesNextServer(t *testing.T) {
 	if want := []string{"big.test. TypeA"}; !slices.Equal(truncated.queries(), want) {
 		t.Errorf("truncating server saw %q, want %q", truncated.queries(), want)
 	}
+	truncated.udp.checkSpaced(t)
 	truncated.mu.Lock()
 	defer truncated.mu.Unlock()
 	if truncated.tcpAsked != 1 {
@@ -544,6 +584,7 @@ func TestDNSResolverResendsLostQuery(t *testing.T) {
 	if want := []netip.Addr{netip.MustParseAddr("203.0.113.9")}; !slices.Equal(got, want) {
 		t.Errorf("got %v, want %v", got, want)
 	}
+	s.udp.checkSpaced(t)
 }
 
 // TestDNSResolverSilentServerFailsAtTimeout: resending does not stretch the
@@ -571,6 +612,7 @@ func TestDNSResolverResendsPastStrayDatagrams(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	var sent arrivals
 	done := make(chan struct{})
 	t.Cleanup(func() { close(done); pc.Close() })
 	go func() {
@@ -581,6 +623,7 @@ func TestDNSResolverResendsPastStrayDatagrams(t *testing.T) {
 				return
 			}
 			query := slices.Clone(buf[:size])
+			sent.record(t, query)
 			switch {
 			case n == 1:
 			case n == 2:
@@ -628,6 +671,7 @@ func TestDNSResolverResendsPastStrayDatagrams(t *testing.T) {
 	if d := time.Since(start); d > 5*dnsclient.ResendInterval {
 		t.Errorf("lookup took %v; want it answered by the third send", d)
 	}
+	sent.checkSpaced(t)
 }
 
 // silentUDP listens on loopback and never replies.

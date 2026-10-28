@@ -6,9 +6,17 @@ package dnsclient
 import (
 	"context"
 	"encoding/binary"
+	"errors"
 	"io"
 	"net"
+	"os"
+	"time"
 )
+
+// ResendInterval is how long Exchange waits for a UDP answer before it sends
+// the query again. A guest's network drops datagrams for the first seconds
+// after it boots, so a query sent once can be lost for good.
+const ResendInterval = 500 * time.Millisecond
 
 // Dialer opens connections. *net.Dialer satisfies it.
 type Dialer interface {
@@ -19,30 +27,42 @@ type Dialer interface {
 // the response. Over TCP both carry the two-byte length prefix. Over UDP, as
 // in the net package's resolver, a datagram that matches rejects is skipped:
 // a stray or forged datagram does not fail the query, which waits for its
-// answer until ctx's deadline. A nil matches accepts the first datagram.
+// answer until ctx's deadline. The query is sent again every ResendInterval
+// until an answer arrives. A nil matches accepts the first datagram.
 func Exchange(ctx context.Context, d Dialer, network, server string, query []byte, matches func([]byte) bool) ([]byte, error) {
 	c, err := d.DialContext(ctx, network, server)
 	if err != nil {
 		return nil, err
 	}
 	defer c.Close()
-	if dl, ok := ctx.Deadline(); ok {
+	dl, hasDeadline := ctx.Deadline()
+	if hasDeadline {
 		_ = c.SetDeadline(dl)
 	}
 	if network == "udp" {
-		if _, err := c.Write(query); err != nil {
-			return nil, err
-		}
 		// A datagram longer than buf is cut short without an error, so buf
 		// holds the largest DNS message.
 		buf := make([]byte, 65535)
 		for {
-			n, err := c.Read(buf)
-			if err != nil {
+			if _, err := c.Write(query); err != nil {
 				return nil, err
 			}
-			if matches == nil || matches(buf[:n]) {
-				return buf[:n], nil
+			resendAt := time.Now().Add(ResendInterval)
+			if hasDeadline && dl.Before(resendAt) {
+				resendAt = dl
+			}
+			_ = c.SetReadDeadline(resendAt)
+			for {
+				n, err := c.Read(buf)
+				if errors.Is(err, os.ErrDeadlineExceeded) && (!hasDeadline || time.Now().Before(dl)) {
+					break
+				}
+				if err != nil {
+					return nil, err
+				}
+				if matches == nil || matches(buf[:n]) {
+					return buf[:n], nil
+				}
 			}
 		}
 	}

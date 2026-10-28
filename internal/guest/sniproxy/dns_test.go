@@ -32,9 +32,13 @@ type dnsServer struct {
 	// answer the query: one with the wrong ID and one with the wrong
 	// question. Both carry strayAddr for the queried name.
 	stray bool
+	// dropFirst is how many UDP datagrams to discard unanswered before
+	// serving, like a guest network that is not forwarding yet.
+	dropFirst int
 
-	mu    sync.Mutex
-	asked []string
+	mu       sync.Mutex
+	asked    []string
+	received int
 }
 
 func startDNS(t *testing.T, answer func(dnsmessage.Question, bool) (dnsmessage.Header, []dnsmessage.Resource)) *dnsServer {
@@ -80,6 +84,13 @@ func serveDNS(t *testing.T, s *dnsServer) *dnsServer {
 			n, from, err := pc.ReadFrom(buf)
 			if err != nil {
 				return
+			}
+			s.mu.Lock()
+			s.received++
+			drop := s.received <= s.dropFirst
+			s.mu.Unlock()
+			if drop {
+				continue
 			}
 			if s.stray {
 				for _, b := range strayResponses(t, buf[:n]) {
@@ -503,6 +514,37 @@ func TestDNSResolverMismatchedServerTimesOut(t *testing.T) {
 	got, err := r.LookupNetIP(ctx, "ip4", "x.test")
 	if err != nil || len(got) != 1 {
 		t.Fatalf("with a second server: %v, %v", got, err)
+	}
+}
+
+// TestDNSResolverResendsLostQuery: a query that the network drops is sent
+// again, so a server that only starts hearing datagrams after about two
+// seconds still answers within the timeout.
+func TestDNSResolverResendsLostQuery(t *testing.T) {
+	s := serveDNS(t, &dnsServer{dropFirst: 4, answer: func(q dnsmessage.Question, _ bool) (dnsmessage.Header, []dnsmessage.Resource) {
+		return dnsmessage.Header{}, []dnsmessage.Resource{rr(q.Name.String(), a4("203.0.113.9"))}
+	}})
+	r := &DNSResolver{Servers: []netip.AddrPort{s.addr}, Timeout: 5 * time.Second}
+	got, err := r.LookupNetIP(context.Background(), "ip4", "x.test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []netip.Addr{netip.MustParseAddr("203.0.113.9")}; !slices.Equal(got, want) {
+		t.Errorf("got %v, want %v", got, want)
+	}
+}
+
+// TestDNSResolverSilentServerFailsAtTimeout: resending does not stretch the
+// per-query timeout, which is not a multiple of the resend interval.
+func TestDNSResolverSilentServerFailsAtTimeout(t *testing.T) {
+	r := &DNSResolver{Servers: []netip.AddrPort{silentUDP(t)}, Timeout: 1200 * time.Millisecond}
+	start := time.Now()
+	_, err := r.LookupNetIP(context.Background(), "ip4", "x.test")
+	if !errors.Is(err, os.ErrDeadlineExceeded) {
+		t.Fatalf("err = %v; want a timeout", err)
+	}
+	if d := time.Since(start); d < 1200*time.Millisecond || d > 1500*time.Millisecond {
+		t.Errorf("lookup took %v; want the 1.2s timeout", d)
 	}
 }
 

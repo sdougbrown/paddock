@@ -143,6 +143,23 @@ func TestSandboxedExitCodePassesThrough(t *testing.T) {
 	ws := planFixture(t)
 	var stdout, stderr bytes.Buffer
 	code := run([]string{"run", "--profile", "fixer", "--spec", "afresh", "--workspace", ws, "--", "claude"}, &stdout, &stderr)
+	if code != 3 || stdout.Len() != 0 || stderr.Len() != 0 {
+		t.Fatalf("exit %d, want 3 with silent streams (stdout %q, stderr %q)", code, stdout.String(), stderr.String())
+	}
+}
+
+// TestSetupExitCodePassesThrough checks setup returns the setup command's
+// own exit code rather than a paddock-level one.
+func TestSetupExitCodePassesThrough(t *testing.T) {
+	orig := newEngine
+	t.Cleanup(func() { newEngine = orig })
+	newEngine = func(string) (engine.Engine, error) { return exitStub{code: 3}, nil }
+	ws := planFixture(t)
+	if err := os.WriteFile(filepath.Join(ws, "yarn.lock"), []byte("#"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"setup", "--profile", "fixer", "--spec", "afresh/scanner", "--workspace", ws}, &stdout, &stderr)
 	if code != 3 {
 		t.Fatalf("exit %d, want 3 (stderr %q)", code, stderr.String())
 	}

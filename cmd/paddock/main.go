@@ -97,7 +97,7 @@ Operational failures exit 1; usage errors exit 2.`,
 	root.SetFlagErrorFunc(func(c *cobra.Command, err error) error {
 		return usageError{err}
 	})
-	root.AddCommand(newPlanCmd(stdout), newRunCmd(), newSetupCmd(), newVersionCmd(stdout))
+	root.AddCommand(newPlanCmd(stdout), newRunCmd(), newSetupCmd(), newVersionCmd())
 	return root
 }
 
@@ -208,7 +208,7 @@ func newSetupCmd() *cobra.Command {
 	return cmd
 }
 
-func newVersionCmd(stdout io.Writer) *cobra.Command {
+func newVersionCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "version",
 		Short: "print the version and exit",

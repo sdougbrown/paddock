@@ -50,6 +50,14 @@ func TestRunAndWrite(t *testing.T) {
 	if got := allOut.String(); !strings.HasSuffix(got, "1 passed, 0 failed\n") {
 		t.Errorf("summary = %q; want suffix %q", got, "1 passed, 0 failed\n")
 	}
+
+	var emptyOut bytes.Buffer
+	if !Write(&emptyOut, nil) {
+		t.Fatal("Write reported failure for no checks")
+	}
+	if got := emptyOut.String(); got != "0 passed, 0 failed\n" {
+		t.Errorf("empty summary = %q", got)
+	}
 }
 
 func testResolver() guesttest.Resolver {

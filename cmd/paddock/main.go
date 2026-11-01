@@ -123,6 +123,9 @@ func newPlanCmd(stdout io.Writer) *cobra.Command {
 	}
 	cmd.Flags().StringVar(&o.Phase, "phase", "run", "run or setup")
 	addPlanFlags(cmd, &o)
+	// Flags stop at the command's first argument, so its own dashed args
+	// pass through: `paddock plan go test -run X` is not a paddock flag.
+	cmd.Flags().SetInterspersed(false)
 	return cmd
 }
 
@@ -164,6 +167,9 @@ func newRunCmd() *cobra.Command {
 	}
 	addPlanFlags(cmd, &o)
 	cmd.Flags().BoolVar(&verify, "verify", false, "run the in-guest isolation checks instead of a command")
+	// Flags stop at the command's first argument, so its own dashed args
+	// pass through: `paddock run go test -run X` is not a paddock flag.
+	cmd.Flags().SetInterspersed(false)
 	return cmd
 }
 

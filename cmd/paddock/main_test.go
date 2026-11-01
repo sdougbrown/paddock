@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -51,6 +52,19 @@ func TestPlanCommand(t *testing.T) {
 	code = run([]string{"plan", "--", "claude"}, &stdout, &stderr)
 	if code == 0 || !strings.Contains(stderr.String(), "--profile is required") {
 		t.Errorf("missing profile: exit %d, stderr %q", code, stderr.String())
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	code = run([]string{"plan", "--profile", "fixer", "--spec", "afresh", "--workspace", ws, "claude", "-run", "X"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("dashed args: exit %d, stderr %q", code, stderr.String())
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &p); err != nil {
+		t.Fatalf("stdout is not a plan: %v\n%s", err, stdout.String())
+	}
+	if strings.Join(p.Argv, " ") != "claude -run X" {
+		t.Errorf("argv %q, want %q", p.Argv, []string{"claude", "-run", "X"})
 	}
 }
 
@@ -106,10 +120,17 @@ func TestPlanCommandSelectsSpecFromOrigin(t *testing.T) {
 	}
 }
 
-// exitStub reports a fixed exit code so tests can observe passthrough.
-type exitStub struct{ code int }
+// exitStub reports a fixed exit code and records the argv it saw, so tests
+// can observe passthrough.
+type exitStub struct {
+	code int
+	seen *[]string
+}
 
-func (s exitStub) Run(context.Context, *plan.Plan, engine.Options) (int, error) {
+func (s exitStub) Run(_ context.Context, p *plan.Plan, _ engine.Options) (int, error) {
+	if s.seen != nil {
+		*s.seen = p.Argv
+	}
 	return s.code, nil
 }
 
@@ -118,12 +139,30 @@ func (s exitStub) Run(context.Context, *plan.Plan, engine.Options) (int, error) 
 func TestSandboxedExitCodePassesThrough(t *testing.T) {
 	orig := newEngine
 	t.Cleanup(func() { newEngine = orig })
-	newEngine = func(string) (engine.Engine, error) { return exitStub{3}, nil }
+	newEngine = func(string) (engine.Engine, error) { return exitStub{code: 3}, nil }
 	ws := planFixture(t)
 	var stdout, stderr bytes.Buffer
 	code := run([]string{"run", "--profile", "fixer", "--spec", "afresh", "--workspace", ws, "--", "claude"}, &stdout, &stderr)
 	if code != 3 {
 		t.Fatalf("exit %d, want 3 (stderr %q)", code, stderr.String())
+	}
+}
+
+// TestRunPassesThroughDashedArgs checks that arguments after the command
+// name reach the command instead of parsing as paddock's flags.
+func TestRunPassesThroughDashedArgs(t *testing.T) {
+	orig := newEngine
+	t.Cleanup(func() { newEngine = orig })
+	var gotArgv []string
+	newEngine = func(string) (engine.Engine, error) { return exitStub{seen: &gotArgv}, nil }
+	ws := planFixture(t)
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"run", "--profile", "fixer", "--spec", "afresh", "--workspace", ws, "go", "test", "-run", "X"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("exit %d, want 0 (stderr %q)", code, stderr.String())
+	}
+	if want := []string{"go", "test", "-run", "X"}; !slices.Equal(gotArgv, want) {
+		t.Errorf("argv %q, want %q", gotArgv, want)
 	}
 }
 

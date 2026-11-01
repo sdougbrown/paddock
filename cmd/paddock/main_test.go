@@ -2,13 +2,16 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
+	"github.com/sdougbrown/paddock/internal/engine"
 	"github.com/sdougbrown/paddock/internal/plan"
 )
 
@@ -49,6 +52,19 @@ func TestPlanCommand(t *testing.T) {
 	code = run([]string{"plan", "--", "claude"}, &stdout, &stderr)
 	if code == 0 || !strings.Contains(stderr.String(), "--profile is required") {
 		t.Errorf("missing profile: exit %d, stderr %q", code, stderr.String())
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	code = run([]string{"plan", "--profile", "fixer", "--spec", "afresh", "--workspace", ws, "claude", "-run", "X"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("dashed args: exit %d, stderr %q", code, stderr.String())
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &p); err != nil {
+		t.Fatalf("stdout is not a plan: %v\n%s", err, stdout.String())
+	}
+	if strings.Join(p.Argv, " ") != "claude -run X" {
+		t.Errorf("argv %q, want %q", p.Argv, []string{"claude", "-run", "X"})
 	}
 }
 
@@ -104,28 +120,113 @@ func TestPlanCommandSelectsSpecFromOrigin(t *testing.T) {
 	}
 }
 
+// exitStub reports a fixed exit code and records the argv it saw, so tests
+// can observe passthrough.
+type exitStub struct {
+	code int
+	seen *[]string
+}
+
+func (s exitStub) Run(_ context.Context, p *plan.Plan, _ engine.Options) (int, error) {
+	if s.seen != nil {
+		*s.seen = p.Argv
+	}
+	return s.code, nil
+}
+
+// TestSandboxedExitCodePassesThrough checks run returns the sandboxed
+// command's own exit code rather than a paddock-level one.
+func TestSandboxedExitCodePassesThrough(t *testing.T) {
+	orig := newEngine
+	t.Cleanup(func() { newEngine = orig })
+	newEngine = func(string) (engine.Engine, error) { return exitStub{code: 3}, nil }
+	ws := planFixture(t)
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"run", "--profile", "fixer", "--spec", "afresh", "--workspace", ws, "--", "claude"}, &stdout, &stderr)
+	if code != 3 || stdout.Len() != 0 || stderr.Len() != 0 {
+		t.Fatalf("exit %d, want 3 with silent streams (stdout %q, stderr %q)", code, stdout.String(), stderr.String())
+	}
+}
+
+// TestSetupExitCodePassesThrough checks setup returns the setup command's
+// own exit code rather than a paddock-level one.
+func TestSetupExitCodePassesThrough(t *testing.T) {
+	orig := newEngine
+	t.Cleanup(func() { newEngine = orig })
+	newEngine = func(string) (engine.Engine, error) { return exitStub{code: 3}, nil }
+	ws := planFixture(t)
+	if err := os.WriteFile(filepath.Join(ws, "yarn.lock"), []byte("#"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"setup", "--profile", "fixer", "--spec", "afresh/scanner", "--workspace", ws}, &stdout, &stderr)
+	if code != 3 {
+		t.Fatalf("exit %d, want 3 (stderr %q)", code, stderr.String())
+	}
+}
+
+// TestRunPassesThroughDashedArgs checks that arguments after the command
+// name reach the command instead of parsing as paddock's flags.
+func TestRunPassesThroughDashedArgs(t *testing.T) {
+	orig := newEngine
+	t.Cleanup(func() { newEngine = orig })
+	var gotArgv []string
+	newEngine = func(string) (engine.Engine, error) { return exitStub{seen: &gotArgv}, nil }
+	ws := planFixture(t)
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"run", "--profile", "fixer", "--spec", "afresh", "--workspace", ws, "go", "test", "-run", "X"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("exit %d, want 0 (stderr %q)", code, stderr.String())
+	}
+	if want := []string{"go", "test", "-run", "X"}; !slices.Equal(gotArgv, want) {
+		t.Errorf("argv %q, want %q", gotArgv, want)
+	}
+}
+
+// TestTopLevelHelp checks paddock, --help, and -h: each exits 0 and prints
+// the command list on stdout.
+func TestTopLevelHelp(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		args []string
+	}{
+		{"bare", nil},
+		{"--help", []string{"--help"}},
+		{"-h", []string{"-h"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var stdout, stderr bytes.Buffer
+			code := run(tc.args, &stdout, &stderr)
+			out := stdout.String()
+			if code != 0 || !strings.Contains(out, "Available Commands:") ||
+				!strings.Contains(out, "setup") || !strings.Contains(out, "version") || stderr.Len() != 0 {
+				t.Errorf("exit %d, stdout %q, stderr %q", code, out, stderr.String())
+			}
+		})
+	}
+}
+
 // TestFlagHelpAndParseErrors checks plan, run, and setup: -h exits 0 and
-// prints usage, an unknown flag exits 2, and the flag package's own report
-// is the only output.
+// prints help on stdout, an unknown flag exits 2 with cobra's error relayed
+// under the command's name, and nothing lands on the other stream.
 func TestFlagHelpAndParseErrors(t *testing.T) {
 	for _, cmd := range []string{"plan", "run", "setup"} {
-		for _, tc := range []struct {
-			arg  string
-			code int
-			want string
-		}{
-			{"-h", 0, "Usage of " + cmd + ":"},
-			{"--bogus", 2, "flag provided but not defined: -bogus"},
-		} {
-			t.Run(cmd+" "+tc.arg, func(t *testing.T) {
-				var stdout, stderr bytes.Buffer
-				code := run([]string{cmd, tc.arg}, &stdout, &stderr)
-				out := stderr.String()
-				if code != tc.code || !strings.Contains(out, tc.want) || !strings.Contains(out, "Usage of "+cmd+":") ||
-					strings.Contains(out, "paddock "+cmd+":") || stdout.Len() != 0 {
-					t.Errorf("exit %d (want %d), stdout %q, stderr %q", code, tc.code, stdout.String(), out)
-				}
-			})
-		}
+		t.Run(cmd+" -h", func(t *testing.T) {
+			var stdout, stderr bytes.Buffer
+			code := run([]string{cmd, "-h"}, &stdout, &stderr)
+			out := stdout.String()
+			if code != 0 || !strings.Contains(out, "Usage:") || !strings.Contains(out, "--profile") || stderr.Len() != 0 {
+				t.Errorf("exit %d, stdout %q, stderr %q", code, out, stderr.String())
+			}
+		})
+		t.Run(cmd+" --bogus", func(t *testing.T) {
+			var stdout, stderr bytes.Buffer
+			code := run([]string{cmd, "--bogus"}, &stdout, &stderr)
+			out := stderr.String()
+			if code != 2 || !strings.Contains(out, "unknown flag: --bogus") ||
+				!strings.Contains(out, "paddock "+cmd+":") || stdout.Len() != 0 {
+				t.Errorf("exit %d, stdout %q, stderr %q", code, stdout.String(), out)
+			}
+		})
 	}
 }

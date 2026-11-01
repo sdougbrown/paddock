@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"strings"
 	"testing"
 )
 
@@ -16,22 +17,13 @@ func TestRun(t *testing.T) {
 		}
 	})
 
-	tests := []struct {
-		name string
-		args []string
-	}{
-		{"no args", nil},
-		{"unknown command", []string{"bogus"}},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			var out, errb bytes.Buffer
-			if code := run(tc.args, &out, &errb); code != 2 {
-				t.Fatalf("exit code = %d, want 2", code)
-			}
-			if out.Len() != 0 {
-				t.Fatalf("stdout = %q, want empty", out.String())
-			}
-		})
-	}
+	t.Run("unknown command", func(t *testing.T) {
+		var out, errb bytes.Buffer
+		if code := run([]string{"bogus"}, &out, &errb); code != 2 {
+			t.Fatalf("exit code = %d, want 2", code)
+		}
+		if out.Len() != 0 || !strings.Contains(errb.String(), "unknown command \"bogus\"") {
+			t.Fatalf("stdout %q, stderr %q", out.String(), errb.String())
+		}
+	})
 }

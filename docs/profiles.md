@@ -140,7 +140,7 @@ The setup plan lists both egress sets and the cache mount. The run plan lists on
 
 Setup can fail if the lockfile references another host or an install script needs other network access. Review the lockfile and add only required hosts to the spec's setup set.
 
-`--verify` runs checks instead of a command. Lines have the form `PASS <check>: <detail>` or `FAIL <check>: <detail>`. It prints no summary line. The number of checks depends on the policy and mounts.
+`--verify` runs checks instead of a command. Lines have the form `PASS <check>: <detail>` or `FAIL <check>: <detail>`, followed by a summary line such as `16 passed, 0 failed`. The number of checks depends on the policy and mounts.
 
 Checks include mount access, dropped privileges, and the configured network boundary. An allowlisted host must be reachable for its connectivity check to pass. A failure gives a nonzero exit status; investigate before using the profile. A successful check is not a guarantee against every escape or data leak; see [Security](../SECURITY.md).
 

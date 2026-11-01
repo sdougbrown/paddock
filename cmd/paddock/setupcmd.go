@@ -11,31 +11,6 @@ import (
 	"github.com/sdougbrown/paddock/internal/resolve"
 )
 
-// setupCmd runs the spec's setup command in a paddock with the dependency
-// cache mounted, prints one summary line to stderr, and returns the
-// command's exit code.
-func setupCmd(args []string, stderr io.Writer) (int, error) {
-	o := resolve.Options{Phase: plan.PhaseSetup}
-	fs := planFlagSet("setup", stderr, &o)
-	if err := fs.Parse(args); err != nil {
-		return parseExitCode(err), nil
-	}
-	if o.Profile == "" {
-		return 1, fmt.Errorf("--profile is required")
-	}
-	// The resolver rejects a command in the setup phase.
-	o.Argv = fs.Args()
-	p, err := resolvePlan(o)
-	if err != nil {
-		return 1, err
-	}
-	eng, err := newEngine(p.Engine)
-	if err != nil {
-		return 1, err
-	}
-	return runSetup(context.Background(), eng, p, stderr)
-}
-
 // runSetup runs a setup-phase plan holding its cache lock, marks the cache
 // complete only when the command exits 0, and prints the summary line.
 //

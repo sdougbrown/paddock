@@ -34,7 +34,7 @@ func TestRunAndWrite(t *testing.T) {
 		t.Fatal("Write reported all passed")
 	}
 	lines := strings.Split(strings.TrimSpace(out.String()), "\n")
-	wantPrefix := []string{"PASS passes: fine (", "FAIL fails: probe: broken (", "FAIL panics: check panicked: boom"}
+	wantPrefix := []string{"PASS passes: fine (", "FAIL fails: probe: broken (", "FAIL panics: check panicked: boom", "1 passed, 2 failed"}
 	if len(lines) != len(wantPrefix) {
 		t.Fatalf("got %d lines:\n%s", len(lines), out.String())
 	}
@@ -43,8 +43,20 @@ func TestRunAndWrite(t *testing.T) {
 			t.Errorf("line %d = %q; want prefix %q", i, lines[i], p)
 		}
 	}
-	if !Write(&bytes.Buffer{}, results[:1]) {
+	var allOut bytes.Buffer
+	if !Write(&allOut, results[:1]) {
 		t.Fatal("Write reported failure for an all-pass list")
+	}
+	if got := allOut.String(); !strings.HasSuffix(got, "1 passed, 0 failed\n") {
+		t.Errorf("summary = %q; want suffix %q", got, "1 passed, 0 failed\n")
+	}
+
+	var emptyOut bytes.Buffer
+	if !Write(&emptyOut, nil) {
+		t.Fatal("Write reported failure for no checks")
+	}
+	if got := emptyOut.String(); got != "0 passed, 0 failed\n" {
+		t.Errorf("empty summary = %q", got)
 	}
 }
 

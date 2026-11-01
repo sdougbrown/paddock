@@ -3,15 +3,18 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 
+	"github.com/spf13/cobra"
+
 	"github.com/sdougbrown/paddock/internal/config"
+	"github.com/sdougbrown/paddock/internal/engine"
 	"github.com/sdougbrown/paddock/internal/engine/applecontainer"
 	"github.com/sdougbrown/paddock/internal/guest/pinit"
 	"github.com/sdougbrown/paddock/internal/plan"
@@ -31,82 +34,197 @@ func main() {
 	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
 }
 
+// usageError marks a flag-parse or command-dispatch failure, which exits 2.
+type usageError struct{ err error }
+
+func (e usageError) Error() string { return e.err.Error() }
+
+// exitCodeError carries a sandboxed command's exit code out of a RunE; run
+// returns it as the process exit code without printing anything.
+type exitCodeError int
+
+func (e exitCodeError) Error() string { return fmt.Sprintf("exit status %d", int(e)) }
+
+// run executes the command line and returns the process exit code.
+// Success exits 0, a usage error exits 2, an operational failure exits 1,
+// and run and setup exit with the sandboxed command's own code.
 func run(args []string, stdout, stderr io.Writer) int {
-	if len(args) == 0 {
-		fmt.Fprintln(stderr, "usage: paddock <plan|run|setup|version>")
+	root := newRootCmd(stdout, stderr)
+	root.SetArgs(args)
+	cmd, err := root.ExecuteC()
+	if err == nil {
+		return 0
+	}
+	name := "paddock"
+	if cmd != nil && cmd != root {
+		name = "paddock " + cmd.Name()
+	}
+	var ue usageError
+	var ec exitCodeError
+	switch {
+	case errors.As(err, &ec):
+		return int(ec)
+	case errors.As(err, &ue):
+		fmt.Fprintf(stderr, "%s: %v\n", name, ue.err)
 		return 2
+	case cmd == nil || cmd == root:
+		// A dispatch failure at the root, such as an unknown command.
+		fmt.Fprintf(stderr, "paddock: %v\n", err)
+		return 2
+	default:
+		fmt.Fprintf(stderr, "%s: %v\n", name, err)
+		return 1
 	}
-	switch args[0] {
-	case "version":
-		fmt.Fprintln(stdout, "paddock", version)
-		return 0
-	case "plan":
-		code, err := planCmd(args[1:], stdout, stderr)
-		if err != nil {
-			fmt.Fprintln(stderr, "paddock plan:", err)
-		}
-		return code
-	case "run":
-		code, err := runCmd(args[1:], stderr)
-		if err != nil {
-			fmt.Fprintln(stderr, "paddock run:", err)
-		}
-		return code
-	case "setup":
-		code, err := setupCmd(args[1:], stderr)
-		if err != nil {
-			fmt.Fprintln(stderr, "paddock setup:", err)
-		}
-		return code
-	}
-	fmt.Fprintf(stderr, "paddock: unknown command %q\n", args[0])
-	return 2
 }
 
-// planCmd resolves a plan and prints it as JSON, returning the exit code.
-func planCmd(args []string, stdout, stderr io.Writer) (int, error) {
+// newRootCmd builds the command tree. Help output goes to stdout and errors
+// to stderr; SilenceErrors and SilenceUsage keep printing in run's hands so
+// the exit-code contract holds.
+func newRootCmd(stdout, stderr io.Writer) *cobra.Command {
+	root := &cobra.Command{
+		Use:   "paddock",
+		Short: "Run one command in a sandbox with resolved mounts, limits, and network policy",
+		Long: `paddock runs one command in a sandbox with resolved mounts, limits, and network policy.
+
+Run and setup exit with the sandboxed command's own exit code.
+Operational failures exit 1; usage errors exit 2.`,
+		SilenceErrors: true,
+		SilenceUsage:  true,
+	}
+	root.SetOut(stdout)
+	root.SetErr(stderr)
+	root.CompletionOptions.DisableDefaultCmd = true
+	root.SetFlagErrorFunc(func(c *cobra.Command, err error) error {
+		return usageError{err}
+	})
+	root.AddCommand(newPlanCmd(stdout), newRunCmd(), newSetupCmd(), newVersionCmd())
+	return root
+}
+
+// newPlanCmd resolves a plan and prints it as JSON.
+func newPlanCmd(stdout io.Writer) *cobra.Command {
 	var o resolve.Options
-	fs := planFlagSet("plan", stderr, &o)
-	fs.StringVar(&o.Phase, "phase", "run", "run or setup")
-	if err := fs.Parse(args); err != nil {
-		return parseExitCode(err), nil
+	cmd := &cobra.Command{
+		Use:   "plan [--] command [args...]",
+		Short: "resolve the profile, spec, and workspace and print the Plan as JSON",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if o.Profile == "" {
+				return errors.New("--profile is required")
+			}
+			o.Argv = args
+			p, err := resolvePlan(o)
+			if err != nil {
+				return err
+			}
+			enc := json.NewEncoder(stdout)
+			enc.SetIndent("", "  ")
+			return enc.Encode(p)
+		},
 	}
-	if o.Profile == "" {
-		return 1, fmt.Errorf("--profile is required")
-	}
-	o.Argv = fs.Args()
-	p, err := resolvePlan(o)
-	if err != nil {
-		return 1, err
-	}
-	enc := json.NewEncoder(stdout)
-	enc.SetIndent("", "  ")
-	if err := enc.Encode(p); err != nil {
-		return 1, err
-	}
-	return 0, nil
+	cmd.Flags().StringVar(&o.Phase, "phase", "run", "run or setup")
+	addPlanFlags(cmd, &o)
+	// Flags stop at the command's first argument, so its own dashed args
+	// pass through: `paddock plan go test -run X` is not a paddock flag.
+	cmd.Flags().SetInterspersed(false)
+	return cmd
 }
 
-// planFlagSet returns a flag set for the named command with the flags plan,
-// run, and setup share: --profile, --spec, and --workspace, stored in o. A
-// parse error or -h is reported by the flag set on output; the commands then
-// exit with parseExitCode without printing it again.
-func planFlagSet(name string, output io.Writer, o *resolve.Options) *flag.FlagSet {
-	fs := flag.NewFlagSet(name, flag.ContinueOnError)
-	fs.SetOutput(output)
-	fs.StringVar(&o.Profile, "profile", "", "profile name (required)")
-	fs.StringVar(&o.Spec, "spec", "", "spec ref (default: from git origin, else profile default_spec)")
-	fs.StringVar(&o.Workspace, "workspace", "", "workspace directory (default: current directory)")
-	return fs
+// newRunCmd resolves a plan and runs it.
+func newRunCmd() *cobra.Command {
+	var o resolve.Options
+	var verify bool
+	cmd := &cobra.Command{
+		Use:   "run [--flags] [--] command [args...]",
+		Short: "run the resolved command in the sandbox, or the in-guest checks with --verify",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if o.Profile == "" {
+				return errors.New("--profile is required")
+			}
+			if len(args) == 0 && !verify {
+				return errors.New("a command or --verify is required")
+			}
+			if len(args) > 0 && verify {
+				return errors.New("--verify takes no command")
+			}
+			o.Argv = args
+			p, err := resolvePlan(o)
+			if err != nil {
+				return err
+			}
+			eng, err := newEngine(p.Engine)
+			if err != nil {
+				return err
+			}
+			code, err := eng.Run(context.Background(), p, engine.Options{Verify: verify})
+			if err != nil {
+				return err
+			}
+			if code != 0 {
+				return exitCodeError(code)
+			}
+			return nil
+		},
+	}
+	addPlanFlags(cmd, &o)
+	cmd.Flags().BoolVar(&verify, "verify", false, "run the in-guest isolation checks instead of a command")
+	// Flags stop at the command's first argument, so its own dashed args
+	// pass through: `paddock run go test -run X` is not a paddock flag.
+	cmd.Flags().SetInterspersed(false)
+	return cmd
 }
 
-// parseExitCode is a command's exit code after its flag set failed to
-// parse: 0 for -h or -help, as flag.ExitOnError does, and 2 otherwise.
-func parseExitCode(err error) int {
-	if errors.Is(err, flag.ErrHelp) {
-		return 0
+// newSetupCmd runs the spec's setup command in a paddock with the dependency
+// cache mounted.
+func newSetupCmd() *cobra.Command {
+	o := resolve.Options{Phase: plan.PhaseSetup}
+	cmd := &cobra.Command{
+		Use:   "setup [--flags]",
+		Short: "run the spec's setup command with the dependency cache mounted",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if o.Profile == "" {
+				return errors.New("--profile is required")
+			}
+			// The resolver rejects a command in the setup phase.
+			o.Argv = args
+			p, err := resolvePlan(o)
+			if err != nil {
+				return err
+			}
+			eng, err := newEngine(p.Engine)
+			if err != nil {
+				return err
+			}
+			code, err := runSetup(context.Background(), eng, p, cmd.ErrOrStderr())
+			if err != nil {
+				return err
+			}
+			if code != 0 {
+				return exitCodeError(code)
+			}
+			return nil
+		},
 	}
-	return 2
+	addPlanFlags(cmd, &o)
+	return cmd
+}
+
+func newVersionCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "version",
+		Short: "print the version and exit",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			fmt.Fprintln(cmd.OutOrStdout(), "paddock", version)
+			return nil
+		},
+	}
+}
+
+// addPlanFlags adds the flags plan, run, and setup share: --profile,
+// --spec, and --workspace, stored in o.
+func addPlanFlags(cmd *cobra.Command, o *resolve.Options) {
+	cmd.Flags().StringVar(&o.Profile, "profile", "", "profile name (required)")
+	cmd.Flags().StringVar(&o.Spec, "spec", "", "spec ref (default: from git origin, else profile default_spec)")
+	cmd.Flags().StringVar(&o.Workspace, "workspace", "", "workspace directory (default: current directory)")
 }
 
 // resolvePlan resolves o against the user's config root.

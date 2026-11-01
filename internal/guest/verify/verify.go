@@ -61,16 +61,19 @@ func runOne(ctx context.Context, c Check) (r Result) {
 	return r
 }
 
-// Write prints one line per result and reports whether all passed.
+// Write prints one line per result, then a summary line such as
+// "16 passed, 0 failed", and reports whether all passed.
 func Write(w io.Writer, results []Result) bool {
-	all := true
+	passed := 0
 	for _, r := range results {
 		status := "PASS"
 		if !r.Pass {
 			status = "FAIL"
-			all = false
+		} else {
+			passed++
 		}
 		fmt.Fprintf(w, "%s %s: %s\n", status, r.Name, r.Detail)
 	}
-	return all
+	fmt.Fprintf(w, "%d passed, %d failed\n", passed, len(results)-passed)
+	return passed == len(results)
 }

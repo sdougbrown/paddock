@@ -34,7 +34,7 @@ func TestRunAndWrite(t *testing.T) {
 		t.Fatal("Write reported all passed")
 	}
 	lines := strings.Split(strings.TrimSpace(out.String()), "\n")
-	wantPrefix := []string{"PASS passes: fine (", "FAIL fails: probe: broken (", "FAIL panics: check panicked: boom"}
+	wantPrefix := []string{"PASS passes: fine (", "FAIL fails: probe: broken (", "FAIL panics: check panicked: boom", "1 passed, 2 failed"}
 	if len(lines) != len(wantPrefix) {
 		t.Fatalf("got %d lines:\n%s", len(lines), out.String())
 	}

@@ -104,28 +104,50 @@ func TestPlanCommandSelectsSpecFromOrigin(t *testing.T) {
 	}
 }
 
+// TestTopLevelHelp checks paddock, --help, and -h: each exits 0 and prints
+// the command list on stdout.
+func TestTopLevelHelp(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		args []string
+	}{
+		{"bare", nil},
+		{"--help", []string{"--help"}},
+		{"-h", []string{"-h"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var stdout, stderr bytes.Buffer
+			code := run(tc.args, &stdout, &stderr)
+			out := stdout.String()
+			if code != 0 || !strings.Contains(out, "Available Commands:") ||
+				!strings.Contains(out, "plan") || !strings.Contains(out, "verify") || stderr.Len() != 0 {
+				t.Errorf("exit %d, stdout %q, stderr %q", code, out, stderr.String())
+			}
+		})
+	}
+}
+
 // TestFlagHelpAndParseErrors checks plan, run, and setup: -h exits 0 and
-// prints usage, an unknown flag exits 2, and the flag package's own report
-// is the only output.
+// prints help on stdout, an unknown flag exits 2 with cobra's error relayed
+// under the command's name, and nothing lands on the other stream.
 func TestFlagHelpAndParseErrors(t *testing.T) {
 	for _, cmd := range []string{"plan", "run", "setup"} {
-		for _, tc := range []struct {
-			arg  string
-			code int
-			want string
-		}{
-			{"-h", 0, "Usage of " + cmd + ":"},
-			{"--bogus", 2, "flag provided but not defined: -bogus"},
-		} {
-			t.Run(cmd+" "+tc.arg, func(t *testing.T) {
-				var stdout, stderr bytes.Buffer
-				code := run([]string{cmd, tc.arg}, &stdout, &stderr)
-				out := stderr.String()
-				if code != tc.code || !strings.Contains(out, tc.want) || !strings.Contains(out, "Usage of "+cmd+":") ||
-					strings.Contains(out, "paddock "+cmd+":") || stdout.Len() != 0 {
-					t.Errorf("exit %d (want %d), stdout %q, stderr %q", code, tc.code, stdout.String(), out)
-				}
-			})
-		}
+		t.Run(cmd+" -h", func(t *testing.T) {
+			var stdout, stderr bytes.Buffer
+			code := run([]string{cmd, "-h"}, &stdout, &stderr)
+			out := stdout.String()
+			if code != 0 || !strings.Contains(out, "Usage:") || !strings.Contains(out, "--profile") || stderr.Len() != 0 {
+				t.Errorf("exit %d, stdout %q, stderr %q", code, out, stderr.String())
+			}
+		})
+		t.Run(cmd+" --bogus", func(t *testing.T) {
+			var stdout, stderr bytes.Buffer
+			code := run([]string{cmd, "--bogus"}, &stdout, &stderr)
+			out := stderr.String()
+			if code != 2 || !strings.Contains(out, "unknown flag: --bogus") ||
+				!strings.Contains(out, "paddock "+cmd+":") || stdout.Len() != 0 {
+				t.Errorf("exit %d, stdout %q, stderr %q", code, stdout.String(), out)
+			}
+		})
 	}
 }

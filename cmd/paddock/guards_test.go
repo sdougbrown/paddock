@@ -20,7 +20,7 @@ func TestRunAndSetupArgumentGuards(t *testing.T) {
 		{"run without profile", []string{"run", "--", "claude"}, 1, "paddock run: --profile is required"},
 		{"run without command", []string{"run", "--profile", "p"}, 1, "paddock run: a command or --verify is required"},
 		{"run verify with command", []string{"run", "--profile", "p", "--verify", "--", "claude"}, 1, "paddock run: --verify takes no command"},
-		{"run profile without value", []string{"run", "--profile"}, 2, "flag needs an argument: -profile"},
+		{"run profile without value", []string{"run", "--profile"}, 2, "flag needs an argument: --profile"},
 		{"setup without profile", []string{"setup"}, 1, "paddock setup: --profile is required"},
 	}
 	for _, tt := range tests {

@@ -34,7 +34,7 @@ The binaries are not notarized. `gh` and `curl` downloads carry no quarantine at
 - `paddock setup [flags]` runs the spec's setup command; it takes no command argument and needs a writable workspace.
 - `paddock version` prints the version.
 
-Help is per command: use `paddock plan -h`, for example, or `-h` or `--help` on `run` or `setup`. Top-level `paddock --help` reports an unknown command. `plan` does not start a VM; `run` and `setup` do.
+`paddock --help` (or `-h`, or bare `paddock`) lists the commands; `paddock <command> --help` lists a command's flags. `plan` does not start a VM; `run` and `setup` do.
 
 ## Troubleshooting
 

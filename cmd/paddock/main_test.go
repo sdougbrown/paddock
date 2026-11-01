@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"os"
 	"os/exec"
@@ -9,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/sdougbrown/paddock/internal/engine"
 	"github.com/sdougbrown/paddock/internal/plan"
 )
 
@@ -104,6 +106,27 @@ func TestPlanCommandSelectsSpecFromOrigin(t *testing.T) {
 	}
 }
 
+// exitStub reports a fixed exit code so tests can observe passthrough.
+type exitStub struct{ code int }
+
+func (s exitStub) Run(context.Context, *plan.Plan, engine.Options) (int, error) {
+	return s.code, nil
+}
+
+// TestSandboxedExitCodePassesThrough checks run returns the sandboxed
+// command's own exit code rather than a paddock-level one.
+func TestSandboxedExitCodePassesThrough(t *testing.T) {
+	orig := newEngine
+	t.Cleanup(func() { newEngine = orig })
+	newEngine = func(string) (engine.Engine, error) { return exitStub{3}, nil }
+	ws := planFixture(t)
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"run", "--profile", "fixer", "--spec", "afresh", "--workspace", ws, "--", "claude"}, &stdout, &stderr)
+	if code != 3 {
+		t.Fatalf("exit %d, want 3 (stderr %q)", code, stderr.String())
+	}
+}
+
 // TestTopLevelHelp checks paddock, --help, and -h: each exits 0 and prints
 // the command list on stdout.
 func TestTopLevelHelp(t *testing.T) {
@@ -120,7 +143,7 @@ func TestTopLevelHelp(t *testing.T) {
 			code := run(tc.args, &stdout, &stderr)
 			out := stdout.String()
 			if code != 0 || !strings.Contains(out, "Available Commands:") ||
-				!strings.Contains(out, "plan") || !strings.Contains(out, "verify") || stderr.Len() != 0 {
+				!strings.Contains(out, "setup") || !strings.Contains(out, "version") || stderr.Len() != 0 {
 				t.Errorf("exit %d, stdout %q, stderr %q", code, out, stderr.String())
 			}
 		})

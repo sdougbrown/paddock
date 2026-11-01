@@ -43,8 +43,12 @@ func TestRunAndWrite(t *testing.T) {
 			t.Errorf("line %d = %q; want prefix %q", i, lines[i], p)
 		}
 	}
-	if !Write(&bytes.Buffer{}, results[:1]) {
+	var allOut bytes.Buffer
+	if !Write(&allOut, results[:1]) {
 		t.Fatal("Write reported failure for an all-pass list")
+	}
+	if got := allOut.String(); !strings.HasSuffix(got, "1 passed, 0 failed\n") {
+		t.Errorf("summary = %q; want suffix %q", got, "1 passed, 0 failed\n")
 	}
 }
 

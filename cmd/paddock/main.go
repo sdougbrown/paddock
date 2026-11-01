@@ -45,9 +45,9 @@ type exitCodeError int
 
 func (e exitCodeError) Error() string { return fmt.Sprintf("exit status %d", int(e)) }
 
-// run executes the command line and returns the process exit code: 0 on
-// success, 2 for a usage error, 1 for an operational failure, and the
-// sandboxed command's own exit code for run and setup.
+// run executes the command line and returns the process exit code.
+// Success exits 0, a usage error exits 2, an operational failure exits 1,
+// and run and setup exit with the sandboxed command's own code.
 func run(args []string, stdout, stderr io.Writer) int {
 	root := newRootCmd(stdout, stderr)
 	root.SetArgs(args)

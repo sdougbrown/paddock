@@ -1,6 +1,7 @@
 package bwrap
 
 import (
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -177,5 +178,56 @@ func TestForwardSignalsDeliverToTheChild(t *testing.T) {
 	b, _ := os.ReadFile(filepath.Join(dir, "signals"))
 	if !strings.Contains(string(b), "TERM") {
 		t.Errorf("the forwarded TERM never reached the child: %q", b)
+	}
+}
+
+// TestRunKillsChildAfterGrace runs against a child that ignores TERM: after
+// the cancellation's grace, the escalation SIGKILLs it and the run reports
+// 137 (128+SIGKILL).
+func TestRunKillsChildAfterGrace(t *testing.T) {
+	dir := t.TempDir()
+	script := "#!/bin/sh\nd=\"${0%/*}\"\n[ \"$1\" = __warm ] && exit 0\ntrap '' TERM\necho ready > \"$d/ready\"\nsleep 30 >/dev/null 2>&1 </dev/null &\nwait\n"
+	bin := filepath.Join(dir, "bwrap")
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := exec.Command(bin, "__warm").Run(); err != nil {
+		t.Fatal(err)
+	}
+	e := &Engine{Bin: bin, Home: dir, StateRoot: filepath.Join(dir, "state"), cancelGrace: 200 * time.Millisecond}
+	ws := filepath.Join(dir, "ws")
+	if err := os.Mkdir(ws, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	p := testPlan(dir, ws)
+	p.Argv = []string{"sleep", "30"}
+	p.Env = nil
+	done := make(chan int, 1)
+	go func() {
+		code, err := e.Run(ctx, p, engine.Options{})
+		if err != nil {
+			t.Errorf("Run: %v", err)
+		}
+		done <- code
+	}()
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		if _, err := os.Stat(filepath.Join(dir, "ready")); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the fake never signalled ready")
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	cancel()
+	select {
+	case code := <-done:
+		if code != 137 {
+			t.Errorf("exit code = %d; want 137 (128+SIGKILL)", code)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("Run never returned after cancellation")
 	}
 }

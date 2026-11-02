@@ -32,7 +32,7 @@ func TestBwrapReal(t *testing.T) {
 		Mounts:    []plan.Mount{{Host: ws, Guest: ws}},
 		Network:   plan.Network{Policy: "none"},
 		Env:       []plan.EnvVar{{Name: "TOKEN", Source: plan.SourceEnv, Ref: "BWRAP_REAL_TOKEN"}},
-		Argv: []string{"bash", "-c",
+		Argv: []string{"bash", "-x", "-c",
 			`cp "$HOME/.claude.json" home-proof.txt; echo ok > wrote.txt; [ -n "$TOKEN" ] && printf '%s' "$TOKEN" > token.txt; timeout 2 bash -c 'exec 3<>/dev/tcp/example.com/443' 2>/dev/null && echo network-up > net.txt || echo no-network > net.txt`},
 	}
 	t.Setenv("BWRAP_REAL_TOKEN", "real-secret")

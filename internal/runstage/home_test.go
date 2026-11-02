@@ -1,4 +1,4 @@
-package pinit
+package runstage
 
 import (
 	"os"

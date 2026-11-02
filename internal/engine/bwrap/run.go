@@ -51,15 +51,28 @@ func (e *Engine) Run(ctx context.Context, p *plan.Plan, o engine.Options) (int, 
 	if err != nil {
 		return 1, fmt.Errorf("host user: %w", err)
 	}
+	if u.UID <= 0 {
+		return 1, fmt.Errorf("the bwrap engine needs an unprivileged invoking user; uid %d would give the agent root", u.UID)
+	}
 	secrets, err := runstage.ResolveSecrets(p.Env, e.lookup)
 	if err != nil {
 		return 1, err
 	}
-	dirs, err := runstage.CreateRunDirs(e.StateRoot, mustRunName())
+	name, err := runstage.NewRunName()
 	if err != nil {
 		return 1, err
 	}
+	dirs, err := runstage.CreateRunDirs(e.StateRoot, name)
+	if err != nil {
+		return 1, err
+	}
+	defer dirs.Remove()
 	home := filepath.Join(dirs.Root, "home")
+	// The transcript directory binds at its host path, so it must exist
+	// before bwrap starts; the home's projects symlink points at it.
+	if err := os.MkdirAll(tdir, 0o755); err != nil {
+		return 1, fmt.Errorf("transcript dir: %w", err)
+	}
 
 	var pass []string
 	for _, k := range runstage.PassthroughEnv {
@@ -89,7 +102,7 @@ func (e *Engine) Run(ctx context.Context, p *plan.Plan, o engine.Options) (int, 
 			return 1, err
 		}
 	}
-	if err := prepareHome(home, p.Claude, cfg, tdir); err != nil {
+	if err := runstage.PrepareHome(runstage.NewHomeFS("/", cfg), cfg); err != nil {
 		return 1, err
 	}
 	mounts, err := planMounts(p)
@@ -181,11 +194,11 @@ func childEnv(cfg *initcfg.Config, secrets []byte, home string) []string {
 	return append(env, "HOME="+home)
 }
 
-// planMountTargets rejects plan mounts that would collide with the mounts
-// the engine adds itself.
+// planMountTargets rejects plan mounts that would collide with the
+// transcript directory the engine mounts itself.
 func planMountTargets(p *plan.Plan, tdir string) error {
 	for _, m := range p.Mounts {
-		if filepath.Clean(m.Guest) == filepath.Clean(tdir) {
+		if runstage.AtOrUnder(m.Guest, tdir) {
 			return fmt.Errorf("plan mount %s targets the transcript directory the engine mounts itself", m.Host)
 		}
 	}
@@ -202,14 +215,4 @@ func planMounts(p *plan.Plan) ([]runstage.GuestMount, error) {
 		ms = append(ms, runstage.GuestMount{Host: m.Host, Guest: m.Guest, ReadOnly: m.ReadOnly})
 	}
 	return ms, nil
-}
-
-// mustRunName defers to runstage.NewRunName; the error path is a broken
-// entropy source, which the run reports as a failure to start.
-func mustRunName() string {
-	n, err := runstage.NewRunName()
-	if err != nil {
-		panic(err)
-	}
-	return n
 }

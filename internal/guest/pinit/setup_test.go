@@ -3,6 +3,7 @@ package pinit
 import (
 	"encoding/json"
 	"errors"
+	"github.com/sdougbrown/paddock/internal/runstage"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -223,15 +224,15 @@ func TestPrepareHome(t *testing.T) {
 		},
 	}
 	var chowned []string
-	h := newHomeFS(root, cfg)
-	h.chown = func(p string, uid, gid int) error {
+	h := runstage.NewHomeFS(root, cfg)
+	h.Chown = func(p string, uid, gid int) error {
 		if uid != 501 || gid != 20 {
 			t.Errorf("chown %s to %d:%d", p, uid, gid)
 		}
 		chowned = append(chowned, strings.TrimPrefix(p, root))
 		return nil
 	}
-	if err := prepareHome(h, cfg); err != nil {
+	if err := runstage.PrepareHome(h, cfg); err != nil {
 		t.Fatal(err)
 	}
 	want := []string{home, home + "/.claude", home + "/.claude/projects", home + "/.claude/remote-settings.json",
@@ -259,7 +260,7 @@ func TestPrepareHome(t *testing.T) {
 	// A second run keeps an existing ~/.claude.json and replaces the link.
 	writeFile(t, filepath.Join(root, home, ".claude.json"), "mine", 0o600)
 	cfg.Claude.Skills = "/Users/doug/other-skills"
-	if err := prepareHome(h, cfg); err != nil {
+	if err := runstage.PrepareHome(h, cfg); err != nil {
 		t.Fatal(err)
 	}
 	if got := readFile(t, filepath.Join(root, home, ".claude.json")); got != "mine" {
@@ -272,7 +273,7 @@ func TestPrepareHome(t *testing.T) {
 	// A directory where the symlink goes is never replaced.
 	cfg.Claude.Agents = "/Users/doug/.botfiles/agents"
 	writeFile(t, filepath.Join(root, home, ".claude/agents/x"), "", 0o644)
-	if err := prepareHome(h, cfg); err == nil || !strings.Contains(err.Error(), "not a symlink") {
+	if err := runstage.PrepareHome(h, cfg); err == nil || !strings.Contains(err.Error(), "not a symlink") {
 		t.Errorf("agents dir: err = %v", err)
 	}
 }
@@ -356,13 +357,13 @@ func TestPrepareHomeLeavesFileMountAlone(t *testing.T) {
 		User:   initcfg.User{Name: "doug", UID: 501, GID: 20, Home: home},
 		Mounts: []initcfg.Mount{{Path: settings, ReadOnly: true}},
 	}
-	h := newHomeFS(root, cfg)
+	h := runstage.NewHomeFS(root, cfg)
 	var chowned []string
-	h.chown = func(p string, _, _ int) error {
+	h.Chown = func(p string, _, _ int) error {
 		chowned = append(chowned, strings.TrimPrefix(p, root))
 		return nil
 	}
-	if err := prepareHome(h, cfg); err != nil {
+	if err := runstage.PrepareHome(h, cfg); err != nil {
 		t.Fatal(err)
 	}
 	if got := readFile(t, filepath.Join(root, settings)); got != `{"mounted":true}` {
@@ -372,7 +373,7 @@ func TestPrepareHomeLeavesFileMountAlone(t *testing.T) {
 	if want := []string{home, home + "/.claude"}; !reflect.DeepEqual(chowned, want) {
 		t.Errorf("chowned %q, want %q", chowned, want)
 	}
-	if !h.isMount(settings) {
+	if !h.IsMount(settings) {
 		t.Error("file mount not recognised")
 	}
 }
@@ -380,12 +381,12 @@ func TestPrepareHomeLeavesFileMountAlone(t *testing.T) {
 func TestPrepareHomeRefusesRoot(t *testing.T) {
 	root := t.TempDir()
 	cfg := &initcfg.Config{User: initcfg.User{Name: "doug", UID: 501, GID: 20, Home: "/"}}
-	h := newHomeFS(root, cfg)
-	h.chown = func(p string, _, _ int) error {
+	h := runstage.NewHomeFS(root, cfg)
+	h.Chown = func(p string, _, _ int) error {
 		t.Errorf("chown %s", p)
 		return nil
 	}
-	if err := prepareHome(h, cfg); err == nil || !strings.Contains(err.Error(), "filesystem root") {
+	if err := runstage.PrepareHome(h, cfg); err == nil || !strings.Contains(err.Error(), "filesystem root") {
 		t.Errorf("prepareHome with HOME=/: err = %v", err)
 	}
 }
@@ -396,9 +397,9 @@ func TestPrepareHomeRejectsInvalidManagedSettings(t *testing.T) {
 		User:   initcfg.User{Name: "doug", UID: 501, GID: 20, Home: "/Users/doug"},
 		Claude: initcfg.ClaudeHome{ManagedSettings: json.RawMessage(`{not json`)},
 	}
-	h := newHomeFS(root, cfg)
-	h.chown = func(string, int, int) error { return nil }
-	if err := prepareHome(h, cfg); err == nil || !strings.Contains(err.Error(), "not valid JSON") {
+	h := runstage.NewHomeFS(root, cfg)
+	h.Chown = func(string, int, int) error { return nil }
+	if err := runstage.PrepareHome(h, cfg); err == nil || !strings.Contains(err.Error(), "not valid JSON") {
 		t.Fatalf("err = %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(root, initcfg.ManagedSettingsPath)); !os.IsNotExist(err) {
@@ -436,14 +437,14 @@ func TestPrepareHomeReplacesLinkedSeedDestination(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			h := newHomeFS(root, cfg)
-			h.chown = func(p string, _, _ int) error {
+			h := runstage.NewHomeFS(root, cfg)
+			h.Chown = func(p string, _, _ int) error {
 				if st, err := os.Lstat(p); err == nil && os.SameFile(st, otherInfo) {
 					t.Errorf("chown %s reaches the linked file", strings.TrimPrefix(p, root))
 				}
 				return nil
 			}
-			if err := prepareHome(h, cfg); err != nil {
+			if err := runstage.PrepareHome(h, cfg); err != nil {
 				t.Fatal(err)
 			}
 			if got := readFile(t, other); got != "original" {
@@ -471,9 +472,9 @@ func TestPrepareHomeRejectsFileAtAgentDir(t *testing.T) {
 		root := t.TempDir()
 		writeFile(t, filepath.Join(root, file), "", 0o644)
 		cfg := &initcfg.Config{User: initcfg.User{Name: "doug", UID: 501, GID: 20, Home: "/Users/doug"}}
-		h := newHomeFS(root, cfg)
-		h.chown = func(string, int, int) error { return nil }
-		if err := prepareHome(h, cfg); err == nil || !strings.Contains(err.Error(), "is not a directory") {
+		h := runstage.NewHomeFS(root, cfg)
+		h.Chown = func(string, int, int) error { return nil }
+		if err := runstage.PrepareHome(h, cfg); err == nil || !strings.Contains(err.Error(), "is not a directory") {
 			t.Errorf("file at %s: err = %v", file, err)
 		}
 	}
@@ -490,13 +491,13 @@ func TestPrepareHomeLeavesDirMountAlone(t *testing.T) {
 		User:   initcfg.User{Name: "doug", UID: 501, GID: 20, Home: home},
 		Mounts: []initcfg.Mount{{Path: home + "/.claude", ReadOnly: true}},
 	}
-	h := newHomeFS(root, cfg)
+	h := runstage.NewHomeFS(root, cfg)
 	var chowned []string
-	h.chown = func(p string, _, _ int) error {
+	h.Chown = func(p string, _, _ int) error {
 		chowned = append(chowned, strings.TrimPrefix(p, root))
 		return nil
 	}
-	if err := prepareHome(h, cfg); err != nil {
+	if err := runstage.PrepareHome(h, cfg); err != nil {
 		t.Fatal(err)
 	}
 	if want := []string{home}; !reflect.DeepEqual(chowned, want) {
@@ -519,9 +520,9 @@ func TestPrepareHomeSeedOntoDirectoryFails(t *testing.T) {
 		User:   initcfg.User{Name: "doug", UID: 501, GID: 20, Home: home},
 		Claude: initcfg.ClaudeHome{SeedFiles: []string{"remote-settings.json"}},
 	}
-	h := newHomeFS(root, cfg)
-	h.chown = func(string, int, int) error { return nil }
-	if err := prepareHome(h, cfg); err == nil {
+	h := runstage.NewHomeFS(root, cfg)
+	h.Chown = func(string, int, int) error { return nil }
+	if err := runstage.PrepareHome(h, cfg); err == nil {
 		t.Error("seed onto a directory: no error")
 	}
 	if got := readFile(t, filepath.Join(root, home, ".claude/remote-settings.json/keep")); got != "keep" {
@@ -542,9 +543,9 @@ func TestPrepareHomeErrors(t *testing.T) {
 			SeedFiles:  []string{"absent.json"},
 			ClaudeJSON: json.RawMessage(`{}`),
 		}}
-		h := newHomeFS(root, cfg)
-		h.chown = func(string, int, int) error { return nil }
-		if err := prepareHome(h, cfg); err == nil || !strings.Contains(err.Error(), "seed file") {
+		h := runstage.NewHomeFS(root, cfg)
+		h.Chown = func(string, int, int) error { return nil }
+		if err := runstage.PrepareHome(h, cfg); err == nil || !strings.Contains(err.Error(), "seed file") {
 			t.Errorf("err = %v", err)
 		}
 		if _, err := os.Lstat(filepath.Join(root, home, ".claude.json")); !os.IsNotExist(err) {
@@ -554,9 +555,9 @@ func TestPrepareHomeErrors(t *testing.T) {
 	t.Run("chown failure", func(t *testing.T) {
 		root := t.TempDir()
 		cfg := &initcfg.Config{User: user, Claude: initcfg.ClaudeHome{ClaudeJSON: json.RawMessage(`{}`)}}
-		h := newHomeFS(root, cfg)
-		h.chown = func(string, int, int) error { return os.ErrPermission }
-		if err := prepareHome(h, cfg); !errors.Is(err, os.ErrPermission) {
+		h := runstage.NewHomeFS(root, cfg)
+		h.Chown = func(string, int, int) error { return os.ErrPermission }
+		if err := runstage.PrepareHome(h, cfg); !errors.Is(err, os.ErrPermission) {
 			t.Errorf("err = %v", err)
 		}
 		if _, err := os.Lstat(filepath.Join(root, home, ".claude.json")); !os.IsNotExist(err) {
@@ -575,9 +576,9 @@ func TestPrepareHomeOpensManagedSettingsDir(t *testing.T) {
 		User:   initcfg.User{Name: "doug", UID: 501, GID: 20, Home: "/Users/doug"},
 		Claude: initcfg.ClaudeHome{ManagedSettings: json.RawMessage(`{}`)},
 	}
-	h := newHomeFS(root, cfg)
-	h.chown = func(string, int, int) error { return nil }
-	if err := prepareHome(h, cfg); err != nil {
+	h := runstage.NewHomeFS(root, cfg)
+	h.Chown = func(string, int, int) error { return nil }
+	if err := runstage.PrepareHome(h, cfg); err != nil {
 		t.Fatal(err)
 	}
 	if st, err := os.Stat(dir); err != nil || st.Mode().Perm() != 0o755 {

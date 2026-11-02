@@ -52,3 +52,24 @@ func TestRunArgvGolden(t *testing.T) {
 		})
 	}
 }
+
+// TestRunArgvPinsManagedSettingsReadOnly checks the settings pin: the managed
+// settings file binds read-only over the writable home's settings.json, so
+// the agent cannot rewrite its own enforcement.
+func TestRunArgvPinsManagedSettingsReadOnly(t *testing.T) {
+	e := &Engine{}
+	argv := e.runArgv(runSpec{
+		NetNone: true,
+		Workdir: "/h/ws",
+		Argv:    []string{"claude", "-p"},
+	}, "/run/home", "/state/settings/user-settings.json")
+	joined := strings.Join(argv, " ")
+	want := "--ro-bind /state/settings/user-settings.json /run/home/.claude/settings.json"
+	if !strings.Contains(joined, want) {
+		t.Errorf("argv %q lacks the read-only settings pin %q", joined, want)
+	}
+	// The pin must come after the writable home bind, so it wins.
+	if strings.Index(joined, "--bind /run/home /run/home") > strings.Index(joined, want) {
+		t.Errorf("the settings pin must follow the home bind: %q", joined)
+	}
+}

@@ -8,9 +8,9 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"syscall"
 
 	"github.com/sdougbrown/paddock/internal/initcfg"
+	"github.com/sdougbrown/paddock/internal/runstage"
 )
 
 // Proxy account names and the agent's login shell.
@@ -133,50 +133,5 @@ func appendDB(path string, lines []string, line string) error {
 		}
 	}
 	b.WriteString(line + "\n")
-	return writeFileAtomic(path, []byte(b.String()), 0o644)
-}
-
-func writeFileAtomic(path string, data []byte, mode os.FileMode) error {
-	tmp, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".*")
-	if err != nil {
-		return err
-	}
-	defer os.Remove(tmp.Name())
-	if _, err := tmp.Write(data); err != nil {
-		tmp.Close()
-		return err
-	}
-	if err := tmp.Chmod(mode); err != nil {
-		tmp.Close()
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	if err := os.Rename(tmp.Name(), path); err == nil {
-		return nil
-	} else if !errors.Is(err, syscall.EBUSY) {
-		return err
-	}
-	return writeFileInPlace(path, data, mode)
-}
-
-// writeFileInPlace rewrites path with data, keeping its inode and setting
-// mode. writeFileAtomic falls back to it when a bind mount pins the file,
-// as podman's /etc/hosts does: rename can never replace that inode. The
-// caller runs as root before the privilege drop.
-func writeFileInPlace(path string, data []byte, mode os.FileMode) error {
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_TRUNC, 0)
-	if err != nil {
-		return err
-	}
-	if _, err := f.Write(data); err != nil {
-		f.Close()
-		return err
-	}
-	if err := f.Chmod(mode); err != nil {
-		f.Close()
-		return err
-	}
-	return f.Close()
+	return runstage.WriteFileAtomic(path, []byte(b.String()), 0o644)
 }

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/sdougbrown/paddock/internal/engine"
+	"github.com/sdougbrown/paddock/internal/initcfg"
 	"github.com/sdougbrown/paddock/internal/plan"
 	"github.com/sdougbrown/paddock/internal/runstage"
 )
@@ -334,5 +335,27 @@ func TestSecretsLinesNeverQuotesValues(t *testing.T) {
 	}
 	if lines != nil {
 		t.Errorf("a rejected file must produce no lines")
+	}
+}
+
+// TestRunFailsClosedAsRoot pins the tier-0 privilege guard: an invoking
+// root must fail before any bwrap invocation, and the error must say why.
+func TestRunFailsClosedAsRoot(t *testing.T) {
+	dir := t.TempDir()
+	fake, dir := fakeBwrap(t)
+	e := &Engine{Bin: fake, Home: dir, StateRoot: dir}
+	root := initcfg.User{Name: "root", UID: 0, GID: 0, Home: "/root"}
+	e.hostUser = func() (initcfg.User, error) { return root, nil }
+	code, err := e.Run(t.Context(), testPlan(dir, dir), engine.Options{})
+	if code == 0 || err == nil {
+		t.Fatalf("a root invocation must fail closed: code=%d err=%v", code, err)
+	}
+	if !strings.Contains(err.Error(), "unprivileged") {
+		t.Errorf("the error must name the privilege rule: %v", err)
+	}
+	for _, f := range argvLogs(t, dir) {
+		if strings.Contains(f, "bwrap") {
+			t.Errorf("no bwrap invocation may happen as root: %q", f)
+		}
 	}
 }

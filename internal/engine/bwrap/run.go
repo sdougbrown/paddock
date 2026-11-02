@@ -49,7 +49,11 @@ func (e *Engine) Run(ctx context.Context, p *plan.Plan, o engine.Options) (int, 
 	if err := planMountTargets(p, tdir); err != nil {
 		return 1, err
 	}
-	u, err := runstage.HostUser()
+	hostUser := e.hostUser
+	if hostUser == nil {
+		hostUser = runstage.HostUser
+	}
+	u, err := hostUser()
 	if err != nil {
 		return 1, fmt.Errorf("host user: %w", err)
 	}

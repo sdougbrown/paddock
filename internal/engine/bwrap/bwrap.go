@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/sdougbrown/paddock/internal/initcfg"
 )
 
 // Engine runs plans with the `bwrap` CLI. The zero value is usable.
@@ -19,9 +21,10 @@ import (
 // when the paddock process dies the kernel kills bwrap (PDEATHSIG on
 // Linux), and bwrap kills the agent.
 type Engine struct {
-	Bin       string // bwrap CLI; default "bwrap"
-	Home      string // the host home the transcript dir lives under; default: the user's home directory
-	StateRoot string // default: <home>/.local/state/paddock
+	Bin       string                       // bwrap CLI; default "bwrap"
+	Home      string                       // the host home the transcript dir lives under; default: the user's home directory
+	StateRoot string                       // default: <home>/.local/state/paddock
+	hostUser  func() (initcfg.User, error) // default: runstage.HostUser; tests inject
 	Stdin     *os.File
 	Stdout    io.Writer
 	Stderr    io.Writer

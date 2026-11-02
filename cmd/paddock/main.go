@@ -34,14 +34,6 @@ func main() {
 	os.Exit(clicontract.Run(app(), paddockAdapter{}, os.Args[1:], os.Stdout, os.Stderr))
 }
 
-// planFlags are the flags plan, run, and setup share.
-type planFlags struct {
-	profile   string
-	spec      string
-	workspace string
-	phase     string
-}
-
 // planFlagDecls adds the shared flags to a command's own list.
 func planFlagDecls(cmd *clicontract.Command) {
 	cmd.Flags = append(cmd.Flags, []clicontract.Flag{
@@ -56,7 +48,6 @@ func planFlagDecls(cmd *clicontract.Command) {
 func app() *clicontract.App {
 	return &clicontract.App{
 		Name:        "paddock",
-		Version:     version,
 		ErrorPrefix: "paddock",
 		BareHelp:    true,
 		RootShort:   "Run one command in a sandbox with resolved mounts, limits, and network policy",

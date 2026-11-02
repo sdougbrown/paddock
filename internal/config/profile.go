@@ -53,10 +53,11 @@ type ProfileClaude struct {
 const (
 	EngineAppleContainer = "apple-container"
 	EnginePodman         = "podman"
+	EngineBwrap          = "bwrap"
 )
 
 // engines lists every supported engine name.
-var engines = []string{EngineAppleContainer, EnginePodman}
+var engines = []string{EngineAppleContainer, EnginePodman, EngineBwrap}
 
 var memoryRe = regexp.MustCompile(`^[0-9]+[KkMmGg]$`)
 
@@ -66,6 +67,16 @@ func (p *Profile) validate() error {
 	}
 	if !slices.Contains(engines, p.Engine) {
 		return fmt.Errorf("engine: %q is not supported (want one of %q)", p.Engine, engines)
+	}
+	if p.Engine == EngineBwrap {
+		// Tier-0 isolation: namespaces only, no CAP_NET_ADMIN and no cgroup
+		// enforcement. Fail closed here, where the error names the profile.
+		if p.Network.Policy == initcfg.PolicyAllowlist {
+			return fmt.Errorf("network.policy: the bwrap engine cannot enforce an egress allowlist; use \"host\" or \"none\"")
+		}
+		if p.Limits.CPUs != 0 || p.Limits.Memory != "" {
+			return fmt.Errorf("[limits]: the bwrap engine cannot enforce cpu or memory limits; remove them or use a container engine")
+		}
 	}
 	switch p.Workspace.Mode {
 	case "", "ro", "rw":

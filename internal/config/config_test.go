@@ -123,6 +123,18 @@ memory = "6G"
 				t.Errorf("engine = %q; want podman", p.Engine)
 			}
 		}},
+		{"bwrap engine", strings.Replace(strings.Replace(strings.Replace(strings.Replace(ok, "apple-container", "bwrap", 1), "policy = \"allowlist\"", "policy = \"none\"", 1), "cpus = 4\n", "", 1), "memory = \"6G\"\n", "", 1), "", func(t *testing.T, p *Profile) {
+			if p.Engine != "bwrap" {
+				t.Errorf("engine = %q; want bwrap", p.Engine)
+			}
+		}},
+		{"bwrap engine", strings.Replace(strings.Replace(strings.Replace(strings.Replace(ok, "apple-container", "bwrap", 1), "policy = \"allowlist\"", "policy = \"none\"", 1), "cpus = 4\n", "", 1), "memory = \"6G\"\n", "", 1), "", func(t *testing.T, p *Profile) {
+			if p.Engine != "bwrap" {
+				t.Errorf("engine = %q; want bwrap", p.Engine)
+			}
+		}},
+		{"bwrap with limits", strings.Replace(strings.Replace(ok, "apple-container", "bwrap", 1), "policy = \"allowlist\"", "policy = \"none\"", 1), "[limits]", nil},
+		{"bwrap with allowlist", strings.Replace(strings.Replace(ok, "apple-container", "bwrap", 1), "policy = \"allowlist\"", "policy = \"allowlist\"", 1), "network.policy", nil},
 		{"bad engine", strings.Replace(ok, "apple-container", "docker", 1), "engine", nil},
 		{"bad mode", strings.Replace(ok, `"rw"`, `"wx"`, 1), "workspace.mode", nil},
 		{"bad policy", strings.Replace(ok, "allowlist", "open", 1), "network.policy", nil},

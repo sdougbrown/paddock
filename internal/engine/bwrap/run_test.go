@@ -310,3 +310,29 @@ func argvLogs(t *testing.T, dir string) []string {
 	}
 	return out
 }
+
+// TestSecretsLinesNeverQuotesValues pins the trust rule that secret values
+// never reach errors: a value containing a newline must split into an error
+// that names the line, not the fragment.
+func TestSecretsLinesNeverQuotesValues(t *testing.T) {
+	lines, err := secretsLines([]byte("OK=yes\nBROKEN=frag\nment\nALSO=ok"))
+	if err == nil {
+		t.Fatal("a line without a separator must be rejected")
+	}
+	if !strings.Contains(err.Error(), "line 3") {
+		t.Errorf("the error must name the line: %v", err)
+	}
+	if strings.Contains(err.Error(), "fragment") {
+		t.Errorf("the error must not quote the secret material: %v", err)
+	}
+	lines, err = secretsLines([]byte("TOKEN=v\nBAD NAME=x\n"))
+	if err == nil {
+		t.Fatal("an invalid environment name must be rejected")
+	}
+	if strings.Contains(err.Error(), "=x") {
+		t.Errorf("the error must not quote the value: %v", err)
+	}
+	if lines != nil {
+		t.Errorf("a rejected file must produce no lines")
+	}
+}

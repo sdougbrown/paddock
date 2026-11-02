@@ -46,8 +46,11 @@ func AgentEnv(inherited []string, u initcfg.User, extra, secrets []string) ([]st
 	set("SHELL=" + AgentShell)
 	for _, kv := range append(append([]string(nil), extra...), secrets...) {
 		name, _, ok := strings.Cut(kv, "=")
-		if !ok || !envname.Valid(name) {
-			return nil, fmt.Errorf("env entry %q is not NAME=VALUE", name)
+		if !ok {
+			return nil, fmt.Errorf("an env entry has no NAME=VALUE separator")
+		}
+		if !envname.Valid(name) {
+			return nil, fmt.Errorf("env name %q is not a valid environment name", name)
 		}
 		set(kv)
 	}

@@ -14,6 +14,7 @@ import (
 
 	"github.com/sdougbrown/paddock/internal/config"
 	"github.com/sdougbrown/paddock/internal/engine"
+	"github.com/sdougbrown/paddock/internal/envname"
 	"github.com/sdougbrown/paddock/internal/initcfg"
 	"github.com/sdougbrown/paddock/internal/plan"
 	"github.com/sdougbrown/paddock/internal/runstage"
@@ -160,7 +161,11 @@ func (e *Engine) Run(ctx context.Context, p *plan.Plan, o engine.Options) (int, 
 	if hasPath {
 		inherited = append(inherited, "PATH="+path)
 	}
-	env, err := runstage.AgentEnv(inherited, u, cfg.Env, secretsLines(secrets))
+	lines, err := secretsLines(secrets)
+	if err != nil {
+		return 1, err
+	}
+	env, err := runstage.AgentEnv(inherited, u, cfg.Env, lines)
 	if err != nil {
 		return 1, err
 	}
@@ -257,12 +262,26 @@ func planMountTargets(p *plan.Plan, tdir string) error {
 }
 
 // secretsLines splits the resolved secrets file content into KEY=VALUE
-// entries for the child environment.
-func secretsLines(secrets []byte) []string {
+// entries for the child environment. A line without a separator, or with a
+// name that is not a valid environment name, is an error that names only
+// the line and the name: a value may contain anything, and it must never
+// reach an error message.
+func secretsLines(secrets []byte) ([]string, error) {
 	if secrets == nil {
-		return nil
+		return nil, nil
 	}
-	return strings.Split(strings.TrimRight(string(secrets), "\n"), "\n")
+	var out []string
+	for i, line := range strings.Split(strings.TrimRight(string(secrets), "\n"), "\n") {
+		name, _, ok := strings.Cut(line, "=")
+		if !ok {
+			return nil, fmt.Errorf("secrets file line %d has no NAME=VALUE separator", i+1)
+		}
+		if !envname.Valid(name) {
+			return nil, fmt.Errorf("secrets file line %d: %q is not a valid environment name", i+1, name)
+		}
+		out = append(out, line)
+	}
+	return out, nil
 }
 
 // planMounts validates and copies the plan's mounts.

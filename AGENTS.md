@@ -1,7 +1,7 @@
 # paddock
 
-paddock runs one command in a sandbox (an Apple `container` VM or a rootful podman container) with a
-resolved set of mounts, limits, and network policy.
+paddock runs one command in a sandbox (an Apple `container` VM, a rootful podman container, or a
+bubblewrap namespace) with a resolved set of mounts, limits, and network policy.
 
 ## Layering rule
 
@@ -43,6 +43,8 @@ Agent-specific behavior (what to run, which prompt, which skills) belongs to the
   init config, per-run directories
 - `internal/engine/podman`: the rootful podman engine; the same shape over the `podman` CLI, with
   `--security-opt label=disable` for SELinux hosts and `Sudo` for rootful access
+- `internal/engine/bwrap`: the bubblewrap engine, tier-0 same-user isolation: no image, no
+  paddock-init, host or none egress only
 - `internal/runstage`: the run staging both engines share: run directories, mounts, secrets, the
   init config, transcript paths, and the signal queue
 - `internal/imgtag`: the content-addressed image tag hash for the spec chain
@@ -77,3 +79,7 @@ Agent-specific behavior (what to run, which prompt, which skills) belongs to the
   (`TestPodmanRealInit`, gated on `PADDOCK_PODMAN_TESTS=1`; set `PADDOCK_PODMAN_SUDO=1` when podman
   is reached through sudo). The same change classes need a passing run there before merging a
   podman-side change.
+- The bwrap engine's real test runs on any Linux host with bubblewrap:
+  `PADDOCK_BWRAP_TESTS=1 go test ./internal/engine/bwrap -run TestBwrapReal`. A change to the bwrap
+  engine or the agent-state staging (`runstage`, `paddock-init` home layout) needs a passing run
+  before merging.

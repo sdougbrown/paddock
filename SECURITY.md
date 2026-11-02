@@ -78,6 +78,12 @@ runs the allowlist proxy as a separate uid, and installs a firewall the agent ca
    bind mount, the hosts file is rewritten by truncation instead of an atomic rename, so a crash
    mid-write can leave a partial hosts file until the next run rewrites it. The file is root-owned
    and rewritten before the privilege drop; the agent cannot exploit the window.
+12. **The bwrap engine has tier-0 isolation.** A bwrap run shares the host kernel and user: no VM,
+   no uid change, and no resource limits. The egress policy is limited to host and none, since the
+   allowlist needs capabilities namespaces never grant. The agent can read anything the invoking
+   user can, and its writes to the host are bounded only by the mount rules. Use it for trusted
+   toolchains on concurrency-critical bot fleets, and a container engine wherever the workload is
+   untrusted.
 
 ## Notes on the network policy
 

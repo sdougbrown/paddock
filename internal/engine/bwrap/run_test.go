@@ -20,7 +20,7 @@ import (
 func fakeBwrap(t *testing.T) (bin string, dir string) {
 	t.Helper()
 	dir = t.TempDir()
-	script := "#!/bin/sh\nd=\"${0%/*}\"\n[ \"$1\" = __warm ] && exit 0\nprintf '%s ' \"$@\" >> \"$d/argv\"\necho >> \"$d/argv\"\nenv > \"$d/env\"\ncp -r \"$HOME/\" \"$d/claude-dump\" 2>/dev/null || true\nexit ${FAKE_EXIT:-0}\n"
+	script := "#!/bin/sh\nd=\"${0%/*}\"\n[ \"$1\" = __warm ] && exit 0\nprintf '%s ' \"$@\" >> \"$d/argv\"\necho >> \"$d/argv\"\nenv > \"$d/env\"\ncp -a \"$HOME/\" \"$d/claude-dump\" 2>/dev/null || true\nexit ${FAKE_EXIT:-0}\n"
 	bin = filepath.Join(dir, "bwrap")
 	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
 		t.Fatal(err)

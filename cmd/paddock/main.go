@@ -11,7 +11,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/spf13/cobra"
+	"github.com/sdougbrown/cli-contract"
 
 	"github.com/sdougbrown/paddock/internal/config"
 	"github.com/sdougbrown/paddock/internal/engine"
@@ -31,200 +31,266 @@ func main() {
 	if code, handled := applecontainer.Dispatch(os.Args[1:]); handled {
 		os.Exit(code)
 	}
-	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
+	os.Exit(clicontract.Run(app(), paddockAdapter{}, os.Args[1:], os.Stdout, os.Stderr))
 }
 
-// usageError marks a flag-parse or command-dispatch failure, which exits 2.
-type usageError struct{ err error }
+// planFlags are the flags plan, run, and setup share.
+type planFlags struct {
+	profile   string
+	spec      string
+	workspace string
+	phase     string
+}
 
-func (e usageError) Error() string { return e.err.Error() }
+// planFlagDecls adds the shared flags to a command's own list.
+func planFlagDecls(cmd *clicontract.Command) {
+	cmd.Flags = append(cmd.Flags, []clicontract.Flag{
+		{Name: "profile", Kind: clicontract.String, Usage: "profile name (required)"},
+		{Name: "spec", Kind: clicontract.String, Usage: "spec ref (default: from git origin, else profile default_spec)"},
+		{Name: "workspace", Kind: clicontract.String, Usage: "workspace directory (default: current directory)"},
+	}...)
+}
 
-// exitCodeError carries a sandboxed command's exit code out of a RunE; run
-// returns it as the process exit code without printing anything.
+// app assembles the declared CLI. Dispatch errors carry the app-name prefix:
+// "paddock plan: unknown flag".
+func app() *clicontract.App {
+	return &clicontract.App{
+		Name:        "paddock",
+		Version:     version,
+		ErrorPrefix: "paddock",
+		BareHelp:    true,
+		RootShort:   "Run one command in a sandbox with resolved mounts, limits, and network policy",
+		RootLong: `paddock runs one command in a sandbox with resolved mounts, limits, and network policy.
+
+Run and setup exit with the sandboxed command's own exit code.
+Operational failures exit 1; usage errors exit 2.`,
+		Commands: []*clicontract.Command{
+			newPlanCmd(),
+			newRunCmd(),
+			newSetupCmd(),
+			newVersionCmd(),
+		},
+	}
+}
+
+// paddockAdapter implements the result vocabulary: handlers print their own
+// output; failures are silent on the streams (exit codes carry the
+// outcome), usage errors exit 2, operational failures exit 1, and the
+// sandboxed command's own exit code passes through.
+type paddockAdapter struct{}
+
+// ErrorResult returns nothing: dispatch failures write only their stderr
+// diagnostic.
+func (paddockAdapter) ErrorResult(command string, err error) any { return nil }
+
+// Write writes plan JSON when the handler resolved a plan; other results
+// print as their version line.
+func (paddockAdapter) Write(w io.Writer, result any) error {
+	switch r := result.(type) {
+	case *plan.Plan:
+		enc := json.NewEncoder(w)
+		enc.SetIndent("", "  ")
+		return enc.Encode(r)
+	case versionResult:
+		fmt.Fprintf(w, "paddock %s\n", r.version)
+		return nil
+	case nil:
+		return nil
+	default:
+		return fmt.Errorf("paddock: unhandled result type %T", result)
+	}
+}
+
+// ExitCode routes: sandboxed exit codes pass through verbatim, usage errors
+// exit 2, operational failures exit 1, success exits 0.
+func (paddockAdapter) ExitCode(inv clicontract.Invocation, result any, handlerErr error) int {
+	var ec exitCodeError
+	if errors.As(handlerErr, &ec) {
+		return int(ec)
+	}
+	var ue *clicontract.UsageError
+	if errors.As(handlerErr, &ue) {
+		return 2
+	}
+	if handlerErr != nil {
+		return 1
+	}
+	return 0
+}
+
+// Deadline passes the context through: the sandbox engines own their
+// runtime.
+func (paddockAdapter) Deadline(ctx context.Context, inv clicontract.Invocation) (context.Context, context.CancelFunc) {
+	return ctx, func() {}
+}
+
+// Validate reports no pre-flight caller errors; guards run in the handlers.
+func (paddockAdapter) Validate(inv clicontract.Invocation) error { return nil }
+
+// BeforeHandler runs no pre-flight diagnostics.
+func (paddockAdapter) BeforeHandler(inv clicontract.Invocation, stderr io.Writer) {}
+
+// HandlerDiagnostic silences the diagnostic for sandboxed exit-code
+// passthrough (the exit code carries the outcome) and prefixes the rest
+// with the command path.
+func (paddockAdapter) HandlerDiagnostic(inv clicontract.Invocation, err error) string {
+	var ec exitCodeError
+	if errors.As(err, &ec) {
+		return ""
+	}
+	if inv.Command == "paddock" {
+		return fmt.Sprintf("paddock: %v", err)
+	}
+	return fmt.Sprintf("paddock %s: %v", inv.Command, err)
+}
+
+// exitCodeError carries a sandboxed command's exit code out of a handler;
+// the adapter returns it as the process exit code without printing anything.
 type exitCodeError int
 
 func (e exitCodeError) Error() string { return fmt.Sprintf("exit status %d", int(e)) }
 
-// run executes the command line and returns the process exit code.
-// Success exits 0, a usage error exits 2, an operational failure exits 1,
-// and run and setup exit with the sandboxed command's own code.
-func run(args []string, stdout, stderr io.Writer) int {
-	root := newRootCmd(stdout, stderr)
-	root.SetArgs(args)
-	cmd, err := root.ExecuteC()
-	if err == nil {
-		return 0
-	}
-	name := "paddock"
-	if cmd != nil && cmd != root {
-		name = "paddock " + cmd.Name()
-	}
-	var ue usageError
-	var ec exitCodeError
-	switch {
-	case errors.As(err, &ec):
-		return int(ec)
-	case errors.As(err, &ue):
-		fmt.Fprintf(stderr, "%s: %v\n", name, ue.err)
-		return 2
-	case cmd == nil || cmd == root:
-		// A dispatch failure at the root, such as an unknown command.
-		fmt.Fprintf(stderr, "paddock: %v\n", err)
-		return 2
-	default:
-		fmt.Fprintf(stderr, "%s: %v\n", name, err)
-		return 1
-	}
-}
-
-// newRootCmd builds the command tree. Help output goes to stdout and errors
-// to stderr; SilenceErrors and SilenceUsage keep printing in run's hands so
-// the exit-code contract holds.
-func newRootCmd(stdout, stderr io.Writer) *cobra.Command {
-	root := &cobra.Command{
-		Use:   "paddock",
-		Short: "Run one command in a sandbox with resolved mounts, limits, and network policy",
-		Long: `paddock runs one command in a sandbox with resolved mounts, limits, and network policy.
-
-Run and setup exit with the sandboxed command's own exit code.
-Operational failures exit 1; usage errors exit 2.`,
-		SilenceErrors: true,
-		SilenceUsage:  true,
-	}
-	root.SetOut(stdout)
-	root.SetErr(stderr)
-	root.CompletionOptions.DisableDefaultCmd = true
-	root.SetFlagErrorFunc(func(c *cobra.Command, err error) error {
-		return usageError{err}
-	})
-	root.AddCommand(newPlanCmd(stdout), newRunCmd(), newSetupCmd(), newVersionCmd())
-	return root
-}
+// versionResult is written by the version command.
+type versionResult struct{ version string }
 
 // newPlanCmd resolves a plan and prints it as JSON.
-func newPlanCmd(stdout io.Writer) *cobra.Command {
-	var o resolve.Options
-	cmd := &cobra.Command{
-		Use:   "plan [--] command [args...]",
+func newPlanCmd() *clicontract.Command {
+	cmd := &clicontract.Command{
+		Name:  "plan",
 		Short: "resolve the profile, spec, and workspace and print the Plan as JSON",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			if o.Profile == "" {
-				return errors.New("--profile is required")
+		Positionals: []clicontract.Positional{
+			{Name: "command", Variadic: true},
+		},
+		NoInterspersed: true,
+		Handle: func(ctx context.Context, inv clicontract.Invocation, stderr io.Writer) (any, error) {
+			if inv.Flags["profile"] == "" {
+				return nil, errors.New("--profile is required")
 			}
-			o.Argv = args
+			o := resolve.Options{
+				Profile:   inv.Flags["profile"],
+				Spec:      inv.Flags["spec"],
+				Workspace: inv.Flags["workspace"],
+				Phase:     inv.Flags["phase"],
+				Argv:      inv.Args,
+			}
 			p, err := resolvePlan(o)
 			if err != nil {
-				return err
+				return nil, err
 			}
-			enc := json.NewEncoder(stdout)
-			enc.SetIndent("", "  ")
-			return enc.Encode(p)
+			return p, nil
 		},
 	}
-	cmd.Flags().StringVar(&o.Phase, "phase", "run", "run or setup")
-	addPlanFlags(cmd, &o)
-	// Flags stop at the command's first argument, so its own dashed args
-	// pass through: `paddock plan go test -run X` is not a paddock flag.
-	cmd.Flags().SetInterspersed(false)
+	cmd.Flags = append(cmd.Flags, clicontract.Flag{Name: "phase", Kind: clicontract.String, Usage: "run or setup"})
+	planFlagDecls(cmd)
 	return cmd
 }
 
 // newRunCmd resolves a plan and runs it.
-func newRunCmd() *cobra.Command {
-	var o resolve.Options
-	var verify bool
-	cmd := &cobra.Command{
-		Use:   "run [--flags] [--] command [args...]",
+func newRunCmd() *clicontract.Command {
+	cmd := &clicontract.Command{
+		Name:  "run",
 		Short: "run the resolved command in the sandbox, or the in-guest checks with --verify",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			if o.Profile == "" {
-				return errors.New("--profile is required")
+		Positionals: []clicontract.Positional{
+			{Name: "command", Variadic: true},
+		},
+		NoInterspersed: true,
+		Handle: func(ctx context.Context, inv clicontract.Invocation, stderr io.Writer) (any, error) {
+			if inv.Flags["profile"] == "" {
+				return nil, errors.New("--profile is required")
 			}
-			if len(args) == 0 && !verify {
-				return errors.New("a command or --verify is required")
+			if len(inv.Args) == 0 && !inv.Bools["verify"] {
+				return nil, errors.New("a command or --verify is required")
 			}
-			if len(args) > 0 && verify {
-				return errors.New("--verify takes no command")
+			if len(inv.Args) > 0 && inv.Bools["verify"] {
+				return nil, errors.New("--verify takes no command")
 			}
-			o.Argv = args
+			o := resolve.Options{
+				Profile:   inv.Flags["profile"],
+				Spec:      inv.Flags["spec"],
+				Workspace: inv.Flags["workspace"],
+				Phase:     "run",
+				Argv:      inv.Args,
+			}
 			p, err := resolvePlan(o)
 			if err != nil {
-				return err
+				return nil, err
 			}
 			eng, err := newEngine(p.Engine)
 			if err != nil {
-				return err
+				return nil, err
 			}
-			code, err := eng.Run(context.Background(), p, engine.Options{Verify: verify})
+			code, err := eng.Run(ctx, p, engine.Options{Verify: inv.Bools["verify"]})
 			if err != nil {
-				return err
+				return nil, err
 			}
 			if code != 0 {
-				return exitCodeError(code)
+				return nil, exitCodeError(code)
 			}
-			return nil
+			return nil, nil
 		},
 	}
-	addPlanFlags(cmd, &o)
-	cmd.Flags().BoolVar(&verify, "verify", false, "run the in-guest isolation checks instead of a command")
-	// Flags stop at the command's first argument, so its own dashed args
-	// pass through: `paddock run go test -run X` is not a paddock flag.
-	cmd.Flags().SetInterspersed(false)
+	cmd.Flags = append(cmd.Flags, clicontract.Flag{Name: "verify", Kind: clicontract.Bool, Usage: "run the in-guest isolation checks instead of a command"})
+	planFlagDecls(cmd)
 	return cmd
 }
 
 // newSetupCmd runs the spec's setup command in a paddock with the dependency
 // cache mounted.
-func newSetupCmd() *cobra.Command {
-	o := resolve.Options{Phase: plan.PhaseSetup}
-	cmd := &cobra.Command{
-		Use:   "setup [--flags]",
+func newSetupCmd() *clicontract.Command {
+	cmd := &clicontract.Command{
+		Name:  "setup",
 		Short: "run the spec's setup command with the dependency cache mounted",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			if o.Profile == "" {
-				return errors.New("--profile is required")
+		Positionals: []clicontract.Positional{
+			{Name: "command", Variadic: true},
+		},
+		Handle: func(ctx context.Context, inv clicontract.Invocation, stderr io.Writer) (any, error) {
+			if inv.Flags["profile"] == "" {
+				return nil, errors.New("--profile is required")
 			}
-			// The resolver rejects a command in the setup phase.
-			o.Argv = args
+			o := resolve.Options{
+				Profile:   inv.Flags["profile"],
+				Spec:      inv.Flags["spec"],
+				Workspace: inv.Flags["workspace"],
+				Phase:     plan.PhaseSetup,
+				Argv:      inv.Args,
+			}
 			p, err := resolvePlan(o)
 			if err != nil {
-				return err
+				return nil, err
 			}
 			eng, err := newEngine(p.Engine)
 			if err != nil {
-				return err
+				return nil, err
 			}
-			code, err := runSetup(context.Background(), eng, p, cmd.ErrOrStderr())
+			code, err := runSetup(ctx, eng, p, stderr)
 			if err != nil {
-				return err
+				return nil, err
 			}
 			if code != 0 {
-				return exitCodeError(code)
+				return nil, exitCodeError(code)
 			}
-			return nil
+			return nil, nil
 		},
 	}
-	addPlanFlags(cmd, &o)
+	planFlagDecls(cmd)
 	return cmd
 }
 
-func newVersionCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:   "version",
+// newVersionCmd prints the version and exits.
+func newVersionCmd() *clicontract.Command {
+	return &clicontract.Command{
+		Name:  "version",
 		Short: "print the version and exit",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			fmt.Fprintln(cmd.OutOrStdout(), "paddock", version)
-			return nil
+		Handle: func(ctx context.Context, inv clicontract.Invocation, stderr io.Writer) (any, error) {
+			return versionResult{version: version}, nil
 		},
 	}
 }
 
-// addPlanFlags adds the flags plan, run, and setup share: --profile,
-// --spec, and --workspace, stored in o.
-func addPlanFlags(cmd *cobra.Command, o *resolve.Options) {
-	cmd.Flags().StringVar(&o.Profile, "profile", "", "profile name (required)")
-	cmd.Flags().StringVar(&o.Spec, "spec", "", "spec ref (default: from git origin, else profile default_spec)")
-	cmd.Flags().StringVar(&o.Workspace, "workspace", "", "workspace directory (default: current directory)")
+// run executes the command line and returns the process exit code, the
+// test-facing shape of Run.
+func run(args []string, stdout, stderr io.Writer) int {
+	return clicontract.Run(app(), paddockAdapter{}, args, stdout, stderr)
 }
 
 // resolvePlan resolves o against the user's config root.

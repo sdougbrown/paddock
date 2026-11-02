@@ -4,6 +4,10 @@ github.com/inconshreveable/mousetrap v1.1.0/go.mod h1:vpF70FUmC8bwa3OWnCshd2FqLf
 github.com/pelletier/go-toml/v2 v2.4.3 h1:GTRvJQutkOSftxIFD5xw9aepkYNuPWmVJpffdDPYVpY=
 github.com/pelletier/go-toml/v2 v2.4.3/go.mod h1:2gIqNv+qfxSVS7cM2xJQKtLSTLUE9V8t9Stt+h56mCY=
 github.com/russross/blackfriday/v2 v2.1.0/go.mod h1:+Rmxgy9KzJVeS9/2gXHxylqXiyQDYRxCVz55jmeOWTM=
+github.com/sdougbrown/cli-contract v0.2.0 h1:Q60e9Wzg4ailJK3+KJs/pkUZDEMeHLbJHhTjpNz7ASs=
+github.com/sdougbrown/cli-contract v0.2.0/go.mod h1:+a2rSY4b3JzSWgqaY81Pl8xQaVzMTWcW2m+dH+YsoyY=
+github.com/sdougbrown/cli-contract v0.2.1 h1:uXjByhTUGURy46I8It0wK2hF/AAeMra6P1KvwO7rdNA=
+github.com/sdougbrown/cli-contract v0.2.1/go.mod h1:+a2rSY4b3JzSWgqaY81Pl8xQaVzMTWcW2m+dH+YsoyY=
 github.com/spf13/cobra v1.10.2 h1:DMTTonx5m65Ic0GOoRY2c16WCbHxOOw6xxezuLaBpcU=
 github.com/spf13/cobra v1.10.2/go.mod h1:7C1pvHqHw5A4vrJfjNwvOdzYu0Gml16OCs2GRiTUUS4=
 github.com/spf13/pflag v1.0.9 h1:9exaQaMOCwffKiiiYk6/BndUBv+iRViNW+4lEMi0PvY=

@@ -15,8 +15,7 @@ import (
 
 // Proxy account names and the agent's login shell.
 const (
-	proxyName  = "paddock-proxy"
-	agentShell = "/bin/bash"
+	proxyName = "paddock-proxy"
 )
 
 // account is one /etc/passwd entry and its primary group.
@@ -30,7 +29,7 @@ type account struct {
 // account under root.
 func ensureAccounts(root string, cfg *initcfg.Config) error {
 	u := cfg.User
-	if err := ensureAccount(root, account{u.Name, u.Name, u.UID, u.GID, u.Home, agentShell}); err != nil {
+	if err := ensureAccount(root, account{u.Name, u.Name, u.UID, u.GID, u.Home, runstage.AgentShell}); err != nil {
 		return err
 	}
 	if cfg.ProxyUID <= 0 {

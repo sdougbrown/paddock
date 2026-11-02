@@ -244,8 +244,9 @@ func WriteFileAtomic(path string, data []byte, mode os.FileMode) error {
 
 // writeFileInPlace rewrites path with data, keeping its inode and setting
 // mode. WriteFileAtomic falls back to it when a bind mount pins the file,
-// as podman's /etc/hosts does: rename can never replace that inode. The
-// caller runs as root before the privilege drop.
+// as podman's /etc/hosts does: rename can never replace that inode. In the
+// guest the caller is root before the privilege drop; on the host (bwrap's
+// PrepareHome) the caller owns the file.
 func writeFileInPlace(path string, data []byte, mode os.FileMode) error {
 	f, err := os.OpenFile(path, os.O_WRONLY|os.O_TRUNC, 0)
 	if err != nil {

@@ -38,7 +38,7 @@ const basePasswd = "root:x:0:0:root:/root:/bin/bash\nnode:x:1000:1000::/home/nod
 const baseGroup = "root:x:0:\ndialout:x:20:\nnode:x:1000:\n"
 
 func TestEnsureAccount(t *testing.T) {
-	agent := account{"doug", "doug", 501, 20, "/Users/doug", agentShell}
+	agent := account{"doug", "doug", 501, 20, "/Users/doug", runstage.AgentShell}
 	tests := []struct {
 		name       string
 		a          account
@@ -49,14 +49,14 @@ func TestEnsureAccount(t *testing.T) {
 		{"reuses gid 20", agent, "", basePasswd + "doug:x:501:20::/Users/doug:/bin/bash\n", baseGroup},
 		{"new group", account{proxyName, proxyName, 970, 970, "/nonexistent", "/usr/sbin/nologin"}, "",
 			basePasswd + "paddock-proxy:x:970:970::/nonexistent:/usr/sbin/nologin\n", baseGroup + "paddock-proxy:x:970:\n"},
-		{"existing user kept", account{"node", "node", 1000, 1000, "/home/node", agentShell}, "", basePasswd, baseGroup},
-		{"existing user other home", account{"node", "node", 1000, 1000, "/x", agentShell}, `user "node" already exists`, basePasswd, baseGroup},
-		{"existing user other gid", account{"node", "node", 1000, 20, "/home/node", agentShell}, `user "node" already exists`, basePasswd, baseGroup},
+		{"existing user kept", account{"node", "node", 1000, 1000, "/home/node", runstage.AgentShell}, "", basePasswd, baseGroup},
+		{"existing user other home", account{"node", "node", 1000, 1000, "/x", runstage.AgentShell}, `user "node" already exists`, basePasswd, baseGroup},
+		{"existing user other gid", account{"node", "node", 1000, 20, "/home/node", runstage.AgentShell}, `user "node" already exists`, basePasswd, baseGroup},
 		{"existing user other shell", account{"node", "node", 1000, 1000, "/home/node", "/bin/zsh"}, `user "node" already exists`, basePasswd, baseGroup},
-		{"uid taken", account{"doug", "doug", 1000, 20, "/Users/doug", agentShell}, `uid 1000 is taken by user "node"`, basePasswd, baseGroup},
-		{"name taken", account{"node", "node", 501, 20, "/Users/node", agentShell}, `user "node" exists with uid 1000`, basePasswd, baseGroup},
-		{"group name taken", account{"doug", "node", 501, 77, "/Users/doug", agentShell}, `group "node" exists with gid 1000`, basePasswd, baseGroup},
-		{"colon in home", account{"doug", "doug", 501, 20, "/a:b", agentShell}, "invalid passwd field", basePasswd, baseGroup},
+		{"uid taken", account{"doug", "doug", 1000, 20, "/Users/doug", runstage.AgentShell}, `uid 1000 is taken by user "node"`, basePasswd, baseGroup},
+		{"name taken", account{"node", "node", 501, 20, "/Users/node", runstage.AgentShell}, `user "node" exists with uid 1000`, basePasswd, baseGroup},
+		{"group name taken", account{"doug", "node", 501, 77, "/Users/doug", runstage.AgentShell}, `group "node" exists with gid 1000`, basePasswd, baseGroup},
+		{"colon in home", account{"doug", "doug", 501, 20, "/a:b", runstage.AgentShell}, "invalid passwd field", basePasswd, baseGroup},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -598,7 +598,7 @@ func TestEnsureAccountReadError(t *testing.T) {
 		if err := os.Symlink(filepath.Base(db), filepath.Join(root, db)); err != nil {
 			t.Fatal(err)
 		}
-		a := account{"doug", "doug", 501, 77, "/Users/doug", agentShell}
+		a := account{"doug", "doug", 501, 77, "/Users/doug", runstage.AgentShell}
 		if err := ensureAccount(root, a); err == nil {
 			t.Errorf("%s unreadable: no error", db)
 		}

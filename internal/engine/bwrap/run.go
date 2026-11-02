@@ -90,11 +90,6 @@ func (e *Engine) Run(ctx context.Context, p *plan.Plan, o engine.Options) (int, 
 	}
 	u.Home = home
 	cfg.User = u
-	if secrets != nil {
-		if err := runstage.WriteSecrets(dirs.Secrets, secrets); err != nil {
-			return 1, err
-		}
-	}
 	// The shared seeding writes managed settings at the guest's managed
 	// path, which the read-only host rootfs must not receive: the engine
 	// pins user-scope settings with the read-only bind instead, and stages
@@ -187,11 +182,6 @@ func (e *Engine) Run(ctx context.Context, p *plan.Plan, o engine.Options) (int, 
 	// From here the child is the run's process: the supervisor may deliver
 	// signals to it and kill it on escalation.
 	running = true
-	if secrets != nil {
-		// The values are already in the child's environment; the artifact
-		// goes, like the container engines' post-init cleanup.
-		os.Remove(filepath.Join(dirs.Secrets, runstage.SecretsFile))
-	}
 
 	// The bwrap child is the run's own process: a signal is delivered
 	// directly, and the cancellation escalation kills it after the grace.

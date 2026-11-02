@@ -102,6 +102,9 @@ func BuildInitConfig(p *plan.Plan, in InitInput) (*initcfg.Config, error) {
 	if err != nil {
 		return nil, err
 	}
+	if len(p.Claude.ManagedSettings) > 0 && !json.Valid(p.Claude.ManagedSettings) {
+		return nil, errors.New("claude.managed_settings are not valid JSON")
+	}
 	cfg.Claude = initcfg.ClaudeHome{
 		ManagedSettings: p.Claude.ManagedSettings,
 		ClaudeJSON:      claudeJSON,

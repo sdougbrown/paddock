@@ -1,7 +1,6 @@
 package runstage
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -150,9 +149,6 @@ func PrepareHome(h HomeFS, cfg *initcfg.Config) error {
 		}
 	}
 	if len(c.ManagedSettings) > 0 {
-		if !json.Valid(c.ManagedSettings) {
-			return errors.New("managed settings are not valid JSON")
-		}
 		dir := path.Dir(initcfg.ManagedSettingsPath)
 		if err := os.MkdirAll(h.P(dir), 0o755); err != nil {
 			return err

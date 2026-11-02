@@ -3,6 +3,7 @@ package pinit
 import (
 	"encoding/json"
 	"errors"
+	"github.com/sdougbrown/paddock/internal/plan"
 	"github.com/sdougbrown/paddock/internal/runstage"
 	"os"
 	"path/filepath"
@@ -391,19 +392,15 @@ func TestPrepareHomeRefusesRoot(t *testing.T) {
 	}
 }
 
-func TestPrepareHomeRejectsInvalidManagedSettings(t *testing.T) {
-	root := t.TempDir()
-	cfg := &initcfg.Config{
-		User:   initcfg.User{Name: "doug", UID: 501, GID: 20, Home: "/Users/doug"},
-		Claude: initcfg.ClaudeHome{ManagedSettings: json.RawMessage(`{not json`)},
+// Invalid managed settings fail closed at config-build time, so every
+// engine inherits the check the container path used to apply in PrepareHome.
+func TestBuildInitConfigRejectsInvalidManagedSettings(t *testing.T) {
+	p := &plan.Plan{
+		Workspace: "/w", Workdir: "/w", Argv: []string{"x"}, Network: plan.Network{Policy: "none"},
+		Claude: plan.ClaudePlan{ManagedSettings: json.RawMessage(`{not json`)},
 	}
-	h := runstage.NewHomeFS(root, cfg)
-	h.Chown = func(string, int, int) error { return nil }
-	if err := runstage.PrepareHome(h, cfg); err == nil || !strings.Contains(err.Error(), "not valid JSON") {
+	if _, err := runstage.BuildInitConfig(p, runstage.InitInput{User: initcfg.User{Name: "doug", UID: 501, GID: 20, Home: "/Users/doug"}, TranscriptDir: "/t"}); err == nil || !strings.Contains(err.Error(), "not valid JSON") {
 		t.Fatalf("err = %v", err)
-	}
-	if _, err := os.Stat(filepath.Join(root, initcfg.ManagedSettingsPath)); !os.IsNotExist(err) {
-		t.Errorf("managed settings written: %v", err)
 	}
 }
 

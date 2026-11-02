@@ -9,7 +9,6 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
-	"os/user"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -22,6 +21,7 @@ import (
 	"github.com/sdougbrown/paddock/internal/initcfg"
 	"github.com/sdougbrown/paddock/internal/plan"
 	"github.com/sdougbrown/paddock/internal/resolve"
+	"github.com/sdougbrown/paddock/internal/runstage"
 )
 
 var _ engine.Engine = (*Engine)(nil)
@@ -79,37 +79,6 @@ func (e *Engine) defaults() error {
 	return nil
 }
 
-// isTTY reports whether f is a terminal; /dev/null is a character device but not one.
-func isTTY(f *os.File) bool {
-	st, err := f.Stat()
-	if err != nil || st.Mode()&os.ModeCharDevice == 0 {
-		return false
-	}
-	null, err := os.Stat(os.DevNull)
-	return err != nil || !os.SameFile(st, null)
-}
-
-func hostUser() (initcfg.User, error) {
-	u, err := user.Current()
-	if err != nil {
-		return initcfg.User{}, err
-	}
-	uid, err := strconv.Atoi(u.Uid)
-	if err != nil {
-		return initcfg.User{}, err
-	}
-	gid, err := strconv.Atoi(u.Gid)
-	if err != nil {
-		return initcfg.User{}, err
-	}
-	return initcfg.User{Name: u.Username, UID: uid, GID: gid, Home: u.HomeDir}, nil
-}
-
-// passthroughEnv names the invoking environment's variables that reach the
-// guest. Run passes the set ones to paddock-init both in the init config,
-// where the plan's env overrides them, and with `container run -e`.
-var passthroughEnv = []string{"TERM", "COLORTERM", "LANG"}
-
 // Run implements engine.Engine.
 func (e *Engine) Run(ctx context.Context, p *plan.Plan, o engine.Options) (int, error) {
 	if err := e.defaults(); err != nil {
@@ -121,11 +90,11 @@ func (e *Engine) Run(ctx context.Context, p *plan.Plan, o engine.Options) (int, 
 	if p.Workdir == "" {
 		return 1, errors.New("plan has no workdir")
 	}
-	secrets, err := resolveSecrets(p.Env, e.lookup)
+	secrets, err := runstage.ResolveSecrets(p.Env, e.lookup)
 	if err != nil {
 		return 1, err
 	}
-	u, err := hostUser()
+	u, err := runstage.HostUser()
 	if err != nil {
 		return 1, fmt.Errorf("host user: %w", err)
 	}
@@ -138,17 +107,17 @@ func (e *Engine) Run(ctx context.Context, p *plan.Plan, o engine.Options) (int, 
 		if image, err = e.ensureImages(ctx, p); err != nil {
 			return 1, err
 		}
-		src, err := locateInitBinary(e.getenv, os.Executable)
+		src, err := runstage.LocateInitBinary(e.getenv, os.Executable)
 		if err != nil {
 			return 1, err
 		}
-		if binDir, err = stageInitBinary(e.CacheRoot, src); err != nil {
+		if binDir, err = runstage.StageInitBinary(e.CacheRoot, src); err != nil {
 			return 1, err
 		}
 		entry = initcfg.InitPath
 	}
 
-	name, err := newRunName()
+	name, err := runstage.NewRunName()
 	if err != nil {
 		return 1, err
 	}
@@ -156,13 +125,13 @@ func (e *Engine) Run(ctx context.Context, p *plan.Plan, o engine.Options) (int, 
 	signal.Notify(sigs, syscall.SIGTERM, syscall.SIGINT, syscall.SIGHUP)
 	defer signal.Stop(sigs)
 
-	dirs, err := createRunDirs(e.StateRoot, name)
+	dirs, err := runstage.CreateRunDirs(e.StateRoot, name)
 	if err != nil {
 		return 1, err
 	}
 	var wd *watchdog
 	defer func() {
-		dirs.remove()
+		dirs.Remove()
 		if wd != nil {
 			wd.finish()
 		}
@@ -171,33 +140,33 @@ func (e *Engine) Run(ctx context.Context, p *plan.Plan, o engine.Options) (int, 
 		return 1, err
 	}
 
-	tdir := transcriptDir(e.Home, p.Workdir)
+	tdir := runstage.TranscriptDir(e.Home, p.Workdir)
 	if err := os.MkdirAll(tdir, 0o755); err != nil {
 		return 1, err
 	}
 	var pass []string
-	for _, k := range passthroughEnv {
+	for _, k := range runstage.PassthroughEnv {
 		if v := e.getenv(k); v != "" {
 			pass = append(pass, k+"="+v)
 		}
 	}
-	layout := mountLayout{Dirs: dirs, BinDir: binDir, TranscriptDir: tdir}
+	layout := runstage.MountLayout{Dirs: dirs, BinDir: binDir, TranscriptDir: tdir}
 	if len(p.Claude.ManagedSettings) > 0 {
-		layout.UserSettings = filepath.Join(dirs.Settings, userSettingsFile)
-		layout.UserSettingsAt = userSettingsPath(u.Home)
+		layout.UserSettings = filepath.Join(dirs.Settings, runstage.UserSettingsFile)
+		layout.UserSettingsAt = runstage.UserSettingsPath(u.Home)
 	}
-	mounts, err := guestMounts(p, layout)
+	mounts, err := runstage.GuestMounts(p, layout)
 	if err != nil {
 		return 1, err
 	}
-	cfg, err := buildInitConfig(p, initInput{User: u, Verify: o.Verify, TranscriptDir: tdir, Mounts: mounts, Passthrough: pass})
+	cfg, err := runstage.BuildInitConfig(p, runstage.InitInput{User: u, Verify: o.Verify, TranscriptDir: tdir, Mounts: mounts, Passthrough: pass})
 	if err != nil {
 		return 1, err
 	}
 	if err := initcfg.Write(filepath.Join(dirs.State, filepath.Base(initcfg.ConfigPath)), cfg); err != nil {
 		return 1, err
 	}
-	if err := copySeedFiles(dirs.State, p.Claude.SeedFiles); err != nil {
+	if err := runstage.CopySeedFiles(dirs.State, p.Claude.SeedFiles); err != nil {
 		return 1, err
 	}
 	if layout.UserSettings != "" {
@@ -206,14 +175,14 @@ func (e *Engine) Run(ctx context.Context, p *plan.Plan, o engine.Options) (int, 
 		}
 	}
 	if secrets != nil {
-		if err := writeSecrets(dirs.Secrets, secrets); err != nil {
+		if err := runstage.WriteSecrets(dirs.Secrets, secrets); err != nil {
 			return 1, err
 		}
 	}
 
 	argv := runArgv(runSpec{
 		Name:       name,
-		TTY:        isTTY(e.Stdin),
+		TTY:        runstage.IsTTY(e.Stdin),
 		CPUs:       p.Limits.CPUs,
 		Memory:     p.Limits.Memory,
 		Mounts:     mounts,
@@ -321,25 +290,6 @@ func (e *Engine) stopContainer(name string, secs int) error {
 	return err
 }
 
-// signalQueue holds the signals that could not be delivered yet, in arrival
-// order. A signal equal to the last one queued is not queued again.
-type signalQueue []os.Signal
-
-func (q *signalQueue) push(s os.Signal) {
-	if n := len(*q); n > 0 && (*q)[n-1] == s {
-		return
-	}
-	*q = append(*q, s)
-}
-
-// deliver sends queued signals in order with send, stopping at the first one
-// send reports undelivered; that one and the rest stay queued.
-func (q *signalQueue) deliver(send func(os.Signal) bool) {
-	for len(*q) > 0 && send((*q)[0]) {
-		*q = (*q)[1:]
-	}
-}
-
 // forwardSignals delivers signals received by paddock to the guest process,
 // because `container run` does not forward them. A signal that cannot yet be
 // delivered, such as one that arrives while the VM is booting, is queued, and
@@ -347,11 +297,11 @@ func (q *signalQueue) deliver(send func(os.Signal) bool) {
 // or done closes. When ctx is cancelled the guest gets SIGTERM, and
 // `container stop` with stopGrace follows after cancelGrace.
 func (e *Engine) forwardSignals(ctx context.Context, name string, sigs <-chan os.Signal, done <-chan struct{}) {
-	var pending signalQueue
+	var pending runstage.SignalQueue
 	send := func(s os.Signal) bool { return e.signalContainer(name, s) }
 	queue := func(s os.Signal) {
-		pending.push(s)
-		pending.deliver(send)
+		pending.Push(s)
+		pending.Deliver(send)
 		if e.signalQueued != nil {
 			e.signalQueued(s)
 		}
@@ -374,7 +324,7 @@ func (e *Engine) forwardSignals(ctx context.Context, name string, sigs <-chan os
 		case <-stopAt:
 			stopAt, stopDue = nil, true
 		case <-retry.C:
-			pending.deliver(send)
+			pending.Deliver(send)
 		case <-done:
 			return
 		}
@@ -413,7 +363,7 @@ func (e *Engine) signalContainer(name string, s os.Signal) bool {
 // host for the whole run. When done closes it returns at once; Run then
 // removes the secrets dir.
 func (e *Engine) removeSecretsOnceRunning(name, dir string, done <-chan struct{}) {
-	file := filepath.Join(dir, secretsFile)
+	file := filepath.Join(dir, runstage.SecretsFile)
 	startBy := time.Now().Add(e.secretsStartWait)
 	for !e.isRunning(name) {
 		if time.Now().After(startBy) {
@@ -478,7 +428,7 @@ var watchdogReadyTimeout = 5 * time.Second
 // of a pipe; only this process holds the write end. It returns once the
 // watchdog has written its ready byte, and fails if that takes longer than
 // watchdogReadyTimeout.
-func (e *Engine) startWatchdog(name string, d runDirs) (*watchdog, error) {
+func (e *Engine) startWatchdog(name string, d runstage.RunDirs) (*watchdog, error) {
 	exe := e.selfExe
 	if exe == "" {
 		var err error
@@ -500,7 +450,7 @@ func (e *Engine) startWatchdog(name string, d runDirs) (*watchdog, error) {
 	if entry == nil {
 		entry = []string{WatchdogCommand}
 	}
-	args := slices.Concat(entry, []string{e.bin(), name}, d.removable())
+	args := slices.Concat(entry, []string{e.bin(), name}, d.Removable())
 	cmd := exec.Command(exe, args...)
 	cmd.ExtraFiles = []*os.File{r, readyW}
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}

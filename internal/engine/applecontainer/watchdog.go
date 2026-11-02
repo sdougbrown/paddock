@@ -44,7 +44,7 @@ const watchdogStopTries = 10
 var watchdogRetry = time.Second
 
 // RunWatchdog is the watchdog process body. args are the container binary,
-// the container name, then the directories to remove (runDirs.removable). It
+// the container name, then the directories to remove (runstage.RunDirs.Removable). It
 // reports ready on fd 4, then blocks on fd 3, the read end of a pipe whose
 // write end only the parent holds. On EOF without the done byte the parent
 // died, so it stops the container and removes the directories. It exits 2

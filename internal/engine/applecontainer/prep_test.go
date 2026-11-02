@@ -3,20 +3,18 @@ package applecontainer
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"slices"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/sdougbrown/paddock/images"
 	"github.com/sdougbrown/paddock/internal/initcfg"
 	"github.com/sdougbrown/paddock/internal/plan"
+	"github.com/sdougbrown/paddock/internal/runstage"
 )
 
 func testSpec() runSpec {
@@ -32,13 +30,13 @@ func testSpec() runSpec {
 	}
 }
 
-func testMounts() []guestMount {
-	ms, err := guestMounts(&plan.Plan{Mounts: []plan.Mount{
+func testMounts() []runstage.GuestMount {
+	ms, err := runstage.GuestMounts(&plan.Plan{Mounts: []plan.Mount{
 		{Host: "/w", Guest: "/w"},
 		{Host: "/w/repo", Guest: "/w/repo", ReadOnly: true},
 		{Host: "/skills", Guest: "/skills", ReadOnly: true},
-	}}, mountLayout{
-		Dirs:          runDirs{State: "/run/s", Secrets: "/run/x", Log: "/run/l"},
+	}}, runstage.MountLayout{
+		Dirs:          runstage.RunDirs{State: "/run/s", Secrets: "/run/x", Log: "/run/l"},
 		BinDir:        "/cache/bin/h",
 		TranscriptDir: "/home/u/.claude/projects/-w",
 	})
@@ -78,7 +76,7 @@ func TestRunArgvMountsUserSettingsReadOnly(t *testing.T) {
 		t.Fatal("settings mount present without a settings file")
 	}
 	var err error
-	s.Mounts, err = guestMounts(&plan.Plan{}, mountLayout{
+	s.Mounts, err = runstage.GuestMounts(&plan.Plan{}, runstage.MountLayout{
 		UserSettings: "/run/s/user-settings.json", UserSettingsAt: "/home/u/.claude/settings.json",
 	})
 	if err != nil {
@@ -109,11 +107,11 @@ func TestSecretsStayOutOfArgvAndInitConfig(t *testing.T) {
 		Network: plan.Network{Policy: "none"},
 	}
 	lookup := func(k string) (string, bool) { return secret, k == "HOST_TOKEN" }
-	data, err := resolveSecrets(p.Env, lookup)
+	data, err := runstage.ResolveSecrets(p.Env, lookup)
 	if err != nil || string(data) != "TOKEN="+secret+"\n" {
-		t.Fatalf("resolveSecrets = %q, %v", data, err)
+		t.Fatalf("ResolveSecrets = %q, %v", data, err)
 	}
-	cfg, err := buildInitConfig(p, initInput{User: testUser, TranscriptDir: "/t", Mounts: testMounts()})
+	cfg, err := runstage.BuildInitConfig(p, runstage.InitInput{User: testUser, TranscriptDir: "/t", Mounts: testMounts()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -122,44 +120,6 @@ func TestSecretsStayOutOfArgvAndInitConfig(t *testing.T) {
 	all := strings.Join(runArgv(s), "\x00") + "\x00" + strings.Join(cfg.Env, "\x00")
 	if strings.Contains(all, secret) {
 		t.Fatal("secret value leaked into argv or init config env")
-	}
-}
-
-func TestResolveSecretsRejectsLineBreaks(t *testing.T) {
-	env := []plan.EnvVar{{Name: "A", Source: plan.SourceEnv, Ref: "X"}}
-	_, err := resolveSecrets(env, func(string) (string, bool) { return "a\nB=c", true })
-	if err == nil || strings.Contains(err.Error(), "a\nB") {
-		t.Fatalf("err = %v", err)
-	}
-}
-
-func TestResolveSecretsFailsOnUnsetSource(t *testing.T) {
-	env := []plan.EnvVar{{Name: "A", Source: plan.SourceEnv, Ref: "X"}}
-	if b, err := resolveSecrets(env, func(string) (string, bool) { return "", false }); err == nil {
-		t.Fatalf("resolveSecrets with an unset variable = %q, nil", b)
-	}
-}
-
-func TestTranscriptDirEncoding(t *testing.T) {
-	// Expected names come from running the project-dir function of Claude
-	// Code 2.1.303 (s0 in its bundle) in node on the same inputs.
-	emoji := "\U0001F600"
-	cases := map[string]string{
-		"/private/tmp/claude-501/-Users-douglasbrown--botfiles/x": "-private-tmp-claude-501--Users-douglasbrown--botfiles-x",
-		"/Users/me/Code/my.repo_v2":                               "-Users-me-Code-my-repo-v2",
-		"/Users/u/Code/my_repo.v2":                                "-Users-u-Code-my-repo-v2",
-		"/w/caf\u00e9 " + emoji + "x":                             "-w-caf----x",
-		"/w/" + strings.Repeat("b", 197):                          "-w-" + strings.Repeat("b", 197),
-		"/w/" + strings.Repeat("b", 198):                          "-w-" + strings.Repeat("b", 197) + "-jtl6k9",
-		"/w/" + strings.Repeat("a", 250):                          "-w-" + strings.Repeat("a", 197) + "-9arrx5",
-		"/w/" + strings.Repeat(emoji, 110):                        "-w-" + strings.Repeat("-", 197) + "-16fk1b",
-		"/w/" + strings.Repeat("c", 300):                          "-w-" + strings.Repeat("c", 197) + "-klqcw7",
-	}
-	for ws, enc := range cases {
-		got := transcriptDir("/home/u", ws)
-		if want := filepath.Join("/home/u/.claude/projects", enc); got != want {
-			t.Errorf("transcriptDir(%q) = %q, want %q", ws, got, want)
-		}
 	}
 }
 
@@ -176,58 +136,6 @@ func writeTree(t *testing.T, files map[string]string) string {
 		}
 	}
 	return dir
-}
-
-func TestImageHash(t *testing.T) {
-	ctx := writeTree(t, map[string]string{"a.txt": "a", "sub/b.txt": "b"})
-	base, err := imageHash([]byte("FROM x"), ctx, "parent:1")
-	if err != nil {
-		t.Fatal(err)
-	}
-	again, _ := imageHash([]byte("FROM x"), ctx, "parent:1")
-	if base != again {
-		t.Fatal("hash is not stable")
-	}
-	mut := func(name string, h string, err error) {
-		t.Helper()
-		if err != nil {
-			t.Fatal(err)
-		}
-		if h == base {
-			t.Errorf("hash did not change with %s", name)
-		}
-	}
-	h, err := imageHash([]byte("FROM y"), ctx, "parent:1")
-	mut("dockerfile", h, err)
-	h, err = imageHash([]byte("FROM x"), ctx, "parent:2")
-	mut("parent", h, err)
-	if err := os.WriteFile(filepath.Join(ctx, "sub", "b.txt"), []byte("B"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	h, err = imageHash([]byte("FROM x"), ctx, "parent:1")
-	mut("context content", h, err)
-	if err := os.Chmod(filepath.Join(ctx, "a.txt"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	h2, err := imageHash([]byte("FROM x"), ctx, "parent:1")
-	if err != nil || h2 == h {
-		t.Errorf("hash did not change with file mode (err=%v)", err)
-	}
-}
-
-func TestLayerTag(t *testing.T) {
-	re := regexp.MustCompile(`^paddock/afresh-scanner-[0-9a-f]{8}:0123456789ab$`)
-	if got := layerTag("Afresh/Scanner", "0123456789abcdef"); !re.MatchString(got) {
-		t.Fatalf("layerTag = %q", got)
-	}
-	repos := map[string]string{}
-	for _, spec := range []string{"x/y", "x-y", "X/Y", "base", "x"} {
-		repo, _, _ := strings.Cut(layerTag(spec, "0123456789abcdef"), ":")
-		if prev, dup := repos[repo]; dup || repo == "paddock/base" {
-			t.Errorf("specs %q and %q share the repository %s", prev, spec, repo)
-		}
-		repos[repo] = spec
-	}
 }
 
 func TestBaseBuildContextHoldsOnlyTheDockerfile(t *testing.T) {
@@ -261,25 +169,6 @@ func TestPruneKeepsSpecsWithSimilarRefs(t *testing.T) {
 	}
 	if b := buildCalls(calls()); len(b) != 3 {
 		t.Errorf("builds = %d, want the base and one layer per spec", len(b))
-	}
-}
-
-func TestImageHashFollowsSymlinkedContext(t *testing.T) {
-	real := writeTree(t, map[string]string{"a.txt": "a"})
-	link := filepath.Join(t.TempDir(), "ctx")
-	if err := os.Symlink(real, link); err != nil {
-		t.Fatal(err)
-	}
-	before, err := imageHash([]byte("FROM x"), link, "p")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(link, "a.txt"), []byte("changed"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	after, err := imageHash([]byte("FROM x"), link, "p")
-	if err != nil || after == before {
-		t.Fatalf("hash unchanged after editing through a symlinked context (err=%v)", err)
 	}
 }
 
@@ -400,83 +289,19 @@ func TestEnsureImagesChainsParentsAndSkipsExisting(t *testing.T) {
 
 var testUser = initcfg.User{Name: "u", UID: 501, GID: 20, Home: "/Users/u"}
 
-func TestBuildInitConfig(t *testing.T) {
-	p := &plan.Plan{
-		Workspace: "/w",
-		Workdir:   "/w",
-		Argv:      []string{"claude", "-p"},
-		Mounts:    []plan.Mount{{Host: "/w", Guest: "/w"}, {Host: "/s", Guest: "/s", ReadOnly: true}},
-		Env: []plan.EnvVar{
-			{Name: "LIT", Source: plan.SourceLiteral, Value: "1"},
-			{Name: "TOK", Source: plan.SourceFile, Ref: "/x"},
-		},
-		Network: plan.Network{Policy: "allowlist", Hosts: []string{"api.anthropic.com"}},
-		Claude: plan.ClaudePlan{
-			ManagedSettings: []byte(`{"a":1}`),
-			SeedFiles:       []string{"/h/.claude/remote-settings.json"},
-			Skills:          "/s",
-			Agents:          "/ag",
-		},
-	}
-	mounts, err := guestMounts(p, mountLayout{
-		Dirs:          runDirs{State: "/run/s", Secrets: "/run/x", Log: "/run/l"},
-		BinDir:        "/cache/bin/h",
-		TranscriptDir: "/t",
-		UserSettings:  "/run/set/user-settings.json", UserSettingsAt: testUser.Home + "/.claude/settings.json",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	cfg, err := buildInitConfig(p, initInput{User: testUser, TranscriptDir: "/t", Mounts: mounts, Passthrough: []string{"TERM=xterm"}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if cfg.Secrets != initcfg.SecretsPath {
-		t.Errorf("Secrets = %q", cfg.Secrets)
-	}
-	if want := []string{"LIT=1", "TERM=xterm"}; !slices.Equal(cfg.Env, want) {
-		t.Errorf("Env = %v, want %v", cfg.Env, want)
-	}
-	n := cfg.Network
-	if n.Policy != "allowlist" || !slices.Equal(n.Hosts, []string{"api.anthropic.com"}) {
-		t.Errorf("policy %q hosts %v", n.Policy, n.Hosts)
-	}
-	if n.ProxyPort != 15443 || n.DenyLog != "/run/paddock-log/deny.jsonl" || n.ErrorLog != "/run/paddock-log/proxy.log" || cfg.ProxyUID != 970 {
-		t.Errorf("network = %+v uid %d", n, cfg.ProxyUID)
-	}
-	if c := cfg.Claude; string(c.ManagedSettings) != `{"a":1}` || c.Skills != "/s" || c.Agents != "/ag" {
-		t.Errorf("managed settings %s, skills %q, agents %q", c.ManagedSettings, c.Skills, c.Agents)
-	}
-	if want := []string{"remote-settings.json"}; !slices.Equal(cfg.Claude.SeedFiles, want) {
-		t.Errorf("SeedFiles = %v", cfg.Claude.SeedFiles)
-	}
-	if !strings.Contains(string(cfg.Claude.ClaudeJSON), `"lastOnboardingVersion":"`+images.ClaudeCodeVersion+`"`) {
-		t.Errorf("ClaudeJSON = %s", cfg.Claude.ClaudeJSON)
-	}
-	if cfg.Claude.TranscriptDir != "/t" || cfg.Workdir != "/w" {
-		t.Errorf("claude = %+v workdir %q", cfg.Claude, cfg.Workdir)
-	}
-	if len(cfg.Mounts) != 8 || cfg.Mounts[1] != (initcfg.Mount{Path: "/s", ReadOnly: true}) {
-		t.Errorf("Mounts = %+v", cfg.Mounts)
-	}
-	if last := cfg.Mounts[len(cfg.Mounts)-1]; last != (initcfg.Mount{Path: testUser.Home + "/.claude/settings.json", ReadOnly: true}) {
-		t.Errorf("last mount = %+v", last)
-	}
-}
-
 func TestInitMountsMatchRunArgv(t *testing.T) {
 	for _, bin := range []string{"", "/cache/bin/h"} {
 		p := &plan.Plan{
 			Workspace: "/w", Workdir: "/w", Argv: []string{"x"}, Network: plan.Network{Policy: "none"},
 			Mounts: []plan.Mount{{Host: "/w", Guest: "/w"}, {Host: "/s", Guest: "/s", ReadOnly: true}},
 		}
-		mounts, err := guestMounts(p, mountLayout{
-			Dirs: runDirs{State: "/run/s", Secrets: "/run/x", Log: "/run/l"}, BinDir: bin, TranscriptDir: "/t",
+		mounts, err := runstage.GuestMounts(p, runstage.MountLayout{
+			Dirs: runstage.RunDirs{State: "/run/s", Secrets: "/run/x", Log: "/run/l"}, BinDir: bin, TranscriptDir: "/t",
 		})
 		if err != nil {
 			t.Fatal(err)
 		}
-		cfg, err := buildInitConfig(p, initInput{User: testUser, TranscriptDir: "/t", Mounts: mounts})
+		cfg, err := runstage.BuildInitConfig(p, runstage.InitInput{User: testUser, TranscriptDir: "/t", Mounts: mounts})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -498,103 +323,16 @@ func TestInitMountsMatchRunArgv(t *testing.T) {
 	}
 }
 
-func TestBuildInitConfigNoSecretsWhenAllLiteral(t *testing.T) {
-	p := &plan.Plan{
-		Workspace: "/w", Workdir: "/w", Argv: []string{"x"}, Network: plan.Network{Policy: "none"},
-		Env: []plan.EnvVar{{Name: "A", Source: plan.SourceLiteral, Value: "1"}},
-	}
-	cfg, err := buildInitConfig(p, initInput{User: testUser, TranscriptDir: "/t"})
-	if err != nil || cfg.Secrets != "" {
-		t.Fatalf("Secrets = %q, err = %v", cfg.Secrets, err)
-	}
-}
-
-func TestStageInitBinary(t *testing.T) {
-	src := filepath.Join(t.TempDir(), "paddock-init")
-	if err := os.WriteFile(src, []byte("binary"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	cache := t.TempDir()
-	dir, err := stageInitBinary(cache, src)
-	if err != nil {
-		t.Fatal(err)
-	}
-	entries, _ := os.ReadDir(dir)
-	if len(entries) != 1 || entries[0].Name() != "paddock-init" {
-		t.Fatalf("staged dir holds %v", entries)
-	}
-	if st, _ := os.Stat(filepath.Join(dir, "paddock-init")); st.Mode().Perm() != 0o755 {
-		t.Errorf("mode = %v", st.Mode())
-	}
-	if got, _ := os.ReadFile(filepath.Join(dir, "paddock-init")); string(got) != "binary" {
-		t.Errorf("staged content = %q", got)
-	}
-	again, err := stageInitBinary(cache, src)
-	if err != nil || again != dir {
-		t.Fatalf("restage = %q, %v", again, err)
-	}
-	if err := os.WriteFile(src, []byte("rebuilt"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	next, err := stageInitBinary(cache, src)
-	if err != nil || next == dir {
-		t.Fatalf("stage after a change = %q, %v", next, err)
-	}
-	if got, _ := os.ReadFile(filepath.Join(next, "paddock-init")); string(got) != "rebuilt" {
-		t.Errorf("restaged content = %q", got)
-	}
-}
-
-func TestCopySeedFilesRejectsCollisions(t *testing.T) {
-	a := writeTree(t, map[string]string{"s.json": "1"})
-	b := writeTree(t, map[string]string{"s.json": "2"})
-	err := copySeedFiles(t.TempDir(), []string{filepath.Join(a, "s.json"), filepath.Join(b, "s.json")})
-	if err == nil {
-		t.Fatal("want collision error")
-	}
-}
-
-func TestCreateRunDirsAreOwnerOnly(t *testing.T) {
-	d, err := createRunDirs(t.TempDir(), "paddock-x")
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, p := range []string{d.Root, d.State, d.Secrets, d.Log, d.Settings} {
-		if st, err := os.Stat(p); err != nil || st.Mode().Perm() != 0o700 {
-			t.Errorf("%s: %v %v", p, st, err)
-		}
-	}
-	d.remove()
-	for _, p := range []string{d.State, d.Secrets, d.Settings} {
-		if _, err := os.Stat(p); !os.IsNotExist(err) {
-			t.Errorf("%s survived remove", p)
-		}
-	}
-	if _, err := os.Stat(d.Log); err != nil {
-		t.Error("log dir was removed")
-	}
-}
-
-func TestCreateRunDirsRefusesAnExistingRun(t *testing.T) {
-	root := t.TempDir()
-	if _, err := createRunDirs(root, "paddock-x"); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := createRunDirs(root, "paddock-x"); err == nil {
-		t.Error("a second run with the same name shared its directories")
-	}
-}
-
 func TestWorkdirDrivesArgvTranscriptAndTrust(t *testing.T) {
 	p := &plan.Plan{
 		Workspace: "/run/x", Workdir: "/run/x/review", Argv: []string{"claude"},
 		Network: plan.Network{Policy: "none"},
 	}
-	tdir := transcriptDir("/Users/u", p.Workdir)
+	tdir := runstage.TranscriptDir("/Users/u", p.Workdir)
 	if want := "/Users/u/.claude/projects/-run-x-review"; tdir != want {
 		t.Errorf("transcript dir = %q, want %q", tdir, want)
 	}
-	cfg, err := buildInitConfig(p, initInput{User: testUser, TranscriptDir: tdir})
+	cfg, err := runstage.BuildInitConfig(p, runstage.InitInput{User: testUser, TranscriptDir: tdir})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -617,67 +355,6 @@ func TestWorkdirDrivesArgvTranscriptAndTrust(t *testing.T) {
 	a := runArgv(s)
 	if i := slices.Index(a, "-w"); i < 0 || a[i+1] != "/run/x/review" {
 		t.Errorf("argv lacks -w /run/x/review: %v", a)
-	}
-}
-
-func TestBuildInitConfigRequiresWorkdir(t *testing.T) {
-	p := &plan.Plan{Workspace: "/w", Argv: []string{"x"}, Network: plan.Network{Policy: "none"}}
-	if _, err := buildInitConfig(p, initInput{User: testUser, TranscriptDir: "/t"}); err == nil {
-		t.Fatal("want an error for an empty workdir")
-	}
-}
-
-// TestBuildInitConfigVerifyWithoutArgv builds the init config for
-// `paddock run --verify`: no argv, Verify set. The config must carry Verify
-// and pass the guest's validation, which rejects an empty argv otherwise.
-func TestBuildInitConfigVerifyWithoutArgv(t *testing.T) {
-	p := &plan.Plan{Workspace: "/w", Workdir: "/w", Network: plan.Network{Policy: "none"}}
-	cfg, err := buildInitConfig(p, initInput{User: testUser, TranscriptDir: "/t", Verify: true})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !cfg.Verify || len(cfg.Argv) != 0 {
-		t.Errorf("Verify = %v, Argv = %q; want true and empty", cfg.Verify, cfg.Argv)
-	}
-	if err := cfg.Validate(); err != nil {
-		t.Errorf("Validate: %v", err)
-	}
-}
-
-func TestBuildInitConfigPlanEnvBeatsPassthrough(t *testing.T) {
-	p := &plan.Plan{
-		Workspace: "/w", Workdir: "/w", Argv: []string{"x"}, Network: plan.Network{Policy: "none"},
-		Env: []plan.EnvVar{{Name: "TERM", Source: plan.SourceLiteral, Value: "dumb"}},
-	}
-	cfg, err := buildInitConfig(p, initInput{
-		User: testUser, TranscriptDir: "/t",
-		Passthrough: []string{"TERM=xterm", "COLORTERM=truecolor", "LANG=C"},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if want := []string{"TERM=dumb", "COLORTERM=truecolor", "LANG=C"}; !slices.Equal(cfg.Env, want) {
-		t.Errorf("Env = %v, want %v", cfg.Env, want)
-	}
-}
-
-func TestSplitEnvKeepsNonLiteralsOutOfInitConfig(t *testing.T) {
-	env := []plan.EnvVar{
-		{Name: "LIT", Source: plan.SourceLiteral, Value: "1"},
-		{Name: "F", Source: plan.SourceFile, Ref: "/x"},
-		{Name: "E", Source: plan.SourceEnv, Ref: "HOST_E"},
-	}
-	lits, refs := splitEnv(env)
-	if len(lits) != 1 || lits[0].Name != "LIT" || len(refs) != 2 || refs[0].Name != "F" || refs[1].Name != "E" {
-		t.Fatalf("splitEnv = %v, %v", lits, refs)
-	}
-	p := &plan.Plan{Workspace: "/w", Workdir: "/w", Argv: []string{"x"}, Env: env, Network: plan.Network{Policy: "none"}}
-	cfg, err := buildInitConfig(p, initInput{User: testUser, TranscriptDir: "/t"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if want := []string{"LIT=1"}; !slices.Equal(cfg.Env, want) {
-		t.Errorf("Env = %v, want %v", cfg.Env, want)
 	}
 }
 
@@ -732,115 +409,6 @@ func TestEnsureImagesStopsWhenCancelled(t *testing.T) {
 	}
 	if d := time.Since(start); d > 10*time.Second {
 		t.Errorf("ensureImages returned %v after the context ended", d)
-	}
-}
-
-func TestImageHashHashesSymlinksByTarget(t *testing.T) {
-	ctx := writeTree(t, map[string]string{"keep": "k"})
-	outside := writeTree(t, map[string]string{"one": "1", "two": "2"})
-	link := filepath.Join(ctx, "link")
-	if err := os.Symlink(filepath.Join(outside, "one"), link); err != nil {
-		t.Fatal(err)
-	}
-	hash := func() string {
-		t.Helper()
-		h, err := imageHash([]byte("FROM x"), ctx, "p")
-		if err != nil {
-			t.Fatal(err)
-		}
-		return h
-	}
-	base := hash()
-	if err := os.WriteFile(filepath.Join(outside, "one"), []byte("changed"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if hash() != base {
-		t.Error("editing a link target's content changed the hash")
-	}
-	if err := os.Remove(link); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink(filepath.Join(outside, "two"), link); err != nil {
-		t.Fatal(err)
-	}
-	if hash() == base {
-		t.Error("retargeting a symlink did not change the hash")
-	}
-}
-
-func TestCopySeedFiles(t *testing.T) {
-	src := writeTree(t, map[string]string{"remote-settings.json": `{"a":1}`})
-	state := t.TempDir()
-	if err := copySeedFiles(state, []string{filepath.Join(src, "remote-settings.json")}); err != nil {
-		t.Fatal(err)
-	}
-	dst := filepath.Join(state, filepath.Base(initcfg.SeedDir), "remote-settings.json")
-	st, err := os.Stat(dst)
-	if err != nil || st.Mode().Perm() != 0o600 {
-		t.Fatalf("seed file: %v, %v", st, err)
-	}
-	if got, _ := os.ReadFile(dst); string(got) != `{"a":1}` {
-		t.Errorf("content = %q", got)
-	}
-	if st, err := os.Stat(filepath.Dir(dst)); err != nil || !st.IsDir() {
-		t.Errorf("seed dir: %v, %v", st, err)
-	}
-}
-
-func TestWriteSecrets(t *testing.T) {
-	dir := t.TempDir()
-	if err := writeSecrets(dir, []byte("A=b\n")); err != nil {
-		t.Fatal(err)
-	}
-	p := filepath.Join(dir, filepath.Base(initcfg.SecretsPath))
-	st, err := os.Stat(p)
-	if err != nil || st.Mode().Perm() != 0o600 {
-		t.Fatalf("secrets file: %v, %v", st, err)
-	}
-	if got, _ := os.ReadFile(p); string(got) != "A=b\n" {
-		t.Errorf("content = %q", got)
-	}
-}
-
-func TestGuestMountsRejectManagedGuestPaths(t *testing.T) {
-	for _, guest := range []string{"/run/paddock", "/run/paddock/seed", "/run/paddock-secrets", "/run/paddock-log/x", "/opt/paddock", "/opt/paddock/../paddock/bin"} {
-		p := &plan.Plan{Mounts: []plan.Mount{{Host: "/h", Guest: guest}}}
-		if _, err := guestMounts(p, mountLayout{}); err == nil || !strings.Contains(err.Error(), "paddock-managed") {
-			t.Errorf("guest %q: err = %v", guest, err)
-		}
-	}
-	p := &plan.Plan{Mounts: []plan.Mount{{Host: "/h", Guest: "/opt/paddock2"}, {Host: "/h", Guest: "/run/paddocks"}}}
-	if _, err := guestMounts(p, mountLayout{}); err != nil {
-		t.Errorf("sibling paths rejected: %v", err)
-	}
-}
-
-func TestGuestMountsRejectTranscriptAndSettingsPaths(t *testing.T) {
-	l := mountLayout{TranscriptDir: "/h/.claude/projects/-w", UserSettings: "/s/user-settings.json", UserSettingsAt: "/h/.claude/settings.json"}
-	for _, guest := range []string{"/h/.claude/projects/-w", "/h/.claude/projects/-w/sub", "/h/.claude/settings.json"} {
-		p := &plan.Plan{Mounts: []plan.Mount{{Host: "/x", Guest: guest}}}
-		if _, err := guestMounts(p, l); err == nil || !strings.Contains(err.Error(), "paddock-managed") {
-			t.Errorf("guest %q: err = %v", guest, err)
-		}
-	}
-	p := &plan.Plan{Mounts: []plan.Mount{{Host: "/x", Guest: "/h/.claude/projects/-w2"}, {Host: "/y", Guest: "/h/.claude/settings.json.d"}}}
-	if _, err := guestMounts(p, l); err != nil {
-		t.Errorf("sibling paths rejected: %v", err)
-	}
-	if _, err := guestMounts(&plan.Plan{Mounts: []plan.Mount{{Host: "/x", Guest: "/h/.claude/settings.json"}}}, mountLayout{TranscriptDir: "/t"}); err != nil {
-		t.Errorf("settings path without a settings mount: %v", err)
-	}
-}
-
-func TestGuestMountsRejectColons(t *testing.T) {
-	for _, m := range []plan.Mount{{Host: "/h:x", Guest: "/g"}, {Host: "/h", Guest: "/g:x"}} {
-		p := &plan.Plan{Mounts: []plan.Mount{m}}
-		if _, err := guestMounts(p, mountLayout{TranscriptDir: "/t"}); err == nil || !strings.Contains(err.Error(), "':'") {
-			t.Errorf("mount %+v: err = %v", m, err)
-		}
-	}
-	if _, err := guestMounts(&plan.Plan{}, mountLayout{TranscriptDir: "/t", BinDir: "/bin:x"}); err == nil {
-		t.Error("a managed host path with ':' was accepted")
 	}
 }
 
@@ -932,53 +500,5 @@ func TestEnsureImagesPrunesSupersededTags(t *testing.T) {
 		return slices.Equal(c, []string{"image", "rm", "paddock/base:oldbase000000"})
 	}) {
 		t.Errorf("no removal attempted: %q", calls())
-	}
-}
-
-func TestLocateInitBinary(t *testing.T) {
-	exe := func() (string, error) { return "/opt/bin/paddock", nil }
-	set := func(k string) string {
-		if k == "PADDOCK_INIT" {
-			return "/custom/paddock-init"
-		}
-		return ""
-	}
-	unset := func(string) string { return "" }
-
-	if got, err := locateInitBinary(set, exe); err != nil || got != "/custom/paddock-init" {
-		t.Errorf("with $PADDOCK_INIT: %q, %v", got, err)
-	}
-	if got, err := locateInitBinary(unset, exe); err != nil || got != "/opt/bin/paddock-init" {
-		t.Errorf("beside the executable: %q, %v", got, err)
-	}
-	failing := func() (string, error) { return "", errors.New("no executable") }
-	if _, err := locateInitBinary(unset, failing); err == nil {
-		t.Error("want the executable lookup error")
-	}
-}
-
-func TestNewRunName(t *testing.T) {
-	re := regexp.MustCompile(`^paddock-[0-9a-f]{16}$`)
-	a, err := newRunName()
-	if err != nil || !re.MatchString(a) {
-		t.Fatalf("newRunName() = %q, %v", a, err)
-	}
-	if b, _ := newRunName(); b == a {
-		t.Errorf("two run names are both %q", a)
-	}
-}
-
-func TestBuildInitConfigRejectsSeedOverManagedSettings(t *testing.T) {
-	p := &plan.Plan{
-		Workspace: "/w", Workdir: "/w", Argv: []string{"claude"},
-		Network: plan.Network{Policy: initcfg.PolicyNone},
-		Claude:  plan.ClaudePlan{SeedFiles: []string{"/h/.claude/settings.json"}},
-	}
-	if _, err := buildInitConfig(p, initInput{User: testUser}); err != nil {
-		t.Fatalf("settings.json seed without managed settings: %v", err)
-	}
-	p.Claude.ManagedSettings = []byte(`{}`)
-	if _, err := buildInitConfig(p, initInput{User: testUser}); err == nil || !strings.Contains(err.Error(), "settings.json") {
-		t.Errorf("settings.json seed with managed settings: err = %v", err)
 	}
 }

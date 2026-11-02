@@ -16,6 +16,7 @@ import (
 
 	"github.com/sdougbrown/paddock/internal/engine"
 	"github.com/sdougbrown/paddock/internal/plan"
+	"github.com/sdougbrown/paddock/internal/runstage"
 )
 
 // The container tests other than TestContainerRealInit run alpine with a
@@ -271,7 +272,7 @@ func TestContainerCancelBeforeStartNeverStarts(t *testing.T) {
 	h := startHelper(t, "exec sleep 300", "HELPER_START_DELAY=20s")
 	// secrets.env is the last file Run writes before the start delay.
 	eventually(t, 30*time.Second, "secrets.env to be written", func() bool {
-		_, err := os.Stat(filepath.Join(h.runDir(), "secrets", secretsFile))
+		_, err := os.Stat(filepath.Join(h.runDir(), "secrets", runstage.SecretsFile))
 		return h.name() != "" && err == nil
 	})
 	name := h.name()

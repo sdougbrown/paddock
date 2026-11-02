@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/sdougbrown/paddock/internal/runstage"
 )
 
 // TestRemoveSecretsOnceRunning drives removeSecretsOnceRunning with a fake
@@ -49,7 +51,7 @@ func TestRemoveSecretsOnceRunning(t *testing.T) {
 			if err := os.Mkdir(secrets, 0o700); err != nil {
 				t.Fatal(err)
 			}
-			file := filepath.Join(secrets, secretsFile)
+			file := filepath.Join(secrets, runstage.SecretsFile)
 			if err := os.WriteFile(file, []byte("TOKEN=x\n"), 0o600); err != nil {
 				t.Fatal(err)
 			}

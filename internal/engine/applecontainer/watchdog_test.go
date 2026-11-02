@@ -11,6 +11,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/sdougbrown/paddock/internal/runstage"
 )
 
 // startTestWatchdog re-executes the test binary as the watchdog for a
@@ -156,7 +158,7 @@ func TestStartWatchdogFailsWhenNotReady(t *testing.T) {
 	}
 	defer func(d time.Duration) { watchdogReadyTimeout = d }(watchdogReadyTimeout)
 	watchdogReadyTimeout = 2 * time.Second
-	dirs, err := createRunDirs(t.TempDir(), "paddock-test")
+	dirs, err := runstage.CreateRunDirs(t.TempDir(), "paddock-test")
 	if err != nil {
 		t.Fatal(err)
 	}

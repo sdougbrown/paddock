@@ -50,7 +50,13 @@ type ProfileClaude struct {
 }
 
 // Engines supported in v1.
-const EngineAppleContainer = "apple-container"
+const (
+	EngineAppleContainer = "apple-container"
+	EnginePodman         = "podman"
+)
+
+// engines lists every supported engine name.
+var engines = []string{EngineAppleContainer, EnginePodman}
 
 var memoryRe = regexp.MustCompile(`^[0-9]+[KkMmGg]$`)
 
@@ -58,8 +64,8 @@ func (p *Profile) validate() error {
 	if p.Hooks != nil {
 		return fmt.Errorf("[hooks]: host hooks are not supported in v1")
 	}
-	if p.Engine != EngineAppleContainer {
-		return fmt.Errorf("engine: %q is not supported (want %q)", p.Engine, EngineAppleContainer)
+	if !slices.Contains(engines, p.Engine) {
+		return fmt.Errorf("engine: %q is not supported (want one of %q)", p.Engine, engines)
 	}
 	switch p.Workspace.Mode {
 	case "", "ro", "rw":

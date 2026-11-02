@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/sdougbrown/paddock/internal/config"
+	"github.com/sdougbrown/paddock/internal/engine/bwrap"
 	"github.com/sdougbrown/paddock/internal/engine/podman"
 )
 
@@ -34,6 +35,13 @@ func TestNewEnginePodman(t *testing.T) {
 	}
 	if pe, ok := e.(*podman.Engine); !ok || !pe.Sudo {
 		t.Errorf("newEngine(podman) = %T with Sudo %v; want *podman.Engine with Sudo true", e, pe.Sudo)
+	}
+	be, err := newEngine(config.EngineBwrap)
+	if err != nil {
+		t.Fatalf("newEngine(bwrap): %v", err)
+	}
+	if _, ok := be.(*bwrap.Engine); !ok {
+		t.Fatalf("newEngine(bwrap) returned %T; want *bwrap.Engine", be)
 	}
 	if _, err := newEngine("nope"); err == nil {
 		t.Error("newEngine(nope) succeeded; want an unsupported-engine error")

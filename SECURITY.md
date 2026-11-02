@@ -66,6 +66,18 @@ runs the allowlist proxy as a separate uid, and installs a firewall the agent ca
    mixed package tree. The killed run never marks the cache complete, and every setup runs its
    install command again (risk 7), so an install that checks cached packages against the lockfile
    repairs the tree on the next setup. Clearing `~/.cache/paddock/<spec>` also recovers.
+10. **The podman engine shares the host kernel and disables SELinux labels.** A podman container is
+   not a VM: the agent shares the host kernel, and rootful containers run as real uid 0. The engine
+   also runs with `--security-opt label=disable`, the pattern that rootless stacks on SELinux-enforcing
+   hosts (Fedora) need for bind mounts, which turns off the MCS separation between the container's
+   processes and the host's files. The egress policy, privilege drop, and mount rules are unchanged,
+   but the isolation boundary is a container namespace plus the firewall, not a VM. Use the podman
+   engine on hosts whose operator accepts that boundary, and prefer the apple-container engine for
+   untrusted workloads on capable hardware.
+11. **`paddock-init` rewrites bind-mounted files in place.** Where podman pins `/etc/hosts` as a
+   bind mount, the hosts file is rewritten by truncation instead of an atomic rename, so a crash
+   mid-write can leave a partial hosts file until the next run rewrites it. The file is root-owned
+   and rewritten before the privilege drop; the agent cannot exploit the window.
 
 ## Notes on the network policy
 

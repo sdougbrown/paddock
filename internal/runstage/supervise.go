@@ -24,31 +24,7 @@ const PendingRetry = 200 * time.Millisecond
 // whether it runs. Everything else — the signal queue, the retry cadence,
 // the cancellation escalation, and the secrets cleanup — is shared.
 type Supervisor struct {
-	// Send delivers sig to the guest named name and reports whether it was
-	// delivered. A signal that arrives while the guest is still booting can
-	// be acknowledged and dropped by the runtime, so Send counts a delivery
-	// only when the guest was observed running immediately before.
-	Send func(name string, sig os.Signal) bool
-	// Stop asks the guest named name to stop, killing it after grace
-	// seconds. Like a kill after cancellation, it runs without the run's
-	// context.
-	Stop func(name string, grace int) error
-	// IsRunning reports whether name is running. An unreachable runtime
-	// reports not running.
-	IsRunning func(name string) bool
-	// SecretsStartWait is how long the host waits for the guest to run
-	// before removing secrets.env anyway.
-	SecretsStartWait time.Duration
-	// SecretsGrace is how long a running guest may keep secrets.env before
-	// the host removes it.
-	SecretsGrace time.Duration
-	// CancelGrace is how long after ctx is cancelled the host waits before
-	// Stop follows the queued SIGTERM.
-	CancelGrace time.Duration
-	// StopGrace is the stop grace, in seconds, for a cancellation.
-	StopGrace int
-	// Debugf is optional; a non-nil one receives progress notes.
-	Debugf func(format string, args ...any)
+	ops SupervisorConfig
 
 	queued func(os.Signal)
 }
@@ -70,17 +46,7 @@ type SupervisorConfig struct {
 
 // NewSupervisor builds the shared supervision from the engine's operations.
 func NewSupervisor(cfg SupervisorConfig) *Supervisor {
-	return &Supervisor{
-		Send:             cfg.Send,
-		Stop:             cfg.Stop,
-		IsRunning:        cfg.IsRunning,
-		SecretsStartWait: cfg.SecretsStartWait,
-		SecretsGrace:     cfg.SecretsGrace,
-		CancelGrace:      cfg.CancelGrace,
-		StopGrace:        cfg.StopGrace,
-		Debugf:           cfg.Debugf,
-		queued:           cfg.SignalQueued,
-	}
+	return &Supervisor{ops: cfg}
 }
 
 // SignalQueued registers a callback fired after a signal is queued and one
@@ -88,8 +54,8 @@ func NewSupervisor(cfg SupervisorConfig) *Supervisor {
 func (s *Supervisor) SignalQueued(f func(os.Signal)) { s.queued = f }
 
 func (s *Supervisor) debugf(format string, a ...any) {
-	if s.Debugf != nil {
-		s.Debugf(format, a...)
+	if s.ops.Debugf != nil {
+		s.ops.Debugf(format, a...)
 	}
 }
 
@@ -101,12 +67,12 @@ func (s *Supervisor) debugf(format string, a ...any) {
 // and Stop with StopGrace follows after CancelGrace.
 func (s *Supervisor) ForwardSignals(ctx context.Context, name string, sigs <-chan os.Signal, done <-chan struct{}) {
 	var pending SignalQueue
-	send := func(sig os.Signal) bool { return s.Send(name, sig) }
+	send := func(sig os.Signal) bool { return s.ops.Send(name, sig) }
 	queue := func(sig os.Signal) {
 		pending.Push(sig)
 		pending.Deliver(send)
-		if s.queued != nil {
-			s.queued(sig)
+		if s.ops.SignalQueued != nil {
+			s.ops.SignalQueued(sig)
 		}
 	}
 	var stopAt <-chan time.Time
@@ -123,7 +89,7 @@ func (s *Supervisor) ForwardSignals(ctx context.Context, name string, sigs <-cha
 		case <-cancelled:
 			cancelled = nil
 			queue(syscall.SIGTERM)
-			stopAt = time.After(s.CancelGrace)
+			stopAt = time.After(s.ops.CancelGrace)
 		case <-stopAt:
 			stopAt, stopDue = nil, true
 		case <-retry.C:
@@ -133,7 +99,7 @@ func (s *Supervisor) ForwardSignals(ctx context.Context, name string, sigs <-cha
 		}
 		if stopDue && !stopped {
 			s.debugf("stopping %s after cancellation", name)
-			stopped = s.Stop(name, s.StopGrace) == nil
+			stopped = s.ops.Stop(name, s.ops.StopGrace) == nil
 		}
 	}
 }
@@ -153,8 +119,8 @@ func SignalName(sig os.Signal) (string, bool) {
 // at once; the caller then removes the secrets dir.
 func (s *Supervisor) RemoveSecretsOnceRunning(name, dir string, done <-chan struct{}) {
 	file := filepath.Join(dir, SecretsFile)
-	startBy := time.Now().Add(s.SecretsStartWait)
-	for !s.IsRunning(name) {
+	startBy := time.Now().Add(s.ops.SecretsStartWait)
+	for !s.ops.IsRunning(name) {
 		if time.Now().After(startBy) {
 			os.Remove(file)
 			return
@@ -165,7 +131,7 @@ func (s *Supervisor) RemoveSecretsOnceRunning(name, dir string, done <-chan stru
 		case <-time.After(200 * time.Millisecond):
 		}
 	}
-	grace := time.Now().Add(s.SecretsGrace)
+	grace := time.Now().Add(s.ops.SecretsGrace)
 	for time.Now().Before(grace) {
 		if _, err := os.Stat(file); err != nil {
 			return

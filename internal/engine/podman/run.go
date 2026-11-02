@@ -2,16 +2,8 @@ package podman
 
 import (
 	"context"
-	"errors"
-	"fmt"
 	"os"
-	"os/exec"
-	"os/signal"
-	"path/filepath"
 	"strings"
-	"sync"
-	"syscall"
-	"time"
 
 	"github.com/sdougbrown/paddock/internal/config"
 	"github.com/sdougbrown/paddock/internal/engine"
@@ -27,167 +19,69 @@ func (e *Engine) Run(ctx context.Context, p *plan.Plan, o engine.Options) (int, 
 	if err := e.defaults(); err != nil {
 		return 1, err
 	}
-	if p.Engine != "" && p.Engine != config.EnginePodman {
-		return 1, fmt.Errorf("plan engine %q is not %s", p.Engine, config.EnginePodman)
-	}
-	if p.Workdir == "" {
-		return 1, errors.New("plan has no workdir")
-	}
-	secrets, err := runstage.ResolveSecrets(p.Env, e.lookup)
-	if err != nil {
-		return 1, err
-	}
-	u, err := runstage.HostUser()
-	if err != nil {
-		return 1, fmt.Errorf("host user: %w", err)
-	}
-	// The guest HOME is the host's $HOME, from which avenor derives the
-	// Claude transcript path.
-	u.Home = e.Home
+	return runstage.ContainerRun(ctx, p, o.Verify, e.containerOps())
+}
 
-	image, binDir, entry := e.testImage, "", e.testEntrypoint
-	if image == "" {
-		if image, err = e.ensureImages(ctx, p); err != nil {
-			return 1, err
-		}
-		src, err := runstage.LocateInitBinary(e.getenv, os.Executable)
-		if err != nil {
-			return 1, err
-		}
-		if binDir, err = runstage.StageInitBinary(e.CacheRoot, src); err != nil {
-			return 1, err
-		}
-		entry = initcfg.InitPath
+// containerOps carries the podman CLI's shape into the shared container
+// sequence.
+func (e *Engine) containerOps() runstage.ContainerOps {
+	return runstage.ContainerOps{
+		EngineName:       config.EnginePodman,
+		RunLabel:         "podman run",
+		TestImage:        e.testImage,
+		TestEntrypoint:   e.testEntrypoint,
+		TestArgs:         e.testArgs,
+		TestStartDelay:   e.testStartDelay,
+		Getenv:           e.getenv,
+		Lookup:           e.lookup,
+		Home:             e.Home,
+		StateRoot:        e.StateRoot,
+		CacheRoot:        e.CacheRoot,
+		Stdin:            e.Stdin,
+		Stdout:           e.Stdout,
+		Stderr:           e.Stderr,
+		CancelGrace:      e.cancelGrace,
+		StopGrace:        e.stopGrace,
+		SecretsGrace:     e.secretsGrace,
+		SecretsStartWait: e.secretsStartWait,
+		SignalQueued:     e.signalQueued,
+		Debugf:           e.debugf,
+		SignalContainer:  e.signalContainer,
+		StopContainer:    e.stopContainer,
+		IsRunning:        e.isRunning,
+		EnsureImages: func(ctx context.Context, p *plan.Plan) (string, string, string, error) {
+			image, err := e.ensureImages(ctx, p)
+			if err != nil {
+				return "", "", "", err
+			}
+			src, err := runstage.LocateInitBinary(e.getenv, os.Executable)
+			if err != nil {
+				return "", "", "", err
+			}
+			binDir, err := runstage.StageInitBinary(e.CacheRoot, src)
+			if err != nil {
+				return "", "", "", err
+			}
+			return image, binDir, initcfg.InitPath, nil
+		},
+		Watchdog: func(name string, dirs runstage.RunDirs) (runstage.Finisher, error) {
+			return e.startWatchdog(name, dirs)
+		},
+		Argv: func(s runstage.ContainerArgv) []string {
+			return e.runArgv(runSpec{
+				Name:       s.Name,
+				TTY:        s.TTY,
+				CPUs:       s.CPUs,
+				Memory:     s.Memory,
+				Mounts:     s.Mounts,
+				Workdir:    s.Workdir,
+				Env:        s.Env,
+				Entrypoint: s.Entrypoint,
+				Image:      s.Image,
+				Args:       s.Args,
+			})
+		},
 	}
-
-	name, err := runstage.NewRunName()
-	if err != nil {
-		return 1, err
-	}
-	sigs := make(chan os.Signal, 4)
-	signal.Notify(sigs, syscall.SIGTERM, syscall.SIGINT, syscall.SIGHUP)
-	defer signal.Stop(sigs)
-
-	dirs, err := runstage.CreateRunDirs(e.StateRoot, name)
-	if err != nil {
-		return 1, err
-	}
-	var wd *runstage.WatchdogHandle
-	defer func() {
-		dirs.Remove()
-		if wd != nil {
-			wd.Finish()
-		}
-	}()
-	if wd, err = e.startWatchdog(name, dirs); err != nil {
-		return 1, err
-	}
-
-	tdir := runstage.TranscriptDir(e.Home, p.Workdir)
-	if err := os.MkdirAll(tdir, 0o755); err != nil {
-		return 1, err
-	}
-	var pass []string
-	for _, k := range runstage.PassthroughEnv {
-		if v := e.getenv(k); v != "" {
-			pass = append(pass, k+"="+v)
-		}
-	}
-	layout := runstage.MountLayout{Dirs: dirs, BinDir: binDir, TranscriptDir: tdir}
-	if len(p.Claude.ManagedSettings) > 0 {
-		layout.UserSettings = filepath.Join(dirs.Settings, runstage.UserSettingsFile)
-		layout.UserSettingsAt = runstage.UserSettingsPath(u.Home)
-	}
-	mounts, err := runstage.GuestMounts(p, layout)
-	if err != nil {
-		return 1, err
-	}
-	cfg, err := runstage.BuildInitConfig(p, runstage.InitInput{User: u, Verify: o.Verify, TranscriptDir: tdir, Mounts: mounts, Passthrough: pass})
-	if err != nil {
-		return 1, err
-	}
-	if err := initcfg.Write(filepath.Join(dirs.State, filepath.Base(initcfg.ConfigPath)), cfg); err != nil {
-		return 1, err
-	}
-	if err := runstage.CopySeedFiles(dirs.State, p.Claude.SeedFiles); err != nil {
-		return 1, err
-	}
-	if layout.UserSettings != "" {
-		if err := os.WriteFile(layout.UserSettings, p.Claude.ManagedSettings, 0o644); err != nil {
-			return 1, err
-		}
-	}
-	if secrets != nil {
-		if err := runstage.WriteSecrets(dirs.Secrets, secrets); err != nil {
-			return 1, err
-		}
-	}
-
-	argv := e.runArgv(runSpec{
-		Name:       name,
-		TTY:        runstage.IsTTY(e.Stdin),
-		CPUs:       p.Limits.CPUs,
-		Memory:     p.Limits.Memory,
-		Mounts:     mounts,
-		Workdir:    p.Workdir,
-		Env:        pass,
-		Entrypoint: entry,
-		Image:      image,
-		Args:       e.testArgs,
-	})
-	e.debugf("%s", strings.Join(argv, " "))
-
-	cmd := exec.Command(argv[0], argv[1:]...)
-	cmd.Stdin, cmd.Stdout, cmd.Stderr = e.Stdin, e.Stdout, e.Stderr
-
-	if e.testStartDelay > 0 {
-		select {
-		case <-ctx.Done():
-		case <-time.After(e.testStartDelay):
-		}
-	}
-	if err := ctx.Err(); err != nil {
-		return 1, err
-	}
-	if err := cmd.Start(); err != nil {
-		return 1, fmt.Errorf("podman run: %w", err)
-	}
-
-	sup := e.supervisor()
-	done := make(chan struct{})
-	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		sup.ForwardSignals(ctx, name, sigs, done)
-	}()
-	if secrets != nil {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			sup.RemoveSecretsOnceRunning(name, dirs.Secrets, done)
-		}()
-	}
-
-	waitErr := cmd.Wait()
-	close(done)
-	wg.Wait()
-
-	code := 0
-	var exitErr *exec.ExitError
-	switch {
-	case waitErr == nil:
-	case errors.As(waitErr, &exitErr):
-		code = exitErr.ExitCode()
-		if ws, ok := exitErr.Sys().(syscall.WaitStatus); ok && ws.Signaled() {
-			code = 128 + int(ws.Signal())
-			// The client died without the container's own exit; stop it.
-			e.stopContainer(name, orphanStopGrace)
-		}
-	default:
-		return 1, waitErr
-	}
-	return code, nil
 }
 
 // cli runs `podman args...` with its output discarded, bounded by

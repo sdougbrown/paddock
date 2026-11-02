@@ -1,20 +1,13 @@
-// Package applecontainer runs plans in Apple `container` VMs.
 package applecontainer
 
 import (
 	"context"
-	"encoding/json"
-	"errors"
-	"fmt"
 	"os"
-	"os/exec"
-	"os/signal"
 	"path/filepath"
 	"strconv"
-	"sync"
-	"syscall"
 	"time"
 
+	"encoding/json"
 	"github.com/sdougbrown/paddock/internal/config"
 	"github.com/sdougbrown/paddock/internal/engine"
 	"github.com/sdougbrown/paddock/internal/initcfg"
@@ -83,166 +76,86 @@ func (e *Engine) Run(ctx context.Context, p *plan.Plan, o engine.Options) (int, 
 	if err := e.defaults(); err != nil {
 		return 1, err
 	}
-	if p.Engine != "" && p.Engine != config.EngineAppleContainer {
-		return 1, fmt.Errorf("plan engine %q is not %s", p.Engine, config.EngineAppleContainer)
-	}
-	if p.Workdir == "" {
-		return 1, errors.New("plan has no workdir")
-	}
-	secrets, err := runstage.ResolveSecrets(p.Env, e.lookup)
-	if err != nil {
-		return 1, err
-	}
-	u, err := runstage.HostUser()
-	if err != nil {
-		return 1, fmt.Errorf("host user: %w", err)
-	}
-	// The guest HOME is the host's $HOME, from which avenor derives the
-	// Claude transcript path.
-	u.Home = e.Home
+	return runstage.ContainerRun(ctx, p, o.Verify, e.containerOps())
+}
 
-	image, binDir, entry := e.testImage, "", e.testEntrypoint
-	if image == "" {
-		if image, err = e.ensureImages(ctx, p); err != nil {
-			return 1, err
-		}
-		src, err := runstage.LocateInitBinary(e.getenv, os.Executable)
-		if err != nil {
-			return 1, err
-		}
-		if binDir, err = runstage.StageInitBinary(e.CacheRoot, src); err != nil {
-			return 1, err
-		}
-		entry = initcfg.InitPath
+// containerOps carries the container CLI's shape into the shared container
+// sequence.
+func (e *Engine) containerOps() runstage.ContainerOps {
+	return runstage.ContainerOps{
+		EngineName:       config.EngineAppleContainer,
+		RunLabel:         "container run",
+		TestImage:        e.testImage,
+		TestEntrypoint:   e.testEntrypoint,
+		TestArgs:         e.testArgs,
+		TestStartDelay:   e.testStartDelay,
+		Getenv:           e.getenv,
+		Lookup:           e.lookup,
+		Home:             e.Home,
+		StateRoot:        e.StateRoot,
+		CacheRoot:        e.CacheRoot,
+		Stdin:            e.Stdin,
+		Stdout:           e.Stdout,
+		Stderr:           e.Stderr,
+		CancelGrace:      e.cancelGrace,
+		StopGrace:        e.stopGrace,
+		SecretsGrace:     e.secretsGrace,
+		SecretsStartWait: e.secretsStartWait,
+		SignalQueued:     e.signalQueued,
+		Debugf:           e.debugf,
+		SignalContainer:  e.signalContainer,
+		StopContainer:    e.stopContainer,
+		IsRunning:        e.isRunning,
+		EnsureImages: func(ctx context.Context, p *plan.Plan) (string, string, string, error) {
+			image, err := e.ensureImages(ctx, p)
+			if err != nil {
+				return "", "", "", err
+			}
+			src, err := runstage.LocateInitBinary(e.getenv, os.Executable)
+			if err != nil {
+				return "", "", "", err
+			}
+			binDir, err := runstage.StageInitBinary(e.CacheRoot, src)
+			if err != nil {
+				return "", "", "", err
+			}
+			return image, binDir, initcfg.InitPath, nil
+		},
+		Watchdog: func(name string, dirs runstage.RunDirs) (runstage.Finisher, error) {
+			return e.startWatchdog(name, dirs)
+		},
+		Argv: func(s runstage.ContainerArgv) []string {
+			return runArgv(runSpec{
+				Name:       s.Name,
+				TTY:        s.TTY,
+				CPUs:       s.CPUs,
+				Memory:     s.Memory,
+				Mounts:     s.Mounts,
+				Workdir:    s.Workdir,
+				Env:        s.Env,
+				Entrypoint: s.Entrypoint,
+				Image:      s.Image,
+				Args:       s.Args,
+			})
+		},
 	}
+}
 
-	name, err := runstage.NewRunName()
-	if err != nil {
-		return 1, err
-	}
-	sigs := make(chan os.Signal, 4)
-	signal.Notify(sigs, syscall.SIGTERM, syscall.SIGINT, syscall.SIGHUP)
-	defer signal.Stop(sigs)
-
-	dirs, err := runstage.CreateRunDirs(e.StateRoot, name)
-	if err != nil {
-		return 1, err
-	}
-	var wd *runstage.WatchdogHandle
-	defer func() {
-		dirs.Remove()
-		if wd != nil {
-			wd.Finish()
-		}
-	}()
-	if wd, err = e.startWatchdog(name, dirs); err != nil {
-		return 1, err
-	}
-
-	tdir := runstage.TranscriptDir(e.Home, p.Workdir)
-	if err := os.MkdirAll(tdir, 0o755); err != nil {
-		return 1, err
-	}
-	var pass []string
-	for _, k := range runstage.PassthroughEnv {
-		if v := e.getenv(k); v != "" {
-			pass = append(pass, k+"="+v)
-		}
-	}
-	layout := runstage.MountLayout{Dirs: dirs, BinDir: binDir, TranscriptDir: tdir}
-	if len(p.Claude.ManagedSettings) > 0 {
-		layout.UserSettings = filepath.Join(dirs.Settings, runstage.UserSettingsFile)
-		layout.UserSettingsAt = runstage.UserSettingsPath(u.Home)
-	}
-	mounts, err := runstage.GuestMounts(p, layout)
-	if err != nil {
-		return 1, err
-	}
-	cfg, err := runstage.BuildInitConfig(p, runstage.InitInput{User: u, Verify: o.Verify, TranscriptDir: tdir, Mounts: mounts, Passthrough: pass})
-	if err != nil {
-		return 1, err
-	}
-	if err := initcfg.Write(filepath.Join(dirs.State, filepath.Base(initcfg.ConfigPath)), cfg); err != nil {
-		return 1, err
-	}
-	if err := runstage.CopySeedFiles(dirs.State, p.Claude.SeedFiles); err != nil {
-		return 1, err
-	}
-	if layout.UserSettings != "" {
-		if err := os.WriteFile(layout.UserSettings, p.Claude.ManagedSettings, 0o644); err != nil {
-			return 1, err
-		}
-	}
-	if secrets != nil {
-		if err := runstage.WriteSecrets(dirs.Secrets, secrets); err != nil {
-			return 1, err
-		}
-	}
-
-	argv := runArgv(runSpec{
-		Name:       name,
-		TTY:        runstage.IsTTY(e.Stdin),
-		CPUs:       p.Limits.CPUs,
-		Memory:     p.Limits.Memory,
-		Mounts:     mounts,
-		Workdir:    p.Workdir,
-		Env:        pass,
-		Entrypoint: entry,
-		Image:      image,
-		Args:       e.testArgs,
+// supervisor builds the shared supervision for this run: the engine supplies
+// the CLI's send, stop, and running checks; the queue, retry cadence,
+// cancellation escalation, and secrets cleanup are runstage's.
+func (e *Engine) supervisor() *runstage.Supervisor {
+	return runstage.NewSupervisor(runstage.SupervisorConfig{
+		Send:             e.signalContainer,
+		Stop:             e.stopContainer,
+		IsRunning:        e.isRunning,
+		SecretsStartWait: e.secretsStartWait,
+		SecretsGrace:     e.secretsGrace,
+		CancelGrace:      e.cancelGrace,
+		StopGrace:        e.stopGrace,
+		Debugf:           e.debugf,
+		SignalQueued:     e.signalQueued,
 	})
-	e.debugf("%s %v", e.bin(), argv)
-
-	cmd := exec.Command(e.bin(), argv...)
-	cmd.Stdin, cmd.Stdout, cmd.Stderr = e.Stdin, e.Stdout, e.Stderr
-
-	if e.testStartDelay > 0 {
-		select {
-		case <-ctx.Done():
-		case <-time.After(e.testStartDelay):
-		}
-	}
-	if err := ctx.Err(); err != nil {
-		return 1, err
-	}
-	if err := cmd.Start(); err != nil {
-		return 1, fmt.Errorf("container run: %w", err)
-	}
-
-	done := make(chan struct{})
-	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		e.supervisor().ForwardSignals(ctx, name, sigs, done)
-	}()
-	if secrets != nil {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			e.supervisor().RemoveSecretsOnceRunning(name, dirs.Secrets, done)
-		}()
-	}
-
-	waitErr := cmd.Wait()
-	close(done)
-	wg.Wait()
-
-	code := 0
-	var exitErr *exec.ExitError
-	switch {
-	case waitErr == nil:
-	case errors.As(waitErr, &exitErr):
-		code = exitErr.ExitCode()
-		if ws, ok := exitErr.Sys().(syscall.WaitStatus); ok && ws.Signaled() {
-			code = 128 + int(ws.Signal())
-			// The client died without the container's own exit; stop it.
-			e.stopContainer(name, orphanStopGrace)
-		}
-	default:
-		return 1, waitErr
-	}
-	return code, nil
 }
 
 // cli runs `container args...` with its output discarded, bounded by
@@ -252,6 +165,14 @@ func (e *Engine) cli(args ...string) error {
 	_, err := e.cliOutput(context.Background(), args...)
 	return err
 }
+
+// orphanStopGrace is the stop grace, in seconds, for a container whose
+// paddock side is gone: the `container run` client died (Run) or paddock
+// itself died (the watchdog). Nothing is left to wait on the guest, so
+// cleanup is prompt. A cancellation uses Engine.stopGrace instead: it is the
+// last step of an escalation that has already tried SIGTERM and waited
+// cancelGrace, and the caller chooses how long it lasts.
+const orphanStopGrace = 2
 
 // stopArgs is the `container stop` argv that stops name, killing it after
 // grace seconds. Run and the watchdog both stop containers with it.
@@ -265,37 +186,11 @@ func stopTimeout(grace int) time.Duration {
 	return cliTimeout + time.Duration(grace)*time.Second
 }
 
-// orphanStopGrace is the stop grace, in seconds, for a container whose
-// paddock side is gone: the `container run` client died (Run) or paddock
-// itself died (the watchdog). Nothing is left to wait on the guest, so
-// cleanup is prompt. A cancellation uses Engine.stopGrace instead: it is the
-// last step of an escalation that has already tried SIGTERM and waited
-// cancelGrace, and the caller chooses how long it lasts.
-const orphanStopGrace = 2
-
 // stopContainer asks the container to stop, killing it after secs seconds.
 // Like cli, it never uses the run's ctx.
 func (e *Engine) stopContainer(name string, secs int) error {
 	_, err := e.cliRun(context.Background(), stopTimeout(secs), stopArgs(name, secs)...)
 	return err
-}
-
-// supervisor builds the shared supervision for this run: the engine supplies
-// the CLI's send, stop, and running checks; the queue, retry cadence,
-// cancellation escalation, and secrets cleanup are runstage's.
-func (e *Engine) supervisor() *runstage.Supervisor {
-	sup := &runstage.Supervisor{
-		Send:             e.signalContainer,
-		Stop:             e.stopContainer,
-		IsRunning:        e.isRunning,
-		SecretsStartWait: e.secretsStartWait,
-		SecretsGrace:     e.secretsGrace,
-		CancelGrace:      e.cancelGrace,
-		StopGrace:        e.stopGrace,
-		Debugf:           e.debugf,
-	}
-	sup.SignalQueued(e.signalQueued)
-	return sup
 }
 
 // signalContainer delivers sig to the guest and reports whether it was

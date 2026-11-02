@@ -20,7 +20,7 @@ import (
 func fakeBwrap(t *testing.T) (bin string, dir string) {
 	t.Helper()
 	dir = t.TempDir()
-	script := "#!/bin/sh\nd=\"${0%/*}\"\n[ \"$1\" = __warm ] && exit 0\nprintf '%s ' \"$@\" >> \"$d/argv\"\necho >> \"$d/argv\"\nenv > \"$d/env\"\nexit ${FAKE_EXIT:-0}\n"
+	script := "#!/bin/sh\nd=\"${0%/*}\"\n[ \"$1\" = __warm ] && exit 0\nprintf '%s ' \"$@\" >> \"$d/argv\"\necho >> \"$d/argv\"\nenv > \"$d/env\"\ncp -r \"$HOME/\" \"$d/claude-dump\" 2>/dev/null || true\nexit ${FAKE_EXIT:-0}\n"
 	bin = filepath.Join(dir, "bwrap")
 	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
@@ -67,8 +67,17 @@ func TestRunStagesHomeAndDeliversSecretsOffArgv(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("BWRAP_TEST_TOKEN", "s3cr3t-value")
+	seedFile := filepath.Join(home, "CLAUDE.md")
+	if err := os.WriteFile(seedFile, []byte("context"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	p := testPlan(home, ws)
+	p.Claude = plan.ClaudePlan{
+		ManagedSettings: []byte(`{"deny":true}`),
+		SeedFiles:       []string{seedFile},
+	}
 	e := &Engine{Bin: bin, Home: home, StateRoot: filepath.Join(home, "state")}
-	code, err := e.Run(t.Context(), testPlan(home, ws), engine.Options{})
+	code, err := e.Run(t.Context(), p, engine.Options{})
 	if err != nil || code != 0 {
 		t.Fatalf("Run = %d, %v", code, err)
 	}
@@ -92,7 +101,23 @@ func TestRunStagesHomeAndDeliversSecretsOffArgv(t *testing.T) {
 			t.Errorf("the invoking environment leaked into the child env: %q", lines)
 		}
 	}
-
+	// Managed settings pin: the staged settings file binds read-only over
+	// the home's user-scope settings, so the agent cannot rewrite its own
+	// enforcement.
+	if !strings.Contains(argv, "--ro-bind ") || !strings.Contains(argv, "user-settings.json") {
+		t.Errorf("argv %q lacks the read-only managed settings pin", argv)
+	}
+	// The fake snapshots the seeded home during the run: onboarding marker,
+	// seed file, and the transcript symlink at the caller's host path.
+	if b, err := os.ReadFile(filepath.Join(dir, "claude-dump", ".claude", "CLAUDE.md")); err != nil || string(b) != "context" {
+		t.Errorf("seeded CLAUDE.md = %q, %v", b, err)
+	}
+	if b, err := os.ReadFile(filepath.Join(dir, "claude-dump", ".claude.json")); err != nil || !strings.Contains(string(b), "hasCompletedOnboarding") {
+		t.Errorf(".claude.json = %q, %v", b, err)
+	}
+	if target, err := os.Readlink(filepath.Join(dir, "claude-dump", ".claude", "projects")); err != nil || target != runstage.TranscriptDir(home, ws) {
+		t.Errorf("projects symlink = %q, %v; want %q", target, err, runstage.TranscriptDir(home, ws))
+	}
 }
 
 func TestRunFailsClosedAndCleansUp(t *testing.T) {
@@ -229,5 +254,45 @@ func TestRunKillsChildAfterGrace(t *testing.T) {
 		}
 	case <-time.After(10 * time.Second):
 		t.Fatal("Run never returned after cancellation")
+	}
+}
+
+// TestRunCancelBeforeStartNeverStarts cancels Run's context during the start
+// delay, before bwrap starts. Run must return the cancellation promptly
+// without ever launching the sandbox.
+func TestRunCancelBeforeStartNeverStarts(t *testing.T) {
+	t.Setenv("BWRAP_TEST_TOKEN", "x")
+	bin, dir := fakeBwrap(t)
+	home := t.TempDir()
+	ws := filepath.Join(home, "ws")
+	if err := os.Mkdir(ws, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	e := &Engine{
+		Bin:            bin,
+		Home:           home,
+		StateRoot:      filepath.Join(home, "state"),
+		testStartDelay: 20 * time.Second,
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	go func() {
+		// secrets.env is the last file Run writes before the start delay.
+		time.Sleep(300 * time.Millisecond)
+		cancel()
+	}()
+	start := time.Now()
+	code, err := e.Run(ctx, testPlan(home, ws), engine.Options{})
+	if err == nil || !strings.Contains(err.Error(), "context canceled") {
+		t.Fatalf("Run error = %v; want the cancellation", err)
+	}
+	if d := time.Since(start); d > 5*time.Second {
+		t.Errorf("Run returned after %s; want promptly after the cancel", d)
+	}
+	if code != 1 {
+		t.Errorf("exit code = %d; want 1", code)
+	}
+	// bwrap never ran: the fake's argv log is empty.
+	if b, _ := os.ReadFile(filepath.Join(dir, "argv")); len(b) != 0 {
+		t.Errorf("bwrap started despite the cancellation: %q", b)
 	}
 }

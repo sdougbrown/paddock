@@ -24,6 +24,10 @@ func TestBwrapReal(t *testing.T) {
 	if err := os.Mkdir(ws, 0o755); err != nil {
 		t.Fatal(err)
 	}
+	seedFile := filepath.Join(home, "CLAUDE.md")
+	if err := os.WriteFile(seedFile, []byte("context"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	e := &Engine{Home: home, StateRoot: filepath.Join(home, "state")}
 	p := &plan.Plan{
 		Engine:    "bwrap",
@@ -32,8 +36,12 @@ func TestBwrapReal(t *testing.T) {
 		Mounts:    []plan.Mount{{Host: ws, Guest: ws}},
 		Network:   plan.Network{Policy: "none"},
 		Env:       []plan.EnvVar{{Name: "TOKEN", Source: plan.SourceEnv, Ref: "BWRAP_REAL_TOKEN"}},
-		Argv: []string{"bash", "-x", "-c",
-			`cp "$HOME/.claude.json" home-proof.txt; echo ok > wrote.txt; [ -n "$TOKEN" ] && printf '%s' "$TOKEN" > token.txt; timeout 2 bash -c 'exec 3<>/dev/tcp/example.com/443' 2>/dev/null && echo network-up > net.txt || echo no-network > net.txt`},
+		Claude: plan.ClaudePlan{
+			ManagedSettings: []byte(`{"deny":true}`),
+			SeedFiles:       []string{seedFile},
+		},
+		Argv: []string{"bash", "-c",
+			`cp "$HOME/.claude.json" home-proof.txt; cp "$HOME/.claude/CLAUDE.md" seed-proof.txt; cp "$HOME/.claude/settings.json" settings-proof.txt; echo ok > wrote.txt; [ -n "$TOKEN" ] && printf '%s' "$TOKEN" > token.txt; timeout 2 bash -c 'exec 3<>/dev/tcp/example.com/443' 2>/dev/null && echo network-up > net.txt || echo no-network > net.txt`},
 	}
 	t.Setenv("BWRAP_REAL_TOKEN", "real-secret")
 	code, err := e.Run(t.Context(), p, engine.Options{})
@@ -57,6 +65,17 @@ func TestBwrapReal(t *testing.T) {
 	tdir := filepath.Join(home, ".claude", "projects")
 	if _, err := os.Stat(tdir); err != nil {
 		t.Errorf("transcript dir missing at the host path: %v", err)
+	}
+	// The seeded file and the pinned settings reach the home; the managed
+	// settings never touch the host's /etc.
+	if b, err := os.ReadFile(filepath.Join(ws, "seed-proof.txt")); err != nil || string(b) != "context" {
+		t.Errorf("seed-proof.txt = %q, %v", b, err)
+	}
+	if b, err := os.ReadFile(filepath.Join(ws, "settings-proof.txt")); err != nil || string(b) != `{"deny":true}` {
+		t.Errorf("settings-proof.txt = %q, %v", b, err)
+	}
+	if _, err := os.Stat("/etc/claude-code"); !os.IsNotExist(err) {
+		t.Errorf("/etc/claude-code exists; the guest's managed path leaked to the host: %v", err)
 	}
 	// The secrets artifact does not survive the run.
 	secrets, _ := filepath.Glob(filepath.Join(home, "state", "runs", "paddock-*", "secrets", "*"))

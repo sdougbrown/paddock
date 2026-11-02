@@ -95,14 +95,25 @@ func (e *Engine) Run(ctx context.Context, p *plan.Plan, o engine.Options) (int, 
 			return 1, err
 		}
 	}
+	// The shared seeding writes managed settings at the guest's managed
+	// path, which the read-only host rootfs must not receive: the engine
+	// pins user-scope settings with the read-only bind instead, and stages
+	// the seed files into the run's state directory for the seeding to copy.
+	managed := cfg.Claude.ManagedSettings
+	cfg.Claude.ManagedSettings = nil
+	if err := runstage.CopySeedFiles(dirs.State, p.Claude.SeedFiles); err != nil {
+		return 1, err
+	}
+	fs := runstage.NewHomeFS("/", cfg)
+	fs.SeedDir = filepath.Join(dirs.State, filepath.Base(initcfg.SeedDir))
 	var settings string
-	if len(p.Claude.ManagedSettings) > 0 {
+	if len(managed) > 0 {
 		settings = filepath.Join(dirs.Settings, runstage.UserSettingsFile)
-		if err := os.WriteFile(settings, p.Claude.ManagedSettings, 0o644); err != nil {
+		if err := os.WriteFile(settings, managed, 0o644); err != nil {
 			return 1, err
 		}
 	}
-	if err := runstage.PrepareHome(runstage.NewHomeFS("/", cfg), cfg); err != nil {
+	if err := runstage.PrepareHome(fs, cfg); err != nil {
 		return 1, err
 	}
 	mounts, err := planMounts(p)
@@ -126,6 +137,9 @@ func (e *Engine) Run(ctx context.Context, p *plan.Plan, o engine.Options) (int, 
 	signal.Notify(sigs, syscall.SIGTERM, syscall.SIGINT, syscall.SIGHUP)
 	defer signal.Stop(sigs)
 
+	// From here the child is the run's process: the supervisor may deliver
+	// signals to it and kill it on escalation.
+	running := false
 	cmd := exec.Command(argv[0], argv[1:]...)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = e.Stdin, e.Stdout, e.Stderr
 	cmd.Env = childEnv(cfg, secrets, home)
@@ -143,14 +157,34 @@ func (e *Engine) Run(ctx context.Context, p *plan.Plan, o engine.Options) (int, 
 	if err := cmd.Start(); err != nil {
 		return 1, fmt.Errorf("bwrap: %w", err)
 	}
+	// From here the child is the run's process: the supervisor may deliver
+	// signals to it and kill it on escalation.
+	running = true
 	if secrets != nil {
 		// The values are already in the child's environment; the artifact
 		// goes, like the container engines' post-init cleanup.
 		os.Remove(filepath.Join(dirs.Secrets, runstage.SecretsFile))
 	}
 
+	// The bwrap child is the run's own process: a signal is delivered
+	// directly, and the cancellation escalation kills it after the grace.
+	sup := runstage.NewSupervisor(runstage.SupervisorConfig{
+		Send: func(name string, sig os.Signal) bool {
+			if running {
+				return cmd.Process.Signal(sig) == nil
+			}
+			return false
+		},
+		Stop: func(name string, grace int) error {
+			return cmd.Process.Kill()
+		},
+		IsRunning:    func(name string) bool { return running },
+		CancelGrace:  e.cancelGrace,
+		Debugf:       e.debugf,
+		SignalQueued: e.signalQueued,
+	})
 	done := make(chan struct{})
-	go e.forwardSignals(ctx, cmd, sigs, done)
+	go sup.ForwardSignals(ctx, name, sigs, done)
 
 	waitErr := cmd.Wait()
 	close(done)

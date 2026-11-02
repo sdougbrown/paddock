@@ -20,7 +20,7 @@ import (
 func fakeBwrap(t *testing.T) (bin string, dir string) {
 	t.Helper()
 	dir = t.TempDir()
-	script := "#!/bin/sh\nd=\"${0%/*}\"\n[ \"$1\" = __warm ] && exit 0\nprintf '%s ' \"$@\" >> \"$d/argv\"\necho >> \"$d/argv\"\nenv > \"$d/env\"\ncp -a \"$HOME/\" \"$d/claude-dump\" 2>/dev/null || true\nexit ${FAKE_EXIT:-0}\n"
+	script := "#!/bin/sh\nd=\"${0%/*}\"\n[ \"$1\" = __warm ] && exit 0\nmkdir -p \"$d/calls\"\nprintf '%s ' \"$@\" > \"$d/calls/$$.log\"\nenv > \"$d/env\"\ncp -a \"$HOME/\" \"$d/claude-dump\" 2>/dev/null || true\nexit ${FAKE_EXIT:-0}\n"
 	bin = filepath.Join(dir, "bwrap")
 	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
@@ -81,8 +81,10 @@ func TestRunStagesHomeAndDeliversSecretsOffArgv(t *testing.T) {
 	if err != nil || code != 0 {
 		t.Fatalf("Run = %d, %v", code, err)
 	}
-	b, _ := os.ReadFile(filepath.Join(dir, "argv"))
-	argv := string(b)
+	var argv string
+	for _, f := range argvLogs(t, dir) {
+		argv += f + " "
+	}
 	for _, want := range []string{"--unshare-net", "--bind ", "--chdir " + ws, "claude -p"} {
 		if !strings.Contains(argv, want) {
 			t.Errorf("argv %q lacks %q", argv, want)
@@ -295,4 +297,16 @@ func TestRunCancelBeforeStartNeverStarts(t *testing.T) {
 	if b, _ := os.ReadFile(filepath.Join(dir, "argv")); len(b) != 0 {
 		t.Errorf("bwrap started despite the cancellation: %q", b)
 	}
+}
+
+// argvLogs collects the fake's per-invocation logs, in name order.
+func argvLogs(t *testing.T, dir string) []string {
+	t.Helper()
+	files, _ := filepath.Glob(filepath.Join(dir, "calls", "*.log"))
+	var out []string
+	for _, f := range files {
+		b, _ := os.ReadFile(f)
+		out = append(out, strings.TrimSuffix(string(b), "\n"))
+	}
+	return out
 }

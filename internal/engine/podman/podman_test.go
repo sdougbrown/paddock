@@ -29,7 +29,6 @@ func TestMain(m *testing.M) {
 func fakePodman(t *testing.T, tags ...string) (bin string, calls func() [][]string) {
 	t.Helper()
 	dir := t.TempDir()
-	log := filepath.Join(dir, "log")
 	names := make([]string, 0, len(tags))
 	for _, tag := range tags {
 		names = append(names, "localhost/"+tag)
@@ -41,7 +40,7 @@ func fakePodman(t *testing.T, tags ...string) (bin string, calls func() [][]stri
 	if err := os.WriteFile(lsFile, blob, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	script := "#!/bin/sh\nd=\"${0%/*}\"\n[ \"$1\" = __warm ] && exit 0\nprintf '%s\\037' \"$@\" >> " + log + "\necho >> " + log + "\n" +
+	script := "#!/bin/sh\nd=\"${0%/*}\"\n[ \"$1\" = __warm ] && exit 0\nmkdir -p \"$d/calls\"\nprintf '%s\\037' \"$@\" > \"$d/calls/$$.log\"\n" +
 		"[ -e " + dir + "/fail-$1 ] && exit 1\n" +
 		"[ -e " + dir + "/slow-$1 ] && exec sleep 30\n" +
 		"[ -e " + dir + "/slow-once-$1 ] && rm " + dir + "/slow-once-$1 && exec sleep 30\n" +
@@ -73,11 +72,12 @@ func fakePodman(t *testing.T, tags ...string) (bin string, calls func() [][]stri
 		t.Fatal(err)
 	}
 	return bin, func() [][]string {
-		b, _ := os.ReadFile(log)
+		files, _ := filepath.Glob(filepath.Join(dir, "calls", "*.log"))
 		var out [][]string
-		for _, l := range strings.Split(strings.TrimSpace(string(b)), "\n") {
-			if l != "" {
-				out = append(out, strings.Split(strings.TrimSuffix(l, "\x1f"), "\x1f"))
+		for _, f := range files {
+			b, _ := os.ReadFile(f)
+			if l := strings.TrimSuffix(string(b), "\x1f"); l != "" {
+				out = append(out, strings.Split(l, "\x1f"))
 			}
 		}
 		return out

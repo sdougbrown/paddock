@@ -123,6 +123,20 @@ func (e *Engine) Run(ctx context.Context, p *plan.Plan, o engine.Options) (int, 
 	// The transcript dir binds read-write at its host path, so writes through
 	// the home's projects symlink reach the caller's path.
 	mounts = append(mounts, runstage.GuestMount{Host: tdir, Guest: tdir})
+	// A rw workspace lets the agent write project-scope settings that would
+	// override the pinned user scope on a later run. Where project-scope
+	// settings files exist at staging, the managed settings bind over them
+	// read-only; where they do not, the current run's policy is loaded at
+	// startup and cannot be changed mid-run. Residual risk 13 covers what
+	// remains.
+	if len(managed) > 0 {
+		for _, name := range []string{"settings.json", "settings.local.json"} {
+			project := filepath.Join(p.Workdir, ".claude", name)
+			if _, err := os.Stat(project); err == nil {
+				mounts = append(mounts, runstage.GuestMount{Host: settings, Guest: project, ReadOnly: true})
+			}
+		}
+	}
 	argv := e.runArgv(runSpec{
 		NetNone: p.Network.Policy == initcfg.PolicyNone,
 		Mounts:  mounts,
@@ -142,7 +156,19 @@ func (e *Engine) Run(ctx context.Context, p *plan.Plan, o engine.Options) (int, 
 	running := false
 	cmd := exec.Command(argv[0], argv[1:]...)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = e.Stdin, e.Stdout, e.Stderr
-	cmd.Env = childEnv(cfg, secrets, home)
+	// Tier-0 inherits only PATH from the invoking environment: the host
+	// toolchain lives on it, and everything else (tokens, broker URLs,
+	// shell history) stays out of the run.
+	path, hasPath := os.LookupEnv("PATH")
+	inherited := []string{}
+	if hasPath {
+		inherited = append(inherited, "PATH="+path)
+	}
+	env, err := runstage.AgentEnv(inherited, u, cfg.Env, secretsLines(secrets))
+	if err != nil {
+		return 1, err
+	}
+	cmd.Env = env
 	cmd.Dir = p.Workdir
 
 	if e.testStartDelay > 0 {
@@ -237,6 +263,15 @@ func planMountTargets(p *plan.Plan, tdir string) error {
 		}
 	}
 	return nil
+}
+
+// secretsLines splits the resolved secrets file content into KEY=VALUE
+// entries for the child environment.
+func secretsLines(secrets []byte) []string {
+	if secrets == nil {
+		return nil
+	}
+	return strings.Split(strings.TrimRight(string(secrets), "\n"), "\n")
 }
 
 // planMounts validates and copies the plan's mounts.

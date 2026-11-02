@@ -12,12 +12,10 @@ func TestRunArgvGolden(t *testing.T) {
 		name    string
 		netNone bool
 		mounts  []runstage.GuestMount
-		want    string
 	}{
 		{"policy host keeps the network", false,
-			[]runstage.GuestMount{{Host: "/h/ws", Guest: "/h/ws", ReadOnly: true}},
-			"--ro-bind /h/ws:/h/ws"},
-		{"policy none unshares the network", true, nil, "--unshare-net"},
+			[]runstage.GuestMount{{Host: "/h/ws", Guest: "/h/ws", ReadOnly: true}}},
+		{"policy none unshares the network", true, nil},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

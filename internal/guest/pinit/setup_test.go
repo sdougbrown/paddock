@@ -160,7 +160,7 @@ func TestAgentEnv(t *testing.T) {
 		{
 			name:      "inherited var kept",
 			inherited: []string{"LANG=C.UTF-8"},
-			want:      append([]string{"LANG=C.UTF-8", "PATH=" + DefaultPath}, fixed...),
+			want:      append([]string{"LANG=C.UTF-8", "PATH=" + runstage.DefaultPath}, fixed...),
 		},
 		{
 			name:      "inherited PATH kept",
@@ -170,7 +170,7 @@ func TestAgentEnv(t *testing.T) {
 		{
 			name:      "fixed HOME overrides inherited HOME",
 			inherited: []string{"HOME=/elsewhere", "LANG=C"},
-			want:      append([]string{"HOME=/Users/doug", "LANG=C", "PATH=" + DefaultPath}, fixed[1:]...),
+			want:      append([]string{"HOME=/Users/doug", "LANG=C", "PATH=" + runstage.DefaultPath}, fixed[1:]...),
 		},
 		{
 			name:      "Config.Env and secrets override",
@@ -184,7 +184,7 @@ func TestAgentEnv(t *testing.T) {
 			inherited: []string{"HOME=/elsewhere"},
 			extra:     []string{"SHELL=/bin/sh", "TOKEN=from-env"},
 			secrets:   []string{"TOKEN=from-secret"},
-			want: []string{"HOME=/Users/doug", "PATH=" + DefaultPath, "USER=doug", "LOGNAME=doug",
+			want: []string{"HOME=/Users/doug", "PATH=" + runstage.DefaultPath, "USER=doug", "LOGNAME=doug",
 				"SHELL=/bin/sh", "TOKEN=from-secret"},
 		},
 		{
@@ -195,7 +195,7 @@ func TestAgentEnv(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := agentEnv(tt.inherited, u, tt.extra, tt.secrets)
+			got, err := runstage.AgentEnv(tt.inherited, u, tt.extra, tt.secrets)
 			if (err != nil) != tt.wantErr {
 				t.Fatalf("err = %v, wantErr %v", err, tt.wantErr)
 			}

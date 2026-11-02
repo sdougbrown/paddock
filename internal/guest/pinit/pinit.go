@@ -82,7 +82,7 @@ func initMain() error {
 	if err := runstage.PrepareHome(runstage.NewHomeFS("/", cfg), cfg); err != nil {
 		return err
 	}
-	env, err := agentEnv(os.Environ(), cfg.User, cfg.Env, secrets)
+	env, err := runstage.AgentEnv(os.Environ(), cfg.User, cfg.Env, secrets)
 	if err != nil {
 		return err
 	}

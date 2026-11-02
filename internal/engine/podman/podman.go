@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"time"
 
 	"github.com/sdougbrown/paddock/internal/resolve"
@@ -86,7 +87,7 @@ func (e *Engine) defaults() error {
 		e.Home = h
 	}
 	if e.StateRoot == "" {
-		e.StateRoot = "/var/lib/paddock"
+		e.StateRoot = filepath.Join(e.Home, ".local", "state", "paddock")
 	}
 	if e.CacheRoot == "" {
 		e.CacheRoot = resolve.CacheRoot(e.Home)

@@ -28,7 +28,8 @@ func (e *Engine) runArgv(s runSpec) []string {
 		a = append(a, "-t")
 	}
 	a = append(a, "--init", "--name", s.Name,
-		"--cap-add", "NET_ADMIN", "--cap-add", "NET_RAW")
+		"--cap-add", "NET_ADMIN", "--cap-add", "NET_RAW",
+		"--security-opt", "label=disable")
 	if s.CPUs > 0 {
 		a = append(a, "--cpus", strconv.Itoa(s.CPUs))
 	}

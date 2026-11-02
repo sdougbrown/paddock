@@ -1,8 +1,6 @@
 package bwrap
 
 import (
-	"path/filepath"
-
 	"github.com/sdougbrown/paddock/internal/runstage"
 )
 
@@ -38,7 +36,7 @@ func (e *Engine) runArgv(s runSpec, home, settings string) []string {
 	if settings != "" {
 		// Bind the settings file read-only over the writable home, so the
 		// agent cannot rewrite its own enforcement.
-		a = append(a, "--ro-bind", settings, filepath.Join(home, ".claude", "settings.json"))
+		a = append(a, "--ro-bind", settings, runstage.UserSettingsPath(home))
 	}
 	a = append(a, "--chdir", s.Workdir)
 	return append(a, s.Argv...)

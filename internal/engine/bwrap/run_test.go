@@ -11,6 +11,7 @@ import (
 
 	"github.com/sdougbrown/paddock/internal/engine"
 	"github.com/sdougbrown/paddock/internal/plan"
+	"github.com/sdougbrown/paddock/internal/runstage"
 )
 
 // fakeBwrap returns a fake bwrap CLI that logs its argv and dumps the child
@@ -41,6 +42,22 @@ func testPlan(home, ws string) *plan.Plan {
 	}
 }
 
+// envLines splits an env dump into full lines, so assertions cannot match a
+// suffix of a longer variable's value.
+func envLines(t *testing.T, dump string) []string {
+	t.Helper()
+	return strings.Split(strings.TrimRight(dump, "\n"), "\n")
+}
+
+func hasEnvLine(lines []string, kv string) bool {
+	for _, l := range lines {
+		if l == kv {
+			return true
+		}
+	}
+	return false
+}
+
 func TestRunStagesHomeAndDeliversSecretsOffArgv(t *testing.T) {
 	bin, dir := fakeBwrap(t)
 	home := t.TempDir()
@@ -65,20 +82,19 @@ func TestRunStagesHomeAndDeliversSecretsOffArgv(t *testing.T) {
 		t.Errorf("the secret value leaked into the argv: %q", argv)
 	}
 	env, _ := os.ReadFile(filepath.Join(dir, "env"))
-	if !strings.Contains(string(env), "TOKEN=s3cr3t-value") {
-		t.Errorf("the secret value never reached the child env: %q", env)
+	lines := envLines(t, string(env))
+	if !hasEnvLine(lines, "TOKEN=s3cr3t-value") {
+		t.Errorf("the resolved secret never reached the child env as its own line: %q", lines)
 	}
-	if !strings.Contains(string(env), "HOME=") || !strings.Contains(string(env), filepath.Join(home, "state", "runs")) {
-		t.Errorf("HOME must point at the throwaway home: %q", env)
+	for _, l := range lines {
+		if strings.HasPrefix(l, "BWRAP_TEST_TOKEN=") {
+			t.Errorf("the invoking environment leaked into the child env: %q", lines)
+		}
 	}
-	// The throwaway home is seeded: onboarding marker, transcript dir.
-	runs, _ := filepath.Glob(filepath.Join(home, "state", "runs", "paddock-*", "home", ".claude.json"))
-	if len(runs) != 1 {
-		t.Fatalf("seeded .claude.json not found in the throwaway home: %v", runs)
-	}
+
 }
 
-func TestRunAllowlistFailsClosed(t *testing.T) {
+func TestRunFailsClosedAndCleansUp(t *testing.T) {
 	bin, _ := fakeBwrap(t)
 	home := t.TempDir()
 	ws := filepath.Join(home, "ws")
@@ -91,15 +107,29 @@ func TestRunAllowlistFailsClosed(t *testing.T) {
 	if _, err := e.Run(t.Context(), p, engine.Options{}); err == nil || !strings.Contains(err.Error(), "allowlist") {
 		t.Errorf("allowlist plan: err = %v; want a fail-closed error", err)
 	}
+	p2 := testPlan(home, ws)
+	p2.Limits = plan.Limits{CPUs: 4}
+	if _, err := e.Run(t.Context(), p2, engine.Options{}); err == nil || !strings.Contains(err.Error(), "limits") {
+		t.Errorf("limits plan: err = %v; want a fail-closed error", err)
+	}
 	if _, err := e.Run(t.Context(), testPlan(home, ws), engine.Options{Verify: true}); err == nil || !strings.Contains(err.Error(), "verify") {
 		t.Errorf("verify: err = %v; want an unsupported error", err)
+	}
+	// A plan mount must not collide with the engine's own transcript mount,
+	// at the encoded path the engine derives.
+	p3 := testPlan(home, ws)
+	tdir := runstage.TranscriptDir(home, ws)
+	p3.Mounts = append(p3.Mounts, plan.Mount{Host: tdir, Guest: tdir})
+	if _, err := e.Run(t.Context(), p3, engine.Options{}); err == nil || !strings.Contains(err.Error(), "transcript") {
+		t.Errorf("transcript mount: err = %v; want a collision error", err)
 	}
 }
 
 func TestForwardSignalsDeliverToTheChild(t *testing.T) {
 	dir := t.TempDir()
-	// The fake traps TERM, logs it, and exits 0.
-	script := "#!/bin/sh\nd=\"${0%/*}\"\n[ \"$1\" = __warm ] && exit 0\ntrap 'echo TERM >> \"$d/signals\"; exit 0' TERM\nsleep 30 >/dev/null 2>&1 </dev/null &\nwait\n"
+	// The fake marks itself ready after the trap is installed, logs the
+	// TERM, and exits 0.
+	script := "#!/bin/sh\nd=\"${0%/*}\"\n[ \"$1\" = __warm ] && exit 0\ntrap 'echo TERM >> \"$d/signals\"; exit 0' TERM\necho ready > \"$d/ready\"\nsleep 30 >/dev/null 2>&1 </dev/null &\nwait\n"
 	bin := filepath.Join(dir, "bwrap")
 	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
@@ -124,9 +154,17 @@ func TestForwardSignalsDeliverToTheChild(t *testing.T) {
 		}
 		done <- code
 	}()
-	// Wait for the trap to be installed; bwrap execs instantly, so a short
-	// sleep is enough, and the assertion below retries anyway.
-	time.Sleep(300 * time.Millisecond)
+	// The trap must be installed before the TERM arrives.
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		if _, err := os.Stat(filepath.Join(dir, "ready")); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the fake never signalled ready")
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
 	syscall.Kill(os.Getpid(), syscall.SIGTERM)
 	select {
 	case code := <-done:

@@ -1,13 +1,9 @@
-// Package bwrap runs plans in bubblewrap namespaces: tier-0 isolation with
-// the host toolchain.
 package bwrap
 
 import (
-	"context"
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"time"
 )
@@ -30,7 +26,6 @@ type Engine struct {
 	Debug     bool
 	Getenv    func(string) string
 
-	selfExe        string        // unused today; kept for test symmetry
 	cancelGrace    time.Duration // how long after ctx is cancelled the host waits before SIGKILL
 	testStartDelay time.Duration // pause between preparing the run and starting bwrap
 	signalQueued   func(os.Signal)
@@ -88,16 +83,4 @@ func (e *Engine) debugf(format string, a ...any) {
 	if e.Debug {
 		fmt.Fprintf(e.Stderr, "paddock: "+format+"\n", a...)
 	}
-}
-
-// cliTimeout bounds each short `bwrap` call. bwrap makes none today; the
-// constant exists so a future call has the same shape as the other engines.
-const cliTimeout = 5 * time.Second
-
-func (e *Engine) cliRun(ctx context.Context, timeout time.Duration, args ...string) ([]byte, error) {
-	c, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-	cmd := exec.CommandContext(c, e.bin(), args...)
-	cmd.WaitDelay = time.Second
-	return cmd.Output()
 }

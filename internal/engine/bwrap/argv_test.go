@@ -27,7 +27,7 @@ func TestRunArgvGolden(t *testing.T) {
 				Mounts:  tt.mounts,
 				Workdir: "/h/ws",
 				Argv:    []string{"claude", "-p"},
-			}, "/run/home")
+			}, "/run/home", "")
 			joined := strings.Join(argv, " ")
 			for _, want := range []string{
 				"bwrap --die-with-parent", "--ro-bind / /", "--dev-bind /dev /dev",

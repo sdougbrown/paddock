@@ -32,13 +32,24 @@ func (e *Engine) Run(ctx context.Context, p *plan.Plan, o engine.Options) (int, 
 	if p.Workdir == "" {
 		return 1, errors.New("plan has no workdir")
 	}
-	// The config layer rejects allowlist profiles for this engine; the check
-	// here covers plans built by another path.
+	// The config layer rejects allowlist profiles and limits for this
+	// engine; the checks here cover plans built by another path.
 	if p.Network.Policy == initcfg.PolicyAllowlist {
 		return 1, fmt.Errorf("network policy %q cannot be enforced by the bwrap engine", p.Network.Policy)
 	}
+	if p.Limits.CPUs != 0 || p.Limits.Memory != "" {
+		return 1, fmt.Errorf("limits: the bwrap engine cannot enforce cpu or memory limits; remove them or use a container engine")
+	}
 	if o.Verify {
 		return 1, errors.New("verify is not supported by the bwrap engine: there is no paddock-init to run the guest checks")
+	}
+	tdir := runstage.TranscriptDir(e.Home, p.Workdir)
+	if err := planMountTargets(p, tdir); err != nil {
+		return 1, err
+	}
+	u, err := runstage.HostUser()
+	if err != nil {
+		return 1, fmt.Errorf("host user: %w", err)
 	}
 	secrets, err := runstage.ResolveSecrets(p.Env, e.lookup)
 	if err != nil {
@@ -48,9 +59,7 @@ func (e *Engine) Run(ctx context.Context, p *plan.Plan, o engine.Options) (int, 
 	if err != nil {
 		return 1, err
 	}
-	defer dirs.Remove()
 	home := filepath.Join(dirs.Root, "home")
-	tdir := runstage.TranscriptDir(e.Home, p.Workdir)
 
 	var pass []string
 	for _, k := range runstage.PassthroughEnv {
@@ -59,12 +68,26 @@ func (e *Engine) Run(ctx context.Context, p *plan.Plan, o engine.Options) (int, 
 		}
 	}
 	cfg, err := runstage.BuildInitConfig(p, runstage.InitInput{
-		User:          runstageHostUser(home),
+		User:          u,
 		TranscriptDir: tdir,
 		Passthrough:   pass,
 	})
 	if err != nil {
 		return 1, err
+	}
+	u.Home = home
+	cfg.User = u
+	if secrets != nil {
+		if err := runstage.WriteSecrets(dirs.Secrets, secrets); err != nil {
+			return 1, err
+		}
+	}
+	var settings string
+	if len(p.Claude.ManagedSettings) > 0 {
+		settings = filepath.Join(dirs.Settings, runstage.UserSettingsFile)
+		if err := os.WriteFile(settings, p.Claude.ManagedSettings, 0o644); err != nil {
+			return 1, err
+		}
 	}
 	if err := prepareHome(home, p.Claude, cfg, tdir); err != nil {
 		return 1, err
@@ -73,16 +96,15 @@ func (e *Engine) Run(ctx context.Context, p *plan.Plan, o engine.Options) (int, 
 	if err != nil {
 		return 1, err
 	}
-	mounts = append(mounts,
-		runstage.GuestMount{Host: home, Guest: home},
-		runstage.GuestMount{Host: tdir, Guest: tdir},
-	)
+	// The transcript dir binds read-write at its host path, so writes through
+	// the home's projects symlink reach the caller's path.
+	mounts = append(mounts, runstage.GuestMount{Host: tdir, Guest: tdir})
 	argv := e.runArgv(runSpec{
 		NetNone: p.Network.Policy == initcfg.PolicyNone,
 		Mounts:  mounts,
 		Workdir: p.Workdir,
 		Argv:    p.Argv,
-	}, home)
+	}, home, settings)
 	e.debugf("%s", strings.Join(argv, " "))
 
 	// Notify before the start, so a signal that lands while bwrap is
@@ -119,6 +141,9 @@ func (e *Engine) Run(ctx context.Context, p *plan.Plan, o engine.Options) (int, 
 
 	waitErr := cmd.Wait()
 	close(done)
+	// The run's home never carries state a later run needs, so it does not
+	// accumulate on disk.
+	os.RemoveAll(home)
 
 	code := 0
 	var exitErr *exec.ExitError
@@ -135,17 +160,19 @@ func (e *Engine) Run(ctx context.Context, p *plan.Plan, o engine.Options) (int, 
 	return code, nil
 }
 
-// childEnv builds the child's environment: the invoking environment, the
-// plan's literal env and passthrough variables (as the init config would
-// have staged them), the resolved secrets, and HOME pointing at the
-// throwaway home.
+// childEnv builds the child's environment: the plan's literal env and
+// passthrough variables (as the init config would have staged them), the
+// resolved secrets, PATH from the invoking environment, and HOME pointing at
+// the throwaway home. Everything else from the invoking environment stays
+// out: the agent is same-uid and could read it anyway, but it has no
+// business depending on it, and tokens meant for the host tooling do not
+// belong in the run.
 func childEnv(cfg *initcfg.Config, secrets []byte, home string) []string {
 	var env []string
 	for _, kv := range os.Environ() {
-		if strings.HasPrefix(kv, "HOME=") {
-			continue
+		if name, _, _ := strings.Cut(kv, "="); name == "PATH" {
+			env = append(env, kv)
 		}
-		env = append(env, kv)
 	}
 	env = append(env, cfg.Env...)
 	if secrets != nil {
@@ -154,19 +181,15 @@ func childEnv(cfg *initcfg.Config, secrets []byte, home string) []string {
 	return append(env, "HOME="+home)
 }
 
-// runstageHostUser returns the invoking user with the guest's throwaway
-// home, as the init config's user block. The uid and gid are the host's, so
-// files written to the workspace keep host ownership.
-func runstageHostUser(home string) initcfg.User {
-	u, err := runstage.HostUser()
-	if err != nil {
-		// The container engines fail the run on this; here the user block
-		// only feeds the init config's validation, so a broken lookup is a
-		// zero user, which the validation rejects.
-		return initcfg.User{Home: home}
+// planMountTargets rejects plan mounts that would collide with the mounts
+// the engine adds itself.
+func planMountTargets(p *plan.Plan, tdir string) error {
+	for _, m := range p.Mounts {
+		if filepath.Clean(m.Guest) == filepath.Clean(tdir) {
+			return fmt.Errorf("plan mount %s targets the transcript directory the engine mounts itself", m.Host)
+		}
 	}
-	u.Home = home
-	return u
+	return nil
 }
 
 // planMounts validates and copies the plan's mounts.

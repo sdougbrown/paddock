@@ -21,7 +21,6 @@ type runSpec struct {
 	Args       []string // arguments after the image
 }
 
-// runArgv builds the argument vector for `podman run`.
 // runArgv builds the argument vector for `podman run`. label=disable keeps
 // the bind mounts readable on SELinux-enforcing hosts; sig-proxy=false keeps
 // signal delivery single-sourced in forwardSignals.

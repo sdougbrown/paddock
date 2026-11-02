@@ -60,7 +60,7 @@ func TestRemoveSecretsOnceRunning(t *testing.T) {
 			returned := make(chan time.Duration, 1)
 			start := time.Now()
 			go func() {
-				e.removeSecretsOnceRunning("paddock-test", secrets, done)
+				e.supervisor().RemoveSecretsOnceRunning("paddock-test", secrets, done)
 				returned <- time.Since(start)
 			}()
 			// Registered after TempDir, so this runs before the directory is

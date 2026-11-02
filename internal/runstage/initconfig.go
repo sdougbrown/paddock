@@ -23,7 +23,7 @@ type InitInput struct {
 	User          initcfg.User
 	Verify        bool
 	TranscriptDir string
-	// Mounts is the full guest mount list, as passed to `container run`.
+	// Mounts is the full guest mount list, as the runtime receives it.
 	Mounts []GuestMount
 	// Passthrough lists the invoking environment's PassthroughEnv variables
 	// as NAME=VALUE.

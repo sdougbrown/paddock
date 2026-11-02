@@ -65,7 +65,7 @@ func TestForwardSignalsDeliversQueuedSignalsInOrder(t *testing.T) {
 			done := make(chan struct{})
 			returned := make(chan struct{})
 			go func() {
-				e.forwardSignals(ctx, "paddock-test", sigs, done)
+				e.supervisor().ForwardSignals(ctx, "paddock-test", sigs, done)
 				close(returned)
 			}()
 			defer func() {
@@ -99,7 +99,7 @@ func TestForwardSignalsDeliversQueuedSignalsInOrder(t *testing.T) {
 				got = strings.Join(strings.Fields(string(b)), " ")
 				return got == tt.want
 			})
-			time.Sleep(3 * pendingRetry)
+			time.Sleep(3 * runstage.PendingRetry)
 			b, _ := os.ReadFile(filepath.Join(dir, "kills"))
 			if got := strings.Join(strings.Fields(string(b)), " "); got != tt.want {
 				t.Errorf("delivered %q, want %q", got, tt.want)
@@ -122,7 +122,7 @@ func TestForwardSignalsStopsAfterCancel(t *testing.T) {
 	done := make(chan struct{})
 	returned := make(chan struct{})
 	go func() {
-		e.forwardSignals(ctx, "paddock-test", sigs, done)
+		e.supervisor().ForwardSignals(ctx, "paddock-test", sigs, done)
 		close(returned)
 	}()
 	defer func() {
@@ -176,7 +176,7 @@ func TestRemoveSecretsOnceRunning(t *testing.T) {
 			returned := make(chan struct{})
 			start := time.Now()
 			go func() {
-				e.removeSecretsOnceRunning("paddock-test", secrets, done)
+				e.supervisor().RemoveSecretsOnceRunning("paddock-test", secrets, done)
 				close(returned)
 			}()
 			defer func() {

@@ -238,7 +238,7 @@ func TestContainerSignalsReachGuest(t *testing.T) {
 		{syscall.SIGINT, 130},
 		{syscall.SIGHUP, 129},
 	} {
-		t.Run(signalNames[tc.sig], func(t *testing.T) {
+		t.Run(mustSignalName(tc.sig), func(t *testing.T) {
 			h := startHelper(t, "exec sleep 300")
 			waitRunning(t, h)
 			if err := h.cmd.Process.Signal(tc.sig); err != nil {
@@ -408,4 +408,14 @@ func TestContainerBuildImages(t *testing.T) {
 	if err != nil || again != tag {
 		t.Fatalf("second call: %q, %v", again, err)
 	}
+}
+
+// mustSignalName returns the CLI signal name for sig, panicking on a signal
+// the supervisor never forwards; the table above only lists those.
+func mustSignalName(sig os.Signal) string {
+	n, ok := runstage.SignalName(sig)
+	if !ok {
+		panic("unforwardable signal in test table")
+	}
+	return n
 }

@@ -215,13 +215,13 @@ func (e *Engine) Run(ctx context.Context, p *plan.Plan, o engine.Options) (int, 
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		e.forwardSignals(ctx, name, sigs, done)
+		e.supervisor().ForwardSignals(ctx, name, sigs, done)
 	}()
 	if secrets != nil {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			e.removeSecretsOnceRunning(name, dirs.Secrets, done)
+			e.supervisor().RemoveSecretsOnceRunning(name, dirs.Secrets, done)
 		}()
 	}
 
@@ -246,15 +246,6 @@ func (e *Engine) Run(ctx context.Context, p *plan.Plan, o engine.Options) (int, 
 	return code, nil
 }
 
-var signalNames = map[os.Signal]string{
-	syscall.SIGTERM: "TERM",
-	syscall.SIGINT:  "INT",
-	syscall.SIGHUP:  "HUP",
-}
-
-// pendingRetry is how often an undelivered signal or stop is retried.
-const pendingRetry = 200 * time.Millisecond
-
 // cli runs `container args...` with its output discarded, bounded by
 // cliTimeout. It never uses the run's ctx: kill goes through it after that
 // ctx is cancelled.
@@ -262,14 +253,6 @@ func (e *Engine) cli(args ...string) error {
 	_, err := e.cliOutput(context.Background(), args...)
 	return err
 }
-
-// orphanStopGrace is the stop grace, in seconds, for a container whose
-// paddock side is gone: the `container run` client died (Run) or paddock
-// itself died (the watchdog). Nothing is left to wait on the guest, so
-// cleanup is prompt. A cancellation uses Engine.stopGrace instead: it is the
-// last step of an escalation that has already tried SIGTERM and waited
-// cancelGrace, and the caller chooses how long it lasts.
-const orphanStopGrace = 2
 
 // stopArgs is the `container stop` argv that stops name, killing it after
 // grace seconds. Run and the watchdog both stop containers with it.
@@ -283,6 +266,14 @@ func stopTimeout(grace int) time.Duration {
 	return cliTimeout + time.Duration(grace)*time.Second
 }
 
+// orphanStopGrace is the stop grace, in seconds, for a container whose
+// paddock side is gone: the `container run` client died (Run) or paddock
+// itself died (the watchdog). Nothing is left to wait on the guest, so
+// cleanup is prompt. A cancellation uses Engine.stopGrace instead: it is the
+// last step of an escalation that has already tried SIGTERM and waited
+// cancelGrace, and the caller chooses how long it lasts.
+const orphanStopGrace = 2
+
 // stopContainer asks the container to stop, killing it after secs seconds.
 // Like cli, it never uses the run's ctx.
 func (e *Engine) stopContainer(name string, secs int) error {
@@ -290,57 +281,30 @@ func (e *Engine) stopContainer(name string, secs int) error {
 	return err
 }
 
-// forwardSignals delivers signals received by paddock to the guest process,
-// because `container run` does not forward them. A signal that cannot yet be
-// delivered, such as one that arrives while the VM is booting, is queued, and
-// the queue is retried in arrival order every pendingRetry until it is empty
-// or done closes. When ctx is cancelled the guest gets SIGTERM, and
-// `container stop` with stopGrace follows after cancelGrace.
-func (e *Engine) forwardSignals(ctx context.Context, name string, sigs <-chan os.Signal, done <-chan struct{}) {
-	var pending runstage.SignalQueue
-	send := func(s os.Signal) bool { return e.signalContainer(name, s) }
-	queue := func(s os.Signal) {
-		pending.Push(s)
-		pending.Deliver(send)
-		if e.signalQueued != nil {
-			e.signalQueued(s)
-		}
+// supervisor builds the shared supervision for this run: the engine supplies
+// the CLI's send, stop, and running checks; the queue, retry cadence,
+// cancellation escalation, and secrets cleanup are runstage's.
+func (e *Engine) supervisor() *runstage.Supervisor {
+	sup := &runstage.Supervisor{
+		Send:             e.signalContainer,
+		Stop:             e.stopContainer,
+		IsRunning:        e.isRunning,
+		SecretsStartWait: e.secretsStartWait,
+		SecretsGrace:     e.secretsGrace,
+		CancelGrace:      e.cancelGrace,
+		StopGrace:        e.stopGrace,
+		Debugf:           e.debugf,
 	}
-	var stopAt <-chan time.Time
-	stopDue, stopped := false, false
-	cancelled := ctx.Done()
-	retry := time.NewTicker(pendingRetry)
-	defer retry.Stop()
-	for {
-		select {
-		case s := <-sigs:
-			if _, ok := signalNames[s]; ok {
-				queue(s)
-			}
-		case <-cancelled:
-			cancelled = nil
-			queue(syscall.SIGTERM)
-			stopAt = time.After(e.cancelGrace)
-		case <-stopAt:
-			stopAt, stopDue = nil, true
-		case <-retry.C:
-			pending.Deliver(send)
-		case <-done:
-			return
-		}
-		if stopDue && !stopped {
-			e.debugf("stopping %s after cancellation", name)
-			stopped = e.stopContainer(name, e.stopGrace) == nil
-		}
-	}
+	sup.SignalQueued(e.signalQueued)
+	return sup
 }
 
-// signalContainer delivers s to the guest process and reports whether it was
+// signalContainer delivers sig to the guest and reports whether it was
 // delivered. A kill that succeeds while the VM is still booting can be
 // acknowledged and dropped, so delivery counts only when the container was
 // observed running immediately before the kill.
-func (e *Engine) signalContainer(name string, s os.Signal) bool {
-	n, ok := signalNames[s]
+func (e *Engine) signalContainer(name string, sig os.Signal) bool {
+	n, ok := runstage.SignalName(sig)
 	if !ok {
 		return false
 	}
@@ -354,40 +318,6 @@ func (e *Engine) signalContainer(name string, s os.Signal) bool {
 		return false
 	}
 	return true
-}
-
-// removeSecretsOnceRunning polls until the container is running, then waits
-// up to secretsGrace for paddock-init to unlink secrets.env itself before
-// removing it. If the container is not running within secretsStartWait, it
-// removes secrets.env anyway, so a slow or failed boot cannot leave it on the
-// host for the whole run. When done closes it returns at once; Run then
-// removes the secrets dir.
-func (e *Engine) removeSecretsOnceRunning(name, dir string, done <-chan struct{}) {
-	file := filepath.Join(dir, runstage.SecretsFile)
-	startBy := time.Now().Add(e.secretsStartWait)
-	for !e.isRunning(name) {
-		if time.Now().After(startBy) {
-			os.Remove(file)
-			return
-		}
-		select {
-		case <-done:
-			return
-		case <-time.After(200 * time.Millisecond):
-		}
-	}
-	grace := time.Now().Add(e.secretsGrace)
-	for time.Now().Before(grace) {
-		if _, err := os.Stat(file); err != nil {
-			return
-		}
-		select {
-		case <-done:
-			return
-		case <-time.After(50 * time.Millisecond):
-		}
-	}
-	os.Remove(file)
 }
 
 func (e *Engine) isRunning(name string) bool {

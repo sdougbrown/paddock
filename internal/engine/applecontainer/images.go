@@ -3,9 +3,7 @@ package applecontainer
 import (
 	"context"
 	"fmt"
-	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -16,50 +14,15 @@ import (
 
 // ensureImages builds the base image and each plan layer that is not already
 // present, and returns the tag of the last layer. Build output goes to
-// stderr. Once the chain is built or reused, other tags of the chain's
-// repositories are removed.
+// stderr. The chain order, hashing, and pruning live in imgtag; the calls
+// below are the container CLI's shape.
 func (e *Engine) ensureImages(ctx context.Context, p *plan.Plan) (string, error) {
-	hash, err := imgtag.Hash(images.BaseDockerfile, "", "")
-	if err != nil {
-		return "", err
-	}
-	tag := "paddock/base:" + hash[:12]
-	if err := e.ensureImage(ctx, tag, func() error { return e.buildBase(ctx, tag) }); err != nil {
-		return "", err
-	}
-	chain := []string{tag}
-	for _, l := range p.Image.Layers {
-		if l.Dockerfile == "" {
-			continue
-		}
-		df, err := os.ReadFile(l.Dockerfile)
-		if err != nil {
-			return "", fmt.Errorf("image layer %s: %w", l.Spec, err)
-		}
-		dir := l.Context
-		if dir == "" {
-			dir = filepath.Dir(l.Dockerfile)
-		}
-		if dir, err = filepath.EvalSymlinks(dir); err != nil {
-			return "", fmt.Errorf("image layer %s: %w", l.Spec, err)
-		}
-		hash, err := imgtag.Hash(df, dir, tag)
-		if err != nil {
-			return "", fmt.Errorf("image layer %s: %w", l.Spec, err)
-		}
-		next := imgtag.LayerTag(l.Spec, hash)
-		parent := tag
-		err = e.ensureImage(ctx, next, func() error {
-			return e.build(ctx, next, l.Dockerfile, dir, parent)
-		})
-		if err != nil {
-			return "", err
-		}
-		tag = next
-		chain = append(chain, tag)
-	}
-	e.pruneSuperseded(ctx, chain)
-	return tag, nil
+	return imgtag.EnsureChain(ctx, images.BaseDockerfile, p.Image.Layers, imgtag.ChainOps{
+		Build:       e.build,
+		ImageExists: e.imageExists,
+		Prune:       e.pruneSuperseded,
+		Debugf:      e.debugf,
+	})
 }
 
 // pruneSuperseded removes every tag of a repository in chain that is not in
@@ -118,21 +81,6 @@ func (e *Engine) imageExists(ctx context.Context, tag string) (bool, error) {
 		}
 	}
 	return false, nil
-}
-
-// buildBase builds the base image from a context holding only its
-// Dockerfile, which is all the base tag's hash covers.
-func (e *Engine) buildBase(ctx context.Context, tag string) error {
-	dir, err := os.MkdirTemp("", "paddock-base-")
-	if err != nil {
-		return err
-	}
-	defer os.RemoveAll(dir)
-	df := filepath.Join(dir, "Dockerfile")
-	if err := os.WriteFile(df, images.BaseDockerfile, 0o644); err != nil {
-		return err
-	}
-	return e.build(ctx, tag, df, dir, "")
 }
 
 // buildTimeout bounds one `container build`.

@@ -1,11 +1,13 @@
 package podman
 
 import (
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/sdougbrown/paddock/internal/engine"
 	"github.com/sdougbrown/paddock/internal/plan"
@@ -136,5 +138,56 @@ func TestRunKilledBySignalPropagatesAndStops(t *testing.T) {
 	b, err := os.ReadFile(filepath.Join(dir, "stops"))
 	if err != nil || !strings.Contains(string(b), "stopped") {
 		t.Errorf("the container was not stopped after the client died by signal: %q, %v", b, err)
+	}
+}
+
+// TestRunCancelBeforeStartNeverStarts cancels Run's context during the start
+// delay, before `podman run`. Run must return the cancellation promptly
+// without ever starting the container.
+func TestRunCancelBeforeStartNeverStarts(t *testing.T) {
+	bin, calls := fakePodman(t)
+	home := t.TempDir()
+	ws := filepath.Join(home, "ws")
+	if err := os.Mkdir(ws, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	e := &Engine{
+		Bin:            bin,
+		Home:           home,
+		StateRoot:      filepath.Join(home, "state"),
+		testImage:      "paddock/base:fake",
+		testEntrypoint: "/bin/sh",
+		testArgs:       []string{"-c", "exit 0"},
+		testStartDelay: 20 * time.Second,
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	go func() {
+		// secrets.env is the last file Run writes before the start delay.
+		time.Sleep(300 * time.Millisecond)
+		cancel()
+	}()
+	start := time.Now()
+	p := &plan.Plan{
+		Engine:    "podman",
+		Workspace: ws,
+		Workdir:   ws,
+		Mounts:    []plan.Mount{{Host: ws, Guest: ws}},
+		Network:   plan.Network{Policy: "none"},
+		Argv:      []string{"claude", "-p"},
+	}
+	code, err := e.Run(ctx, p, engine.Options{})
+	if err == nil || !strings.Contains(err.Error(), "context canceled") {
+		t.Fatalf("Run error = %v; want the cancellation", err)
+	}
+	if d := time.Since(start); d > 5*time.Second {
+		t.Errorf("Run returned after %s; want promptly after the cancel", d)
+	}
+	if code != 1 {
+		t.Errorf("exit code = %d; want 1", code)
+	}
+	for _, c := range calls() {
+		if c[0] == "run" {
+			t.Fatalf("the container started despite the cancellation: %q", c)
+		}
 	}
 }

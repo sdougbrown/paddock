@@ -36,7 +36,7 @@ func HostUser() (initcfg.User, error) {
 
 // PassthroughEnv names the invoking environment's variables that reach the
 // guest. Run passes the set ones to paddock-init both in the init config,
-// where the plan's env overrides them, and with `container run -e`.
+// where the plan's env overrides them, and with the run's -e flags.
 var PassthroughEnv = []string{"TERM", "COLORTERM", "LANG"}
 
 // SignalQueue holds the signals that could not be delivered yet, in arrival

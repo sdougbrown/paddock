@@ -2,6 +2,7 @@ package applecontainer
 
 import (
 	"context"
+	"github.com/sdougbrown/paddock/internal/runstage"
 	"os"
 	"path/filepath"
 	"strings"
@@ -47,7 +48,7 @@ func TestForwardSignalsDeliversQueuedSignalsInOrder(t *testing.T) {
 			done := make(chan struct{})
 			returned := make(chan struct{})
 			go func() {
-				e.forwardSignals(ctx, "paddock-test", sigs, done)
+				e.supervisor().ForwardSignals(ctx, "paddock-test", sigs, done)
 				close(returned)
 			}()
 			defer func() {
@@ -84,7 +85,7 @@ func TestForwardSignalsDeliversQueuedSignalsInOrder(t *testing.T) {
 				got = strings.Join(strings.Fields(string(b)), " ")
 				return got == tt.want
 			})
-			time.Sleep(3 * pendingRetry)
+			time.Sleep(3 * runstage.PendingRetry)
 			b, _ := os.ReadFile(kills)
 			if got := strings.Join(strings.Fields(string(b)), " "); got != tt.want {
 				t.Errorf("delivered %q, want %q", got, tt.want)

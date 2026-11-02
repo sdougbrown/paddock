@@ -164,7 +164,7 @@ func (e *Engine) Run(ctx context.Context, p *plan.Plan, o engine.Options) (int, 
 	// Tier-0 inherits only PATH from the invoking environment: the host
 	// toolchain lives on it, and everything else (tokens, broker URLs,
 	// shell history) stays out of the run.
-	path, hasPath := os.LookupEnv("PATH")
+	path, hasPath := e.lookup("PATH")
 	inherited := []string{}
 	if hasPath {
 		inherited = append(inherited, "PATH="+path)

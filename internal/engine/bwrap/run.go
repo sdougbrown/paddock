@@ -9,6 +9,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -100,7 +101,7 @@ func (e *Engine) Run(ctx context.Context, p *plan.Plan, o engine.Options) (int, 
 	if err := runstage.CopySeedFiles(dirs.State, p.Claude.SeedFiles); err != nil {
 		return 1, err
 	}
-	fs := runstage.NewHomeFS("/", cfg)
+	fs := initcfg.NewHomeFS("/", cfg)
 	fs.SeedDir = filepath.Join(dirs.State, filepath.Base(initcfg.SeedDir))
 	var settings string
 	if len(managed) > 0 {
@@ -109,7 +110,7 @@ func (e *Engine) Run(ctx context.Context, p *plan.Plan, o engine.Options) (int, 
 			return 1, err
 		}
 	}
-	if err := runstage.PrepareHome(fs, cfg); err != nil {
+	if err := initcfg.PrepareHome(fs, cfg); err != nil {
 		return 1, err
 	}
 	mounts, err := planMounts(p)
@@ -165,7 +166,7 @@ func (e *Engine) Run(ctx context.Context, p *plan.Plan, o engine.Options) (int, 
 	if err != nil {
 		return 1, err
 	}
-	env, err := runstage.AgentEnv(inherited, u, cfg.Env, lines)
+	env, err := initcfg.AgentEnv(inherited, u, cfg.Env, lines)
 	if err != nil {
 		return 1, err
 	}
@@ -206,10 +207,16 @@ func (e *Engine) Run(ctx context.Context, p *plan.Plan, o engine.Options) (int, 
 		SignalQueued: e.signalQueued,
 	})
 	done := make(chan struct{})
-	go sup.ForwardSignals(ctx, name, sigs, done)
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		sup.ForwardSignals(ctx, name, sigs, done)
+	}()
 
 	waitErr := cmd.Wait()
 	close(done)
+	wg.Wait()
 	// The run's home never carries state a later run needs, so it does not
 	// accumulate on disk.
 	os.RemoveAll(home)
@@ -227,27 +234,6 @@ func (e *Engine) Run(ctx context.Context, p *plan.Plan, o engine.Options) (int, 
 		return 1, waitErr
 	}
 	return code, nil
-}
-
-// childEnv builds the child's environment: the plan's literal env and
-// passthrough variables (as the init config would have staged them), the
-// resolved secrets, PATH from the invoking environment, and HOME pointing at
-// the throwaway home. Everything else from the invoking environment stays
-// out: the agent is same-uid and could read it anyway, but it has no
-// business depending on it, and tokens meant for the host tooling do not
-// belong in the run.
-func childEnv(cfg *initcfg.Config, secrets []byte, home string) []string {
-	var env []string
-	for _, kv := range os.Environ() {
-		if name, _, _ := strings.Cut(kv, "="); name == "PATH" {
-			env = append(env, kv)
-		}
-	}
-	env = append(env, cfg.Env...)
-	if secrets != nil {
-		env = append(env, strings.Split(strings.TrimRight(string(secrets), "\n"), "\n")...)
-	}
-	return append(env, "HOME="+home)
 }
 
 // planMountTargets rejects plan mounts that would collide with the

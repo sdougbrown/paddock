@@ -10,7 +10,6 @@ import (
 	"strings"
 
 	"github.com/sdougbrown/paddock/internal/initcfg"
-	"github.com/sdougbrown/paddock/internal/runstage"
 )
 
 // Proxy account names and the agent's login shell.
@@ -29,7 +28,7 @@ type account struct {
 // account under root.
 func ensureAccounts(root string, cfg *initcfg.Config) error {
 	u := cfg.User
-	if err := ensureAccount(root, account{u.Name, u.Name, u.UID, u.GID, u.Home, runstage.AgentShell}); err != nil {
+	if err := ensureAccount(root, account{u.Name, u.Name, u.UID, u.GID, u.Home, initcfg.AgentShell}); err != nil {
 		return err
 	}
 	if cfg.ProxyUID <= 0 {
@@ -132,5 +131,5 @@ func appendDB(path string, lines []string, line string) error {
 		}
 	}
 	b.WriteString(line + "\n")
-	return runstage.WriteFileAtomic(path, []byte(b.String()), 0o644)
+	return initcfg.WriteFileAtomic(path, []byte(b.String()), 0o644)
 }

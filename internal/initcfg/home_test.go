@@ -1,4 +1,4 @@
-package runstage
+package initcfg
 
 import (
 	"os"

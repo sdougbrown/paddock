@@ -1,4 +1,4 @@
-package runstage
+package initcfg
 
 import (
 	"errors"
@@ -8,8 +8,6 @@ import (
 	"path"
 	"path/filepath"
 	"syscall"
-
-	"github.com/sdougbrown/paddock/internal/initcfg"
 )
 
 // HomeFS is the filesystem PrepareHome works on. Guest paths are joined onto
@@ -31,7 +29,7 @@ type HomeFS struct {
 // NewHomeFS builds the filesystem view for an init config: the guest root,
 // ownership via Lchown, and the config's mounts and transcript directory as
 // never-replace mount points.
-func NewHomeFS(root string, cfg *initcfg.Config) HomeFS {
+func NewHomeFS(root string, cfg *Config) HomeFS {
 	h := HomeFS{Root: root, Chown: os.Lchown, Mounts: map[string]bool{}}
 	for _, m := range cfg.Mounts {
 		h.Mounts[path.Clean(m.Path)] = true
@@ -104,7 +102,7 @@ type DirSpec struct {
 // settings file. When ~/.claude/projects does not exist and the init config
 // carries a transcript directory, projects becomes a symlink to it, so
 // transcript writes land on the host path the caller derives.
-func PrepareHome(h HomeFS, cfg *initcfg.Config) error {
+func PrepareHome(h HomeFS, cfg *Config) error {
 	u, c := cfg.User, cfg.Claude
 	home := path.Clean(u.Home)
 	claude := home + "/.claude"
@@ -124,7 +122,7 @@ func PrepareHome(h HomeFS, cfg *initcfg.Config) error {
 	}
 	seedDir := h.SeedDir
 	if seedDir == "" {
-		seedDir = initcfg.SeedDir
+		seedDir = SeedDir
 	}
 	for _, name := range c.SeedFiles {
 		src, err := os.ReadFile(h.P(seedDir + "/" + name))
@@ -149,14 +147,14 @@ func PrepareHome(h HomeFS, cfg *initcfg.Config) error {
 		}
 	}
 	if len(c.ManagedSettings) > 0 {
-		dir := path.Dir(initcfg.ManagedSettingsPath)
+		dir := path.Dir(ManagedSettingsPath)
 		if err := os.MkdirAll(h.P(dir), 0o755); err != nil {
 			return err
 		}
 		if err := os.Chmod(h.P(dir), 0o755); err != nil {
 			return err
 		}
-		if err := WriteFileAtomic(h.P(initcfg.ManagedSettingsPath), c.ManagedSettings, 0o644); err != nil {
+		if err := WriteFileAtomic(h.P(ManagedSettingsPath), c.ManagedSettings, 0o644); err != nil {
 			return fmt.Errorf("managed settings: %w", err)
 		}
 	}

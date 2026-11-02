@@ -35,8 +35,9 @@ Agent-specific behavior (what to run, which prompt, which skills) belongs to the
 - `internal/resolve`: extends chain, trust rules, value sources, spec selection, mounts
 - `internal/plan`: the Plan struct produced by resolve and consumed by engines, and the mount rule
   (`Mount.Check`) both apply
-- `internal/initcfg`: the init config the host writes and paddock-init reads, the guest paths both
-  sides share, and the network policy names
+- `internal/initcfg`: the init config the host writes and paddock-init reads, and everything both
+  sides share: the agent's home layout (`PrepareHome`, `HomeFS`), agent directories, agent env
+  (`AgentEnv`), and the network policy names
 - `internal/egresshost`: the egress host validator shared by config, resolve, and the guest proxy
 - `internal/engine`: the Engine interface between a plan and the runtime that runs it
 - `internal/engine/applecontainer`: the Apple `container` engine: image chain, mounts, run argv,
@@ -45,15 +46,16 @@ Agent-specific behavior (what to run, which prompt, which skills) belongs to the
   `--security-opt label=disable` for SELinux hosts and `Sudo` for rootful access
 - `internal/engine/bwrap`: the bubblewrap engine, tier-0 same-user isolation: no image, no
   paddock-init, host or none egress only
-- `internal/runstage`: the run staging both engines share: run directories, mounts, secrets, the
-  init config, transcript paths, and the signal queue
+- `internal/runstage`: the host-side run staging both engines share: run directories, mounts,
+  secrets, the init config build, transcript paths, and the signal queue; nothing here may be
+  imported by paddock-init
 - `internal/imgtag`: the content-addressed image tag hash for the spec chain
 - `images`: the embedded base image Dockerfile and the Claude Code version it installs
 - `internal/guest/...`: in-guest enforcement (netpolicy, sniproxy)
 - `internal/guest/pinit`: paddock-init, the guest entrypoint (`Main`): the agent and proxy
-  accounts, the agent's HOME and `~/.claude`, the agent environment and secrets, `/etc/hosts`, the
-  network commit, and the privilege drop and exec of the agent; also the proxy child and the verify
-  role
+  accounts, the materialized agent HOME and `~/.claude` (via `initcfg.PrepareHome`), the agent
+  environment and secrets, `/etc/hosts`, the network commit, and the privilege drop and exec of
+  the agent; also the proxy child and the verify role
 
 ## Notes
 

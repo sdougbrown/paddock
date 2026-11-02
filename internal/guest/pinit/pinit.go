@@ -31,7 +31,6 @@ import (
 
 	"github.com/sdougbrown/paddock/internal/guest/sniproxy"
 	"github.com/sdougbrown/paddock/internal/initcfg"
-	"github.com/sdougbrown/paddock/internal/runstage"
 )
 
 // ExitInit is the exit status for every failure before the agent starts.
@@ -79,10 +78,10 @@ func initMain() error {
 	if err := ensureAccounts("/", cfg); err != nil {
 		return err
 	}
-	if err := runstage.PrepareHome(runstage.NewHomeFS("/", cfg), cfg); err != nil {
+	if err := initcfg.PrepareHome(initcfg.NewHomeFS("/", cfg), cfg); err != nil {
 		return err
 	}
-	env, err := runstage.AgentEnv(os.Environ(), cfg.User, cfg.Env, secrets)
+	env, err := initcfg.AgentEnv(os.Environ(), cfg.User, cfg.Env, secrets)
 	if err != nil {
 		return err
 	}
@@ -126,7 +125,7 @@ func verifyArgv(cfg *initcfg.Config, net *network) ([]string, error) {
 		GID:     cfg.User.GID,
 		DenyLog: cfg.Network.DenyLog,
 	}
-	for _, d := range runstage.AgentDirs(path.Clean(cfg.User.Home)) {
+	for _, d := range initcfg.AgentDirs(path.Clean(cfg.User.Home)) {
 		p.Writable = append(p.Writable, d.Path)
 	}
 	if net.proxy != nil {

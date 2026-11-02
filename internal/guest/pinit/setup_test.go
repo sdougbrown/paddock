@@ -39,7 +39,7 @@ const basePasswd = "root:x:0:0:root:/root:/bin/bash\nnode:x:1000:1000::/home/nod
 const baseGroup = "root:x:0:\ndialout:x:20:\nnode:x:1000:\n"
 
 func TestEnsureAccount(t *testing.T) {
-	agent := account{"doug", "doug", 501, 20, "/Users/doug", runstage.AgentShell}
+	agent := account{"doug", "doug", 501, 20, "/Users/doug", initcfg.AgentShell}
 	tests := []struct {
 		name       string
 		a          account
@@ -50,14 +50,14 @@ func TestEnsureAccount(t *testing.T) {
 		{"reuses gid 20", agent, "", basePasswd + "doug:x:501:20::/Users/doug:/bin/bash\n", baseGroup},
 		{"new group", account{proxyName, proxyName, 970, 970, "/nonexistent", "/usr/sbin/nologin"}, "",
 			basePasswd + "paddock-proxy:x:970:970::/nonexistent:/usr/sbin/nologin\n", baseGroup + "paddock-proxy:x:970:\n"},
-		{"existing user kept", account{"node", "node", 1000, 1000, "/home/node", runstage.AgentShell}, "", basePasswd, baseGroup},
-		{"existing user other home", account{"node", "node", 1000, 1000, "/x", runstage.AgentShell}, `user "node" already exists`, basePasswd, baseGroup},
-		{"existing user other gid", account{"node", "node", 1000, 20, "/home/node", runstage.AgentShell}, `user "node" already exists`, basePasswd, baseGroup},
+		{"existing user kept", account{"node", "node", 1000, 1000, "/home/node", initcfg.AgentShell}, "", basePasswd, baseGroup},
+		{"existing user other home", account{"node", "node", 1000, 1000, "/x", initcfg.AgentShell}, `user "node" already exists`, basePasswd, baseGroup},
+		{"existing user other gid", account{"node", "node", 1000, 20, "/home/node", initcfg.AgentShell}, `user "node" already exists`, basePasswd, baseGroup},
 		{"existing user other shell", account{"node", "node", 1000, 1000, "/home/node", "/bin/zsh"}, `user "node" already exists`, basePasswd, baseGroup},
-		{"uid taken", account{"doug", "doug", 1000, 20, "/Users/doug", runstage.AgentShell}, `uid 1000 is taken by user "node"`, basePasswd, baseGroup},
-		{"name taken", account{"node", "node", 501, 20, "/Users/node", runstage.AgentShell}, `user "node" exists with uid 1000`, basePasswd, baseGroup},
-		{"group name taken", account{"doug", "node", 501, 77, "/Users/doug", runstage.AgentShell}, `group "node" exists with gid 1000`, basePasswd, baseGroup},
-		{"colon in home", account{"doug", "doug", 501, 20, "/a:b", runstage.AgentShell}, "invalid passwd field", basePasswd, baseGroup},
+		{"uid taken", account{"doug", "doug", 1000, 20, "/Users/doug", initcfg.AgentShell}, `uid 1000 is taken by user "node"`, basePasswd, baseGroup},
+		{"name taken", account{"node", "node", 501, 20, "/Users/node", initcfg.AgentShell}, `user "node" exists with uid 1000`, basePasswd, baseGroup},
+		{"group name taken", account{"doug", "node", 501, 77, "/Users/doug", initcfg.AgentShell}, `group "node" exists with gid 1000`, basePasswd, baseGroup},
+		{"colon in home", account{"doug", "doug", 501, 20, "/a:b", initcfg.AgentShell}, "invalid passwd field", basePasswd, baseGroup},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -161,7 +161,7 @@ func TestAgentEnv(t *testing.T) {
 		{
 			name:      "inherited var kept",
 			inherited: []string{"LANG=C.UTF-8"},
-			want:      append([]string{"LANG=C.UTF-8", "PATH=" + runstage.DefaultPath}, fixed...),
+			want:      append([]string{"LANG=C.UTF-8", "PATH=" + initcfg.DefaultPath}, fixed...),
 		},
 		{
 			name:      "inherited PATH kept",
@@ -171,7 +171,7 @@ func TestAgentEnv(t *testing.T) {
 		{
 			name:      "fixed HOME overrides inherited HOME",
 			inherited: []string{"HOME=/elsewhere", "LANG=C"},
-			want:      append([]string{"HOME=/Users/doug", "LANG=C", "PATH=" + runstage.DefaultPath}, fixed[1:]...),
+			want:      append([]string{"HOME=/Users/doug", "LANG=C", "PATH=" + initcfg.DefaultPath}, fixed[1:]...),
 		},
 		{
 			name:      "Config.Env and secrets override",
@@ -185,7 +185,7 @@ func TestAgentEnv(t *testing.T) {
 			inherited: []string{"HOME=/elsewhere"},
 			extra:     []string{"SHELL=/bin/sh", "TOKEN=from-env"},
 			secrets:   []string{"TOKEN=from-secret"},
-			want: []string{"HOME=/Users/doug", "PATH=" + runstage.DefaultPath, "USER=doug", "LOGNAME=doug",
+			want: []string{"HOME=/Users/doug", "PATH=" + initcfg.DefaultPath, "USER=doug", "LOGNAME=doug",
 				"SHELL=/bin/sh", "TOKEN=from-secret"},
 		},
 		{
@@ -196,7 +196,7 @@ func TestAgentEnv(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := runstage.AgentEnv(tt.inherited, u, tt.extra, tt.secrets)
+			got, err := initcfg.AgentEnv(tt.inherited, u, tt.extra, tt.secrets)
 			if (err != nil) != tt.wantErr {
 				t.Fatalf("err = %v, wantErr %v", err, tt.wantErr)
 			}
@@ -225,7 +225,7 @@ func TestPrepareHome(t *testing.T) {
 		},
 	}
 	var chowned []string
-	h := runstage.NewHomeFS(root, cfg)
+	h := initcfg.NewHomeFS(root, cfg)
 	h.Chown = func(p string, uid, gid int) error {
 		if uid != 501 || gid != 20 {
 			t.Errorf("chown %s to %d:%d", p, uid, gid)
@@ -233,7 +233,7 @@ func TestPrepareHome(t *testing.T) {
 		chowned = append(chowned, strings.TrimPrefix(p, root))
 		return nil
 	}
-	if err := runstage.PrepareHome(h, cfg); err != nil {
+	if err := initcfg.PrepareHome(h, cfg); err != nil {
 		t.Fatal(err)
 	}
 	want := []string{home, home + "/.claude", home + "/.claude/projects", home + "/.claude/remote-settings.json",
@@ -261,7 +261,7 @@ func TestPrepareHome(t *testing.T) {
 	// A second run keeps an existing ~/.claude.json and replaces the link.
 	writeFile(t, filepath.Join(root, home, ".claude.json"), "mine", 0o600)
 	cfg.Claude.Skills = "/Users/doug/other-skills"
-	if err := runstage.PrepareHome(h, cfg); err != nil {
+	if err := initcfg.PrepareHome(h, cfg); err != nil {
 		t.Fatal(err)
 	}
 	if got := readFile(t, filepath.Join(root, home, ".claude.json")); got != "mine" {
@@ -274,7 +274,7 @@ func TestPrepareHome(t *testing.T) {
 	// A directory where the symlink goes is never replaced.
 	cfg.Claude.Agents = "/Users/doug/.botfiles/agents"
 	writeFile(t, filepath.Join(root, home, ".claude/agents/x"), "", 0o644)
-	if err := runstage.PrepareHome(h, cfg); err == nil || !strings.Contains(err.Error(), "not a symlink") {
+	if err := initcfg.PrepareHome(h, cfg); err == nil || !strings.Contains(err.Error(), "not a symlink") {
 		t.Errorf("agents dir: err = %v", err)
 	}
 }
@@ -358,13 +358,13 @@ func TestPrepareHomeLeavesFileMountAlone(t *testing.T) {
 		User:   initcfg.User{Name: "doug", UID: 501, GID: 20, Home: home},
 		Mounts: []initcfg.Mount{{Path: settings, ReadOnly: true}},
 	}
-	h := runstage.NewHomeFS(root, cfg)
+	h := initcfg.NewHomeFS(root, cfg)
 	var chowned []string
 	h.Chown = func(p string, _, _ int) error {
 		chowned = append(chowned, strings.TrimPrefix(p, root))
 		return nil
 	}
-	if err := runstage.PrepareHome(h, cfg); err != nil {
+	if err := initcfg.PrepareHome(h, cfg); err != nil {
 		t.Fatal(err)
 	}
 	if got := readFile(t, filepath.Join(root, settings)); got != `{"mounted":true}` {
@@ -382,12 +382,12 @@ func TestPrepareHomeLeavesFileMountAlone(t *testing.T) {
 func TestPrepareHomeRefusesRoot(t *testing.T) {
 	root := t.TempDir()
 	cfg := &initcfg.Config{User: initcfg.User{Name: "doug", UID: 501, GID: 20, Home: "/"}}
-	h := runstage.NewHomeFS(root, cfg)
+	h := initcfg.NewHomeFS(root, cfg)
 	h.Chown = func(p string, _, _ int) error {
 		t.Errorf("chown %s", p)
 		return nil
 	}
-	if err := runstage.PrepareHome(h, cfg); err == nil || !strings.Contains(err.Error(), "filesystem root") {
+	if err := initcfg.PrepareHome(h, cfg); err == nil || !strings.Contains(err.Error(), "filesystem root") {
 		t.Errorf("prepareHome with HOME=/: err = %v", err)
 	}
 }
@@ -434,14 +434,14 @@ func TestPrepareHomeReplacesLinkedSeedDestination(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			h := runstage.NewHomeFS(root, cfg)
+			h := initcfg.NewHomeFS(root, cfg)
 			h.Chown = func(p string, _, _ int) error {
 				if st, err := os.Lstat(p); err == nil && os.SameFile(st, otherInfo) {
 					t.Errorf("chown %s reaches the linked file", strings.TrimPrefix(p, root))
 				}
 				return nil
 			}
-			if err := runstage.PrepareHome(h, cfg); err != nil {
+			if err := initcfg.PrepareHome(h, cfg); err != nil {
 				t.Fatal(err)
 			}
 			if got := readFile(t, other); got != "original" {
@@ -469,9 +469,9 @@ func TestPrepareHomeRejectsFileAtAgentDir(t *testing.T) {
 		root := t.TempDir()
 		writeFile(t, filepath.Join(root, file), "", 0o644)
 		cfg := &initcfg.Config{User: initcfg.User{Name: "doug", UID: 501, GID: 20, Home: "/Users/doug"}}
-		h := runstage.NewHomeFS(root, cfg)
+		h := initcfg.NewHomeFS(root, cfg)
 		h.Chown = func(string, int, int) error { return nil }
-		if err := runstage.PrepareHome(h, cfg); err == nil || !strings.Contains(err.Error(), "is not a directory") {
+		if err := initcfg.PrepareHome(h, cfg); err == nil || !strings.Contains(err.Error(), "is not a directory") {
 			t.Errorf("file at %s: err = %v", file, err)
 		}
 	}
@@ -488,13 +488,13 @@ func TestPrepareHomeLeavesDirMountAlone(t *testing.T) {
 		User:   initcfg.User{Name: "doug", UID: 501, GID: 20, Home: home},
 		Mounts: []initcfg.Mount{{Path: home + "/.claude", ReadOnly: true}},
 	}
-	h := runstage.NewHomeFS(root, cfg)
+	h := initcfg.NewHomeFS(root, cfg)
 	var chowned []string
 	h.Chown = func(p string, _, _ int) error {
 		chowned = append(chowned, strings.TrimPrefix(p, root))
 		return nil
 	}
-	if err := runstage.PrepareHome(h, cfg); err != nil {
+	if err := initcfg.PrepareHome(h, cfg); err != nil {
 		t.Fatal(err)
 	}
 	if want := []string{home}; !reflect.DeepEqual(chowned, want) {
@@ -517,9 +517,9 @@ func TestPrepareHomeSeedOntoDirectoryFails(t *testing.T) {
 		User:   initcfg.User{Name: "doug", UID: 501, GID: 20, Home: home},
 		Claude: initcfg.ClaudeHome{SeedFiles: []string{"remote-settings.json"}},
 	}
-	h := runstage.NewHomeFS(root, cfg)
+	h := initcfg.NewHomeFS(root, cfg)
 	h.Chown = func(string, int, int) error { return nil }
-	if err := runstage.PrepareHome(h, cfg); err == nil {
+	if err := initcfg.PrepareHome(h, cfg); err == nil {
 		t.Error("seed onto a directory: no error")
 	}
 	if got := readFile(t, filepath.Join(root, home, ".claude/remote-settings.json/keep")); got != "keep" {
@@ -540,9 +540,9 @@ func TestPrepareHomeErrors(t *testing.T) {
 			SeedFiles:  []string{"absent.json"},
 			ClaudeJSON: json.RawMessage(`{}`),
 		}}
-		h := runstage.NewHomeFS(root, cfg)
+		h := initcfg.NewHomeFS(root, cfg)
 		h.Chown = func(string, int, int) error { return nil }
-		if err := runstage.PrepareHome(h, cfg); err == nil || !strings.Contains(err.Error(), "seed file") {
+		if err := initcfg.PrepareHome(h, cfg); err == nil || !strings.Contains(err.Error(), "seed file") {
 			t.Errorf("err = %v", err)
 		}
 		if _, err := os.Lstat(filepath.Join(root, home, ".claude.json")); !os.IsNotExist(err) {
@@ -552,9 +552,9 @@ func TestPrepareHomeErrors(t *testing.T) {
 	t.Run("chown failure", func(t *testing.T) {
 		root := t.TempDir()
 		cfg := &initcfg.Config{User: user, Claude: initcfg.ClaudeHome{ClaudeJSON: json.RawMessage(`{}`)}}
-		h := runstage.NewHomeFS(root, cfg)
+		h := initcfg.NewHomeFS(root, cfg)
 		h.Chown = func(string, int, int) error { return os.ErrPermission }
-		if err := runstage.PrepareHome(h, cfg); !errors.Is(err, os.ErrPermission) {
+		if err := initcfg.PrepareHome(h, cfg); !errors.Is(err, os.ErrPermission) {
 			t.Errorf("err = %v", err)
 		}
 		if _, err := os.Lstat(filepath.Join(root, home, ".claude.json")); !os.IsNotExist(err) {
@@ -573,9 +573,9 @@ func TestPrepareHomeOpensManagedSettingsDir(t *testing.T) {
 		User:   initcfg.User{Name: "doug", UID: 501, GID: 20, Home: "/Users/doug"},
 		Claude: initcfg.ClaudeHome{ManagedSettings: json.RawMessage(`{}`)},
 	}
-	h := runstage.NewHomeFS(root, cfg)
+	h := initcfg.NewHomeFS(root, cfg)
 	h.Chown = func(string, int, int) error { return nil }
-	if err := runstage.PrepareHome(h, cfg); err != nil {
+	if err := initcfg.PrepareHome(h, cfg); err != nil {
 		t.Fatal(err)
 	}
 	if st, err := os.Stat(dir); err != nil || st.Mode().Perm() != 0o755 {
@@ -595,7 +595,7 @@ func TestEnsureAccountReadError(t *testing.T) {
 		if err := os.Symlink(filepath.Base(db), filepath.Join(root, db)); err != nil {
 			t.Fatal(err)
 		}
-		a := account{"doug", "doug", 501, 77, "/Users/doug", runstage.AgentShell}
+		a := account{"doug", "doug", 501, 77, "/Users/doug", initcfg.AgentShell}
 		if err := ensureAccount(root, a); err == nil {
 			t.Errorf("%s unreadable: no error", db)
 		}

@@ -22,6 +22,9 @@ type runSpec struct {
 }
 
 // runArgv builds the argument vector for `podman run`.
+// runArgv builds the argument vector for `podman run`. label=disable keeps
+// the bind mounts readable on SELinux-enforcing hosts; sig-proxy=false keeps
+// signal delivery single-sourced in forwardSignals.
 func (e *Engine) runArgv(s runSpec) []string {
 	a := append(e.invocation(), "run", "--rm", "-i")
 	if s.TTY {
@@ -29,7 +32,7 @@ func (e *Engine) runArgv(s runSpec) []string {
 	}
 	a = append(a, "--init", "--name", s.Name,
 		"--cap-add", "NET_ADMIN", "--cap-add", "NET_RAW",
-		"--security-opt", "label=disable")
+		"--security-opt", "label=disable", "--sig-proxy=false")
 	if s.CPUs > 0 {
 		a = append(a, "--cpus", strconv.Itoa(s.CPUs))
 	}

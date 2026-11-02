@@ -19,7 +19,7 @@ func TestRunArgvGolden(t *testing.T) {
 			&Engine{},
 			runSpec{Name: "paddock-abc", Image: "paddock/base:1234", Entrypoint: "/paddock-init", Workdir: "/ws"},
 			[]string{"podman", "run", "--rm", "-i", "--init", "--name", "paddock-abc",
-				"--cap-add", "NET_ADMIN", "--cap-add", "NET_RAW", "--security-opt", "label=disable",
+				"--cap-add", "NET_ADMIN", "--cap-add", "NET_RAW", "--security-opt", "label=disable", "--sig-proxy=false",
 				"-w", "/ws", "--entrypoint", "/paddock-init", "paddock/base:1234"},
 		},
 		{
@@ -32,7 +32,7 @@ func TestRunArgvGolden(t *testing.T) {
 				Entrypoint: "/paddock-init", Image: "paddock/base:1234",
 				Args: []string{"claude", "-p"}},
 			[]string{"podman", "run", "--rm", "-i", "-t", "--init", "--name", "paddock-abc",
-				"--cap-add", "NET_ADMIN", "--cap-add", "NET_RAW", "--security-opt", "label=disable",
+				"--cap-add", "NET_ADMIN", "--cap-add", "NET_RAW", "--security-opt", "label=disable", "--sig-proxy=false",
 				"--cpus", "4", "-m", "4G",
 				"-v", "/h/ws:/h/ws:ro", "-w", "/h/ws", "-e", "TERM=xterm",
 				"--entrypoint", "/paddock-init", "paddock/base:1234", "claude", "-p"},
@@ -42,7 +42,7 @@ func TestRunArgvGolden(t *testing.T) {
 			&Engine{Sudo: true},
 			runSpec{Name: "paddock-abc", Image: "paddock/base:1234", Entrypoint: "/paddock-init", Workdir: "/ws"},
 			[]string{"sudo", "podman", "run", "--rm", "-i", "--init", "--name", "paddock-abc",
-				"--cap-add", "NET_ADMIN", "--cap-add", "NET_RAW", "--security-opt", "label=disable",
+				"--cap-add", "NET_ADMIN", "--cap-add", "NET_RAW", "--security-opt", "label=disable", "--sig-proxy=false",
 				"-w", "/ws", "--entrypoint", "/paddock-init", "paddock/base:1234"},
 		},
 	}

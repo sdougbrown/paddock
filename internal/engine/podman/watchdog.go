@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"slices"
 	"syscall"
 	"time"
@@ -50,18 +51,19 @@ const watchdogStopTries = 10
 var watchdogRetry = time.Second
 
 // RunWatchdog is the watchdog process body. args are the podman binary, a
-// sudo marker ("sudo" or "-"), the container name, then the directories to
-// remove (RunDirs.Removable). It reports ready on
+// sudo marker ("sudo" or "-"), the container name, the run's root directory
+// (which holds the kept log directory), then the directories to remove
+// (RunDirs.Removable). It reports ready on
 // fd 4, then blocks on fd 3, the read end of a pipe whose write end only the
 // parent holds. On EOF without the done byte the parent died, so it stops
 // the container and removes the directories. It exits 2 without acting when
 // fd 3 is not a pipe.
 func RunWatchdog(args []string) int {
-	if len(args) < 3 {
+	if len(args) < 4 {
 		return 2
 	}
 	e := &Engine{Bin: args[0], Sudo: args[1] == "sudo"}
-	name, dirs := args[2], args[3:]
+	name, root, dirs := args[2], args[3], args[4:]
 	// Only a pipe from startWatchdog may trigger cleanup: anything else on
 	// fd 3, such as /dev/null, would read as EOF at once.
 	pipe := os.NewFile(3, "watchdog-pipe")
@@ -86,6 +88,15 @@ func RunWatchdog(args []string) int {
 		time.Sleep(watchdogRetry)
 	}
 	e.cliRun(context.Background(), watchdogCLITimeout, "rm", "--force", name)
+	// Removing the run directories while the container is still running
+	// would strand its mounts, so the removal waits for the container to
+	// be verifiably gone; when it never is, the failure lands in the kept
+	// log directory instead of disappearing.
+	if e.isRunning(name) {
+		diagnostic := fmt.Sprintf("%s watchdog: %s still runs after stop and rm; the run directories stay\n", time.Now().Format(time.RFC3339), name)
+		_ = os.WriteFile(filepath.Join(root, "log", "watchdog.log"), []byte(diagnostic), 0o644)
+		return 0
+	}
 	for _, d := range dirs {
 		os.RemoveAll(d)
 	}
@@ -132,7 +143,7 @@ func (e *Engine) startWatchdog(name string, d runstage.RunDirs) (*watchdog, erro
 	if e.Sudo {
 		marker = "sudo"
 	}
-	args := slices.Concat(entry, []string{e.bin(), marker, name}, d.Removable())
+	args := slices.Concat(entry, []string{e.bin(), marker, name, d.Root}, d.Removable())
 	cmd := exec.Command(exe, args...)
 	cmd.ExtraFiles = []*os.File{r, readyW}
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}

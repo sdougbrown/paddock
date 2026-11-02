@@ -41,12 +41,13 @@ func fakePodman(t *testing.T, tags ...string) (bin string, calls func() [][]stri
 	if err := os.WriteFile(lsFile, blob, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	script := "#!/bin/sh\n[ \"$1\" = __warm ] && exit 0\nprintf '%s\\037' \"$@\" >> " + log + "\necho >> " + log + "\n" +
+	script := "#!/bin/sh\nd=\"${0%/*}\"\n[ \"$1\" = __warm ] && exit 0\nprintf '%s\\037' \"$@\" >> " + log + "\necho >> " + log + "\n" +
 		"[ -e " + dir + "/fail-$1 ] && exit 1\n" +
 		"[ -e " + dir + "/slow-$1 ] && exec sleep 30\n" +
 		"[ -e " + dir + "/slow-once-$1 ] && rm " + dir + "/slow-once-$1 && exec sleep 30\n" +
 		"case \"$1\" in\n image) if [ \"$2\" = ls ]; then cat " + lsFile + "; fi ;;\n" +
-		" inspect) printf 'true\\n' ;;\n" +
+		" inspect) [ -e \"$d/running\" ] && echo true || echo false ;;\n" +
+		" rm) rm -f \"$d/running\" ;;\n" +
 		" run) want=0; nextimg=0; imgdone=0; ep=\"\"\n" +
 		"  while [ $# -gt 0 ]; do\n" +
 		"    a=\"$1\"\n" +
@@ -65,6 +66,10 @@ func fakePodman(t *testing.T, tags ...string) (bin string, calls func() [][]stri
 	// The first exec of a new script can be slow on a loaded host. One
 	// unlogged run keeps that out of the calls tests time or count.
 	if err := exec.Command(bin, "__warm").Run(); err != nil {
+		t.Fatal(err)
+	}
+	// The fake starts with its container running; rm clears the marker.
+	if err := os.WriteFile(filepath.Join(dir, "running"), nil, 0o644); err != nil {
 		t.Fatal(err)
 	}
 	return bin, func() [][]string {

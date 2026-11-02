@@ -32,7 +32,7 @@ func TestPodmanRealInit(t *testing.T) {
 		t.Fatalf("build paddock-init: %v\n%s", err, out)
 	}
 
-	run := func(t *testing.T, policy string, hosts []string, verify bool, argv ...string) (int, string, string) {
+	run := func(t *testing.T, policy string, hosts []string, verify bool, argv ...string) (int, string, string, string) {
 		t.Helper()
 		home, err := filepath.EvalSymlinks(t.TempDir())
 		if err != nil {
@@ -63,11 +63,11 @@ func TestPodmanRealInit(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Run: %v\n%s", err, out.String())
 		}
-		return code, out.String(), ws
+		return code, out.String(), ws, home
 	}
 
 	t.Run("verify allowlist", func(t *testing.T) {
-		code, out, ws := run(t, "allowlist", []string{"api.anthropic.com"}, true)
+		code, out, ws, _ := run(t, "allowlist", []string{"api.anthropic.com"}, true)
 		if code != 0 {
 			t.Fatalf("exit %d, want 0; output:\n%s", code, out)
 		}
@@ -85,12 +85,13 @@ func TestPodmanRealInit(t *testing.T) {
 	})
 
 	t.Run("agent runs dropped in the workdir", func(t *testing.T) {
-		code, out, ws := run(t, "none", nil, false, "sh", "-c",
-			`id -u; id -G; pwd; grep -E '^(CapEff|CapBnd|NoNewPrivs):' /proc/self/status; touch ran; exit 7`)
+		code, out, ws, home := run(t, "none", nil, false, "sh", "-c",
+			`echo $HOME; id -u; id -G; pwd; grep -E '^(CapEff|CapBnd|NoNewPrivs):' /proc/self/status; touch ran; exit 7`)
 		if code != 7 {
 			t.Fatalf("exit %d, want 7; output:\n%s", code, out)
 		}
 		for _, want := range []string{
+			home + "\n",
 			strconv.Itoa(os.Getuid()) + "\n" + strconv.Itoa(os.Getgid()) + "\n" + ws + "\n",
 			"CapEff:\t0000000000000000\n",
 			"CapBnd:\t0000000000000000\n",
@@ -109,7 +110,7 @@ func TestPodmanRealInit(t *testing.T) {
 	// fails, the commit fails, and paddock-init must exit 125 without
 	// starting the agent.
 	t.Run("failed commit never starts the agent", func(t *testing.T) {
-		code, out, ws := run(t, "allowlist", []string{"paddock-lifeline-test.example.com"}, false, "touch", "ran")
+		code, out, ws, _ := run(t, "allowlist", []string{"paddock-lifeline-test.example.com"}, false, "touch", "ran")
 		if code != 125 {
 			t.Fatalf("exit %d, want 125; output:\n%s", code, out)
 		}

@@ -15,13 +15,17 @@ import (
 	"github.com/sdougbrown/paddock/internal/runstage"
 )
 
-// startTestWatchdog re-executes the test binary as the watchdog for a
-// container named paddock-test with dir to remove, and waits for its ready
-// byte. It returns the write end of the watchdog's pipe and a channel that
-// receives the watchdog's exit. The watchdog runs in its own process group,
-// which cleanup kills, hung fake CLI included.
-func startTestWatchdog(t *testing.T, bin string, sudo bool, dir string) (*os.File, chan error) {
+// startTestWatchdog re-executes the test binary as the watchdog for the run
+// directories it creates, and waits for its ready byte. It returns the write
+// end of the watchdog's pipe, a channel that receives the watchdog's exit,
+// and the run directories. The watchdog runs in its own process group, which
+// cleanup kills, hung fake CLI included.
+func startTestWatchdog(t *testing.T, bin string, sudo bool) (*os.File, chan error, runstage.RunDirs) {
 	t.Helper()
+	dirs, err := runstage.CreateRunDirs(t.TempDir(), "paddock-test")
+	if err != nil {
+		t.Fatal(err)
+	}
 	r, w, err := os.Pipe()
 	if err != nil {
 		t.Fatal(err)
@@ -35,7 +39,8 @@ func startTestWatchdog(t *testing.T, bin string, sudo bool, dir string) (*os.Fil
 	if sudo {
 		marker = "sudo"
 	}
-	cmd := exec.Command(os.Args[0], WatchdogCommand, bin, marker, "paddock-test", dir)
+	cmd := exec.Command(os.Args[0], WatchdogCommand, bin, marker, "paddock-test", dirs.Root)
+	cmd.Args = append(cmd.Args, dirs.Removable()...)
 	cmd.Env = append(os.Environ(), "HELPER_WATCHDOG_CLI_TIMEOUT=300ms", "HELPER_WATCHDOG_RETRY=50ms")
 	cmd.ExtraFiles = []*os.File{r, readyW}
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
@@ -56,18 +61,12 @@ func startTestWatchdog(t *testing.T, bin string, sudo bool, dir string) (*os.Fil
 	if n, _ := readyR.Read(b[:]); n != 1 || b[0] != watchdogReady {
 		t.Fatal("watchdog did not become ready")
 	}
-	return w, exited
+	return w, exited, dirs
 }
 
-// TestWatchdogDoneByteSkipsCleanup tells the watchdog the run ended normally.
-// It exits 0 without calling the podman CLI or removing the directory.
 func TestWatchdogDoneByteSkipsCleanup(t *testing.T) {
 	bin, calls := fakePodman(t)
-	dir := filepath.Join(t.TempDir(), "state")
-	if err := os.Mkdir(dir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	w, exited := startTestWatchdog(t, bin, false, dir)
+	w, exited, dirs := startTestWatchdog(t, bin, false)
 	if _, err := w.Write([]byte{watchdogDone}); err != nil {
 		t.Fatal(err)
 	}
@@ -84,38 +83,39 @@ func TestWatchdogDoneByteSkipsCleanup(t *testing.T) {
 	if c := calls(); len(c) != 0 {
 		t.Errorf("watchdog called the podman CLI: %q", c)
 	}
-	if _, err := os.Stat(dir); err != nil {
+	if _, err := os.Stat(dirs.State); err != nil {
 		t.Errorf("run dir: %v", err)
 	}
 }
 
 // TestWatchdogBoundsHungCLICalls runs the watchdog after its parent's pipe
-// closes without the done byte, with a podman CLI whose stop or rm hangs.
-// Each call must time out, so the stop is retried, the rm is attempted, and
-// the run's directories are still removed.
+// closes without the done byte, with a podman CLI whose stop or rm hangs or
+// fails. Each call must time out, the stop is retried, the rm is attempted,
+// and the run's directories go only when the container is verifiably gone.
 func TestWatchdogBoundsHungCLICalls(t *testing.T) {
 	tests := []struct {
-		name  string
-		hang  []string // fakePodman marker files
-		stops int
-		rm    int
+		name     string
+		hang     []string // fakePodman marker files
+		fail     []string
+		stops    int
+		rm       int
+		dirsKept bool
+		wantDiag bool
 	}{
-		{"first stop and rm hang", []string{"slow-once-stop", "slow-once-rm"}, 2, 1},
-		{"every stop hangs", []string{"slow-stop"}, watchdogStopTries, 1},
+		{"first stop and rm hang", []string{"slow-once-stop", "slow-once-rm"}, nil, 2, 1, true, true},
+		{"every stop hangs", []string{"slow-stop"}, nil, watchdogStopTries, 1, false, false},
+		{"stop and rm fail", nil, []string{"fail-stop", "fail-rm"}, watchdogStopTries, 1, true, true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			bin, calls := fakePodman(t)
-			for _, f := range tt.hang {
-				if err := os.WriteFile(filepath.Join(filepath.Dir(bin), f), nil, 0o644); err != nil {
+			dir := filepath.Dir(bin)
+			for _, f := range append(tt.hang, tt.fail...) {
+				if err := os.WriteFile(filepath.Join(dir, f), nil, 0o644); err != nil {
 					t.Fatal(err)
 				}
 			}
-			dir := filepath.Join(t.TempDir(), "state")
-			if err := os.Mkdir(dir, 0o755); err != nil {
-				t.Fatal(err)
-			}
-			w, exited := startTestWatchdog(t, bin, false, dir)
+			w, exited, dirs := startTestWatchdog(t, bin, false)
 			w.Close()
 
 			select {
@@ -124,11 +124,20 @@ func TestWatchdogBoundsHungCLICalls(t *testing.T) {
 				if err != nil {
 					t.Fatalf("watchdog: %v", err)
 				}
-			case <-time.After(10 * time.Second):
-				t.Fatalf("watchdog still running after 10s; calls: %q", calls())
+			case <-time.After(15 * time.Second):
+				t.Fatalf("watchdog still running after 15s; calls: %q", calls())
 			}
-			if _, err := os.Stat(dir); !os.IsNotExist(err) {
-				t.Errorf("run dir not removed: %v", err)
+			_, statErr := os.Stat(dirs.State)
+			if kept := statErr == nil; kept != tt.dirsKept {
+				t.Errorf("state dir kept = %v, want %v (stat: %v)", kept, tt.dirsKept, statErr)
+			}
+			diag := filepath.Join(dirs.Root, "log", "watchdog.log")
+			_, diagErr := os.Stat(diag)
+			if tt.wantDiag && diagErr != nil {
+				t.Errorf("no watchdog.log after failed cleanup: %v", diagErr)
+			}
+			if !tt.wantDiag && diagErr == nil {
+				t.Errorf("watchdog.log written without a failed cleanup")
 			}
 			var stops, rms int
 			for _, c := range calls() {
@@ -151,8 +160,8 @@ func TestWatchdogBoundsHungCLICalls(t *testing.T) {
 // calling the podman CLI, or removing the directory.
 func TestWatchdogRefusesNonPipe(t *testing.T) {
 	bin, calls := fakePodman(t)
-	dir := filepath.Join(t.TempDir(), "state")
-	if err := os.Mkdir(dir, 0o755); err != nil {
+	dirs, err := runstage.CreateRunDirs(t.TempDir(), "paddock-test")
+	if err != nil {
 		t.Fatal(err)
 	}
 	null, err := os.Open(os.DevNull)
@@ -165,7 +174,8 @@ func TestWatchdogRefusesNonPipe(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer readyR.Close()
-	cmd := exec.Command(os.Args[0], WatchdogCommand, bin, "-", "paddock-test", dir)
+	cmd := exec.Command(os.Args[0], WatchdogCommand, bin, "-", "paddock-test", dirs.Root)
+	cmd.Args = append(cmd.Args, dirs.Removable()...)
 	cmd.ExtraFiles = []*os.File{null, readyW}
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
@@ -191,13 +201,13 @@ func TestWatchdogRefusesNonPipe(t *testing.T) {
 	if c := calls(); len(c) != 0 {
 		t.Errorf("watchdog called the podman CLI: %q", c)
 	}
-	if _, err := os.Stat(dir); err != nil {
+	if _, err := os.Stat(dirs.State); err != nil {
 		t.Errorf("run dir: %v", err)
 	}
 }
 
-func TestRunWatchdogNeedsBinMarkerAndName(t *testing.T) {
-	for _, args := range [][]string{nil, {"bin"}, {"bin", "sudo"}} {
+func TestRunWatchdogNeedsFullArgv(t *testing.T) {
+	for _, args := range [][]string{nil, {"bin"}, {"bin", "sudo"}, {"bin", "sudo", "name"}} {
 		if code := RunWatchdog(args); code != 2 {
 			t.Errorf("RunWatchdog(%q) = %d, want 2", args, code)
 		}
@@ -253,8 +263,18 @@ func TestStartWatchdogFailsWhenNotReady(t *testing.T) {
 		t.Errorf("error %q does not name the readiness failure and the missing dispatch %q", err, want)
 	}
 	args, err := os.ReadFile(filepath.Join(dir, "args"))
-	if err != nil || !strings.HasPrefix(string(args), "custom-watchdog\npodman\n-\npaddock-test\n") {
-		t.Errorf("watchdog argv = %q, %v; want the entry arguments, the CLI, the sudo marker, then the name", args, err)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(args)), "\n")
+	want := []string{"custom-watchdog", "podman", "-", "paddock-test", dirs.Root}
+	if len(lines) < len(want) {
+		t.Fatalf("watchdog argv = %q; want at least %q", lines, want)
+	}
+	for i, w := range want {
+		if lines[i] != w {
+			t.Errorf("watchdog argv[%d] = %q, want %q (full: %q)", i, lines[i], w, lines)
+		}
 	}
 	b, err := os.ReadFile(filepath.Join(dir, "pid"))
 	if err != nil {

@@ -11,6 +11,7 @@ import (
 // TestNewEnginePodman checks the profile-to-engine wiring: the podman name
 // resolves, and PADDOCK_PODMAN_SUDO reaches Engine.Sudo.
 func TestNewEnginePodman(t *testing.T) {
+	t.Setenv("PADDOCK_DEBUG", "1")
 	e, err := newEngine(config.EnginePodman)
 	if err != nil {
 		t.Fatalf("newEngine(podman): %v", err)
@@ -19,9 +20,13 @@ func TestNewEnginePodman(t *testing.T) {
 	if !ok {
 		t.Fatalf("newEngine(podman) returned %T; want *podman.Engine", e)
 	}
+	if !pe.Debug {
+		t.Error("Debug not set with PADDOCK_DEBUG=1")
+	}
 	if pe.Sudo {
 		t.Error("Sudo set without PADDOCK_PODMAN_SUDO")
 	}
+	os.Unsetenv("PADDOCK_DEBUG")
 	t.Setenv("PADDOCK_PODMAN_SUDO", "1")
 	e, err = newEngine(config.EnginePodman)
 	if err != nil {

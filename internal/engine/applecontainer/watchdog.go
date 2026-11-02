@@ -2,6 +2,7 @@ package applecontainer
 
 import (
 	"context"
+	"github.com/sdougbrown/paddock/internal/runstage"
 	"io"
 	"os"
 	"time"
@@ -23,13 +24,6 @@ func Dispatch(args []string) (code int, handled bool) {
 	}
 	return RunWatchdog(args[1:]), true
 }
-
-// watchdogDone is the byte the parent writes to tell the watchdog the run
-// ended normally and nothing needs cleaning up.
-const watchdogDone = 'x'
-
-// watchdogReady is the byte the watchdog writes on fd 4 once it holds the pipe on fd 3.
-const watchdogReady = 'r'
 
 // watchdogCLITimeout bounds each `container` call the watchdog makes, so a
 // hung container service cannot keep it from removing the run's directories.
@@ -64,11 +58,11 @@ func RunWatchdog(args []string) int {
 		return 2
 	}
 	if ready := os.NewFile(4, "watchdog-ready"); ready != nil {
-		ready.Write([]byte{watchdogReady})
+		ready.Write([]byte{runstage.WatchdogReady})
 		ready.Close()
 	}
 	data, _ := io.ReadAll(pipe)
-	if len(data) > 0 && data[0] == watchdogDone {
+	if len(data) > 0 && data[0] == runstage.WatchdogDone {
 		return 0
 	}
 	for range watchdogStopTries {

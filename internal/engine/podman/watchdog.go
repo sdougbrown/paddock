@@ -5,10 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"slices"
-	"syscall"
 	"time"
 
 	"github.com/sdougbrown/paddock/internal/runstage"
@@ -74,11 +71,11 @@ func RunWatchdog(args []string) int {
 		return 2
 	}
 	if ready := os.NewFile(4, "watchdog-ready"); ready != nil {
-		ready.Write([]byte{watchdogReady})
+		ready.Write([]byte{runstage.WatchdogReady})
 		ready.Close()
 	}
 	data, _ := io.ReadAll(pipe)
-	if len(data) > 0 && data[0] == watchdogDone {
+	if len(data) > 0 && data[0] == runstage.WatchdogDone {
 		return 0
 	}
 	for range watchdogStopTries {
@@ -103,37 +100,17 @@ func RunWatchdog(args []string) int {
 	return 0
 }
 
-// watchdog is the handle on the running watchdog process.
-type watchdog struct {
-	w   *os.File
-	cmd *exec.Cmd
-}
-
-// watchdogReadyTimeout is how long startWatchdog waits for the watchdog to
-// signal that it is holding the pipe.
-var watchdogReadyTimeout = 5 * time.Second
-
-// startWatchdog re-executes paddock as a session leader holding the read end
-// of a pipe; only this process holds the write end. It returns once the
-// watchdog has written its ready byte, and fails if that takes longer than
-// watchdogReadyTimeout.
-func (e *Engine) startWatchdog(name string, d runstage.RunDirs) (*watchdog, error) {
+// startWatchdog re-executes paddock as a session leader holding the read
+// end of a pipe, with the podman binary, the sudo marker, the run root, and
+// the removable directories as the watchdog's tail arguments. The handshake
+// lives in runstage.
+func (e *Engine) startWatchdog(name string, d runstage.RunDirs) (*runstage.WatchdogHandle, error) {
 	exe := e.selfExe
 	if exe == "" {
 		var err error
 		if exe, err = os.Executable(); err != nil {
 			return nil, err
 		}
-	}
-	r, w, err := os.Pipe()
-	if err != nil {
-		return nil, err
-	}
-	readyR, readyW, err := os.Pipe()
-	if err != nil {
-		r.Close()
-		w.Close()
-		return nil, err
 	}
 	entry := e.watchdogArgs
 	if entry == nil {
@@ -143,33 +120,5 @@ func (e *Engine) startWatchdog(name string, d runstage.RunDirs) (*watchdog, erro
 	if e.Sudo {
 		marker = "sudo"
 	}
-	args := slices.Concat(entry, []string{e.bin(), marker, name, d.Root}, d.Removable())
-	cmd := exec.Command(exe, args...)
-	cmd.ExtraFiles = []*os.File{r, readyW}
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
-	err = cmd.Start()
-	r.Close()
-	readyW.Close()
-	if err != nil {
-		w.Close()
-		readyR.Close()
-		return nil, fmt.Errorf("start watchdog: %w", err)
-	}
-	defer readyR.Close()
-	readyR.SetReadDeadline(time.Now().Add(watchdogReadyTimeout))
-	var b [1]byte
-	if n, _ := readyR.Read(b[:]); n != 1 || b[0] != watchdogReady {
-		cmd.Process.Kill()
-		cmd.Wait()
-		w.Close()
-		return nil, fmt.Errorf("watchdog %s %q did not become ready within %s; the program must dispatch the arguments %q to podman.RunWatchdog", exe, entry, watchdogReadyTimeout, entry)
-	}
-	return &watchdog{w: w, cmd: cmd}, nil
-}
-
-// finish tells the watchdog the run ended normally and reaps it.
-func (w *watchdog) finish() {
-	w.w.Write([]byte{watchdogDone})
-	w.w.Close()
-	w.cmd.Wait()
+	return runstage.StartWatchdog(exe, entry, append([]string{e.bin(), marker, name, d.Root}, d.Removable()...))
 }

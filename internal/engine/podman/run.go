@@ -72,11 +72,11 @@ func (e *Engine) Run(ctx context.Context, p *plan.Plan, o engine.Options) (int, 
 	if err != nil {
 		return 1, err
 	}
-	var wd *watchdog
+	var wd *runstage.WatchdogHandle
 	defer func() {
 		dirs.Remove()
 		if wd != nil {
-			wd.finish()
+			wd.Finish()
 		}
 	}()
 	if wd, err = e.startWatchdog(name, dirs); err != nil {
@@ -209,7 +209,7 @@ func (e *Engine) stopContainer(name string, secs int) error {
 // the CLI's send, stop, and running checks; the queue, retry cadence,
 // cancellation escalation, and secrets cleanup are runstage's.
 func (e *Engine) supervisor() *runstage.Supervisor {
-	sup := &runstage.Supervisor{
+	return runstage.NewSupervisor(runstage.SupervisorConfig{
 		Send:             e.signalContainer,
 		Stop:             e.stopContainer,
 		IsRunning:        e.isRunning,
@@ -218,9 +218,8 @@ func (e *Engine) supervisor() *runstage.Supervisor {
 		CancelGrace:      e.cancelGrace,
 		StopGrace:        e.stopGrace,
 		Debugf:           e.debugf,
-	}
-	sup.SignalQueued(e.signalQueued)
-	return sup
+		SignalQueued:     e.signalQueued,
+	})
 }
 
 // signalContainer delivers sig to the guest and reports whether it was

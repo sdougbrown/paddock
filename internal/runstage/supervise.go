@@ -53,6 +53,36 @@ type Supervisor struct {
 	queued func(os.Signal)
 }
 
+// SupervisorConfig carries the engine-specific operations and the knobs the
+// shared supervision needs. NewSupervisor wires them, so the field set has a
+// single owner.
+type SupervisorConfig struct {
+	Send             func(name string, sig os.Signal) bool
+	Stop             func(name string, grace int) error
+	IsRunning        func(name string) bool
+	SecretsStartWait time.Duration
+	SecretsGrace     time.Duration
+	CancelGrace      time.Duration
+	StopGrace        int
+	Debugf           func(format string, args ...any)
+	SignalQueued     func(os.Signal)
+}
+
+// NewSupervisor builds the shared supervision from the engine's operations.
+func NewSupervisor(cfg SupervisorConfig) *Supervisor {
+	return &Supervisor{
+		Send:             cfg.Send,
+		Stop:             cfg.Stop,
+		IsRunning:        cfg.IsRunning,
+		SecretsStartWait: cfg.SecretsStartWait,
+		SecretsGrace:     cfg.SecretsGrace,
+		CancelGrace:      cfg.CancelGrace,
+		StopGrace:        cfg.StopGrace,
+		Debugf:           cfg.Debugf,
+		queued:           cfg.SignalQueued,
+	}
+}
+
 // SignalQueued registers a callback fired after a signal is queued and one
 // delivery attempt has been made. Tests use it to observe the queue.
 func (s *Supervisor) SignalQueued(f func(os.Signal)) { s.queued = f }

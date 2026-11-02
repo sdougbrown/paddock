@@ -58,18 +58,6 @@ func (e *Engine) pruneSuperseded(ctx context.Context, chain []string) {
 	}
 }
 
-func (e *Engine) ensureImage(ctx context.Context, tag string, build func() error) error {
-	have, err := e.imageExists(ctx, tag)
-	if err != nil {
-		return err
-	}
-	if have {
-		return nil
-	}
-	e.debugf("building image %s", tag)
-	return build()
-}
-
 func (e *Engine) imageExists(ctx context.Context, tag string) (bool, error) {
 	out, err := e.cliOutput(ctx, "image", "ls", "--quiet")
 	if err != nil {

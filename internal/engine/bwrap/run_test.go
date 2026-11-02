@@ -118,8 +118,14 @@ func TestRunStagesHomeAndDeliversSecretsOffArgv(t *testing.T) {
 	if b, err := os.ReadFile(filepath.Join(dir, "claude-dump", ".claude.json")); err != nil || !strings.Contains(string(b), "hasCompletedOnboarding") {
 		t.Errorf(".claude.json = %q, %v", b, err)
 	}
-	if target, err := os.Readlink(filepath.Join(dir, "claude-dump", ".claude", "projects")); err != nil || target != runstage.TranscriptDir(home, ws) {
-		t.Errorf("projects symlink = %q, %v; want %q", target, err, runstage.TranscriptDir(home, ws))
+	if target, err := os.Readlink(filepath.Join(dir, "claude-dump", ".claude", "projects")); err != nil || target != filepath.Dir(runstage.TranscriptDir(home, ws)) {
+		t.Errorf("projects symlink = %q, %v; want %q", target, err, filepath.Dir(runstage.TranscriptDir(home, ws)))
+	}
+	// The guest resolves ~/.claude/projects/<enc> to the canonical path.
+	enc := filepath.Base(runstage.TranscriptDir(home, ws))
+	projects := filepath.Join(dir, "claude-dump", ".claude", "projects", enc)
+	if got, err := filepath.EvalSymlinks(projects); err != nil || got != runstage.TranscriptDir(home, ws) {
+		t.Errorf("~/.claude/projects/%s = %q, %v; want %q", enc, got, err, runstage.TranscriptDir(home, ws))
 	}
 }
 

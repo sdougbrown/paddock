@@ -87,8 +87,11 @@ func (e *Engine) Run(ctx context.Context, p *plan.Plan, o engine.Options) (int, 
 		}
 	}
 	cfg, err := runstage.BuildInitConfig(p, runstage.InitInput{
-		User:          u,
-		TranscriptDir: tdir,
+		User: u,
+		// ~/.claude/projects must hold the per-project dir: point the
+		// symlink at its parent, so <enc> under it is the bound transcript
+		// dir and Claude's files land at the canonical TranscriptDir path.
+		TranscriptDir: filepath.Dir(tdir),
 		Passthrough:   pass,
 	})
 	if err != nil {

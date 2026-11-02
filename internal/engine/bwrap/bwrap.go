@@ -14,8 +14,10 @@ import (
 // running as the invoking user. Work isolation, not process isolation;
 // the egress policy is limited to host (unchanged network) and none
 // (no network), and limits are not enforced. There is no paddock-init
-// and no image: argv runs directly against the host toolchain, and
-// --die-with-parent replaces the watchdog.
+// and no image: argv runs directly against the host toolchain. The
+// watchdog's job falls to --die-with-parent plus a parent-death signal:
+// when the paddock process dies the kernel kills bwrap (PDEATHSIG on
+// Linux), and bwrap kills the agent.
 type Engine struct {
 	Bin       string // bwrap CLI; default "bwrap"
 	Home      string // the host home the transcript dir lives under; default: the user's home directory

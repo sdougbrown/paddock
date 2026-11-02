@@ -156,6 +156,7 @@ func (e *Engine) Run(ctx context.Context, p *plan.Plan, o engine.Options) (int, 
 	running := false
 	cmd := exec.Command(argv[0], argv[1:]...)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = e.Stdin, e.Stdout, e.Stderr
+	cmd.SysProcAttr = parentDeathAttr()
 	// Tier-0 inherits only PATH from the invoking environment: the host
 	// toolchain lives on it, and everything else (tokens, broker URLs,
 	// shell history) stays out of the run.

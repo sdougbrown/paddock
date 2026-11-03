@@ -33,13 +33,10 @@ func (e *Engine) Run(ctx context.Context, p *plan.Plan, o engine.Options) (int, 
 	if p.Workdir == "" {
 		return 1, errors.New("plan has no workdir")
 	}
-	// The config layer rejects allowlist profiles and limits for this
-	// engine; the checks here cover plans built by another path.
-	if p.Network.Policy == initcfg.PolicyAllowlist {
-		return 1, fmt.Errorf("network policy %q cannot be enforced by the bwrap engine", p.Network.Policy)
-	}
-	if p.Limits.CPUs != 0 || p.Limits.Memory != "" {
-		return 1, fmt.Errorf("limits: the bwrap engine cannot enforce cpu or memory limits; remove them or use a container engine")
+	// The config layer rejects allowlist policies and limits for this
+	// engine; the shared check covers plans built by another path.
+	if err := config.CheckEngineCapabilities(config.EngineBwrap, p.Network.Policy, config.Limits{CPUs: p.Limits.CPUs, Memory: p.Limits.Memory}); err != nil {
+		return 1, err
 	}
 	if o.Verify {
 		return 1, errors.New("verify is not supported by the bwrap engine: there is no paddock-init to run the guest checks")
@@ -134,11 +131,12 @@ func (e *Engine) Run(ctx context.Context, p *plan.Plan, o engine.Options) (int, 
 	cmd := exec.Command(argv[0], argv[1:]...)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = e.Stdin, e.Stdout, e.Stderr
 	cmd.SysProcAttr = parentDeathAttr()
-	// Tier-0 inherits only PATH from the invoking environment: the host
-	// toolchain lives on it, and everything else (tokens, broker URLs,
-	// shell history) stays out of the run.
+	// Tier-0 inherits the curated passthrough set (TERM, COLORTERM, LANG —
+	// the same lines a container run forwards) plus only PATH from the
+	// invoking environment: the host toolchain lives on it, and everything
+	// else (tokens, broker URLs, shell history) stays out of the run.
 	path, hasPath := e.lookup("PATH")
-	inherited := []string{}
+	inherited := append([]string{}, st.Pass...)
 	if hasPath {
 		inherited = append(inherited, "PATH="+path)
 	}

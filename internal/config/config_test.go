@@ -128,8 +128,8 @@ memory = "6G"
 				t.Errorf("engine = %q; want bwrap", p.Engine)
 			}
 		}},
-		{"bwrap with limits", strings.Replace(strings.Replace(ok, "apple-container", "bwrap", 1), "policy = \"allowlist\"", "policy = \"none\"", 1), "[limits]", nil},
-		{"bwrap with allowlist", strings.Replace(strings.Replace(ok, "apple-container", "bwrap", 1), "policy = \"allowlist\"", "policy = \"allowlist\"", 1), "network.policy", nil},
+		{"bwrap with limits", strings.Replace(strings.Replace(ok, "apple-container", "bwrap", 1), "policy = \"allowlist\"", "policy = \"none\"", 1), "cannot enforce cpu or memory limits", nil},
+		{"bwrap with allowlist", strings.Replace(strings.Replace(ok, "apple-container", "bwrap", 1), "policy = \"allowlist\"", "policy = \"allowlist\"", 1), "cannot enforce an egress allowlist", nil},
 		{"bad engine", strings.Replace(ok, "apple-container", "docker", 1), "engine", nil},
 		{"bad mode", strings.Replace(ok, `"rw"`, `"wx"`, 1), "workspace.mode", nil},
 		{"bad policy", strings.Replace(ok, "allowlist", "open", 1), "network.policy", nil},

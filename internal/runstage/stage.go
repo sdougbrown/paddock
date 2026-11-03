@@ -13,7 +13,6 @@ import (
 // directory it created, the built init config, and the host path of the
 // staged managed settings (empty when the plan has none).
 type Staged struct {
-	TDir     string
 	Cfg      *initcfg.Config
 	Settings string
 	Pass     []string // the passthrough environment lines
@@ -62,5 +61,5 @@ func Stage(p *plan.Plan, u initcfg.User, getenv func(string) string, home, cfgTr
 	if err := CopySeedFiles(dirs.State, p.Claude.SeedFiles); err != nil {
 		return Staged{}, err
 	}
-	return Staged{TDir: tdir, Cfg: cfg, Settings: settings, Pass: pass}, nil
+	return Staged{Cfg: cfg, Settings: settings, Pass: pass}, nil
 }

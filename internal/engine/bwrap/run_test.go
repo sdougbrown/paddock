@@ -164,6 +164,13 @@ func TestRunFailsClosedAndCleansUp(t *testing.T) {
 	if _, err := e.Run(t.Context(), p3, engine.Options{}); err == nil || !strings.Contains(err.Error(), "paddock-managed") {
 		t.Errorf("transcript mount: err = %v; want a collision error", err)
 	}
+	// The failed runs clean up: no run directory survives.
+	runs := filepath.Join(home, "state", "runs")
+	if entries, err := os.ReadDir(runs); err != nil && !os.IsNotExist(err) {
+		t.Errorf("run dirs: %v", err)
+	} else if len(entries) != 0 {
+		t.Errorf("failed runs left %d run directories behind", len(entries))
+	}
 }
 
 func TestForwardSignalsDeliverToTheChild(t *testing.T) {

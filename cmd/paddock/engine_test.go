@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/sdougbrown/paddock/internal/config"
+	"github.com/sdougbrown/paddock/internal/engine/bwrap"
 	"github.com/sdougbrown/paddock/internal/engine/podman"
 )
 
@@ -39,5 +40,23 @@ func TestNewEnginePodman(t *testing.T) {
 	}
 	if _, err := newEngine("nope"); err == nil {
 		t.Error("newEngine(nope) succeeded; want an unsupported-engine error")
+	}
+}
+
+// TestNewEngineBwrap checks the bwrap wiring: the engine name resolves to a
+// *bwrap.Engine with the debug flag, so a bwrap profile launches instead of
+// failing with an unsupported-engine error.
+func TestNewEngineBwrap(t *testing.T) {
+	t.Setenv("PADDOCK_DEBUG", "1")
+	e, err := newEngine(config.EngineBwrap)
+	if err != nil {
+		t.Fatalf("newEngine(bwrap): %v", err)
+	}
+	be, ok := e.(*bwrap.Engine)
+	if !ok {
+		t.Fatalf("newEngine(bwrap) returned %T; want *bwrap.Engine", e)
+	}
+	if !be.Debug {
+		t.Error("Debug not set with PADDOCK_DEBUG=1")
 	}
 }

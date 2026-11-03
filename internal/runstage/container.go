@@ -150,12 +150,11 @@ func ContainerRun(ctx context.Context, p *plan.Plan, verify bool, ops ContainerO
 	if err != nil {
 		return 1, err
 	}
-	st, err := Stage(p, u, ops.Getenv, ops.Home, dirs, mounts, verify)
+	// pinit marks the config's transcript dir writable for the agent.
+	st, err := Stage(p, u, ops.Getenv, ops.Home, tdir, dirs, mounts, verify)
 	if err != nil {
 		return 1, err
 	}
-	// pinit marks the config's transcript dir writable for the agent.
-	st.Cfg.Claude.TranscriptDir = tdir
 	cfg := st.Cfg
 	if err := initcfg.Write(filepath.Join(dirs.State, filepath.Base(initcfg.ConfigPath)), cfg); err != nil {
 		return 1, err

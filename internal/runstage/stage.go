@@ -28,12 +28,13 @@ func StagedSettings(dirs RunDirs) string {
 // transcript directory (0700 — it holds agent sessions), builds the
 // passthrough environment from getenv, writes the managed settings beside
 // the config, copies the seed files, and builds the init config. home is
-// the host home the transcript dir lives under. The caller records the
-// transcript dir in the config (cfg.Claude.TranscriptDir): the container
-// engines set the writable dir itself, the bwrap engine the projects
-// symlink target (its parent). mounts feed the config's mount list;
-// engines that keep mounts out of the config pass nil.
-func Stage(p *plan.Plan, u initcfg.User, getenv func(string) string, home string, dirs RunDirs, mounts []GuestMount, verify bool) (Staged, error) {
+// the host home the transcript dir lives under. cfgTranscriptDir is what
+// the config records for the transcript dir (validated with everything
+// else): the container engines set the writable dir itself, the bwrap
+// engine the projects symlink target (its parent). mounts feed the
+// config's mount list; engines that keep mounts out of the config pass
+// nil.
+func Stage(p *plan.Plan, u initcfg.User, getenv func(string) string, home, cfgTranscriptDir string, dirs RunDirs, mounts []GuestMount, verify bool) (Staged, error) {
 	tdir := TranscriptDir(home, p.Workdir)
 	// 0700: on a shared host the transcript dir holds agent sessions, and
 	// MkdirAll's mode applies to the ~/.claude and ~/.claude/projects it
@@ -47,7 +48,7 @@ func Stage(p *plan.Plan, u initcfg.User, getenv func(string) string, home string
 			pass = append(pass, k+"="+v)
 		}
 	}
-	cfg, err := BuildInitConfig(p, InitInput{User: u, Verify: verify, Mounts: mounts, Passthrough: pass})
+	cfg, err := BuildInitConfig(p, InitInput{User: u, Verify: verify, TranscriptDir: cfgTranscriptDir, Mounts: mounts, Passthrough: pass})
 	if err != nil {
 		return Staged{}, err
 	}

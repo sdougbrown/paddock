@@ -75,7 +75,9 @@ func (e *Engine) Run(ctx context.Context, p *plan.Plan, o engine.Options) (int, 
 	home := filepath.Join(dirs.Root, "home")
 	// The transcript directory binds at its host path, so it must exist
 	// before bwrap starts; the home's projects symlink points at it.
-	st, err := runstage.Stage(p, u, e.getenv, e.Home, dirs, nil, false)
+	// The config's transcript dir is the symlink target's parent, so the
+	// per-project dir under it is the bound transcript dir.
+	st, err := runstage.Stage(p, u, e.getenv, e.Home, filepath.Dir(tdir), dirs, nil, false)
 	if err != nil {
 		return 1, err
 	}
@@ -85,10 +87,6 @@ func (e *Engine) Run(ctx context.Context, p *plan.Plan, o engine.Options) (int, 
 	// path, which the read-only host rootfs must not receive: the engine
 	// pins user-scope settings with the read-only bind instead.
 	st.Cfg.Claude.ManagedSettings = nil
-	// ~/.claude/projects must hold the per-project dir: point the symlink
-	// at its parent, so <enc> under it is the bound transcript dir and
-	// Claude's files land at the canonical TranscriptDir path.
-	st.Cfg.Claude.TranscriptDir = filepath.Dir(st.TDir)
 	fs := initcfg.NewHomeFS("/", st.Cfg)
 	fs.SeedDir = filepath.Join(dirs.State, filepath.Base(initcfg.SeedDir))
 	settings := st.Settings

@@ -93,7 +93,6 @@ func (e *Engine) containerOps() runstage.ContainerOps {
 		Lookup:           e.lookup,
 		Home:             e.Home,
 		StateRoot:        e.StateRoot,
-		CacheRoot:        e.CacheRoot,
 		Stdin:            e.Stdin,
 		Stdout:           e.Stdout,
 		Stderr:           e.Stderr,
@@ -125,7 +124,8 @@ func (e *Engine) containerOps() runstage.ContainerOps {
 			return e.startWatchdog(name, dirs)
 		},
 		Argv: func(s runstage.ContainerArgv) []string {
-			return runArgv(runSpec{
+			// ContainerRun execs argv[0], so the binary leads the vector.
+			return append([]string{e.bin()}, runArgv(runSpec{
 				Name:       s.Name,
 				TTY:        s.TTY,
 				CPUs:       s.CPUs,
@@ -136,7 +136,7 @@ func (e *Engine) containerOps() runstage.ContainerOps {
 				Entrypoint: s.Entrypoint,
 				Image:      s.Image,
 				Args:       s.Args,
-			})
+			})...)
 		},
 	}
 }
@@ -165,14 +165,6 @@ func (e *Engine) cli(args ...string) error {
 	_, err := e.cliOutput(context.Background(), args...)
 	return err
 }
-
-// orphanStopGrace is the stop grace, in seconds, for a container whose
-// paddock side is gone: the `container run` client died (Run) or paddock
-// itself died (the watchdog). Nothing is left to wait on the guest, so
-// cleanup is prompt. A cancellation uses Engine.stopGrace instead: it is the
-// last step of an escalation that has already tried SIGTERM and waited
-// cancelGrace, and the caller chooses how long it lasts.
-const orphanStopGrace = 2
 
 // stopArgs is the `container stop` argv that stops name, killing it after
 // grace seconds. Run and the watchdog both stop containers with it.

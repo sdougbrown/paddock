@@ -36,7 +36,6 @@ func (e *Engine) containerOps() runstage.ContainerOps {
 		Lookup:           e.lookup,
 		Home:             e.Home,
 		StateRoot:        e.StateRoot,
-		CacheRoot:        e.CacheRoot,
 		Stdin:            e.Stdin,
 		Stdout:           e.Stdout,
 		Stderr:           e.Stderr,

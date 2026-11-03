@@ -8,9 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
-	"os/user"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -43,7 +41,6 @@ type ContainerOps struct {
 	Lookup           func(string) (string, bool)
 	Home             string
 	StateRoot        string
-	CacheRoot        string
 	Stdin            *os.File
 	Stdout           io.Writer
 	Stderr           io.Writer
@@ -85,37 +82,11 @@ type ContainerArgv struct {
 	Args       []string
 }
 
-// hostUser returns the invoking user.
-func hostUser() (initcfg.User, error) {
-	u, err := user.Current()
-	if err != nil {
-		return initcfg.User{}, err
-	}
-	uid, err := strconv.Atoi(u.Uid)
-	if err != nil {
-		return initcfg.User{}, err
-	}
-	gid, err := strconv.Atoi(u.Gid)
-	if err != nil {
-		return initcfg.User{}, err
-	}
-	return initcfg.User{Name: u.Username, UID: uid, GID: gid, Home: u.HomeDir}, nil
-}
-
-// orphanStopGrace is the stop grace, in seconds, for a container whose
-// paddock side died without waiting on it.
-const orphanStopGrace = 2
-
-// isTTY reports whether f is a terminal; /dev/null is a character device but
-// not one.
-func isTTY(f *os.File) bool {
-	st, err := f.Stat()
-	if err != nil || st.Mode()&os.ModeCharDevice == 0 {
-		return false
-	}
-	null, err := os.Stat(os.DevNull)
-	return err != nil || !os.SameFile(st, null)
-}
+// OrphanStopGrace is the stop grace, in seconds, for a container whose
+// paddock side died without waiting on it: the in-process stop here and the
+// engines' crash watchdogs share one number, so a tuned grace applies
+// everywhere.
+const OrphanStopGrace = 2
 
 // ContainerRun runs a container-engine plan to completion: staging, image
 // chain, watchdog, supervision, and exit-code propagation. The runtime's
@@ -131,7 +102,7 @@ func ContainerRun(ctx context.Context, p *plan.Plan, verify bool, ops ContainerO
 	if err != nil {
 		return 1, err
 	}
-	u, err := hostUser()
+	u, err := HostUser()
 	if err != nil {
 		return 1, fmt.Errorf("host user: %w", err)
 	}
@@ -211,7 +182,7 @@ func ContainerRun(ctx context.Context, p *plan.Plan, verify bool, ops ContainerO
 
 	argv := ops.Argv(ContainerArgv{
 		Name:       name,
-		TTY:        isTTY(ops.Stdin),
+		TTY:        IsTTY(ops.Stdin),
 		CPUs:       p.Limits.CPUs,
 		Memory:     p.Limits.Memory,
 		Mounts:     mounts,
@@ -284,7 +255,7 @@ func ContainerRun(ctx context.Context, p *plan.Plan, verify bool, ops ContainerO
 			code = 128 + int(ws.Signal())
 			// The client died without the container's own exit; stop it
 			// promptly: nothing is left to wait on the guest.
-			ops.StopContainer(name, orphanStopGrace)
+			ops.StopContainer(name, OrphanStopGrace)
 		}
 	default:
 		return 1, waitErr

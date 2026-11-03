@@ -124,8 +124,14 @@ func TestRunStagesHomeAndDeliversSecretsOffArgv(t *testing.T) {
 	// The guest resolves ~/.claude/projects/<enc> to the canonical path.
 	enc := filepath.Base(runstage.TranscriptDir(home, ws))
 	projects := filepath.Join(dir, "claude-dump", ".claude", "projects", enc)
-	if got, err := filepath.EvalSymlinks(projects); err != nil || got != runstage.TranscriptDir(home, ws) {
-		t.Errorf("~/.claude/projects/%s = %q, %v; want %q", enc, got, err, runstage.TranscriptDir(home, ws))
+	// Resolve both sides: macOS resolves /var to /private/var, and the
+	// comparison is about reaching the same directory, not the spelling.
+	want, err := filepath.EvalSymlinks(runstage.TranscriptDir(home, ws))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, err := filepath.EvalSymlinks(projects); err != nil || got != want {
+		t.Errorf("~/.claude/projects/%s = %q, %v; want %q", enc, got, err, want)
 	}
 }
 

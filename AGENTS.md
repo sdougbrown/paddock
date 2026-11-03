@@ -57,6 +57,34 @@ Agent-specific behavior (what to run, which prompt, which skills) belongs to the
   environment and secrets, `/etc/hosts`, the network commit, and the privilege drop and exec of
   the agent; also the proxy child and the verify role
 
+## Adding an engine
+
+The engines share their machinery in `runstage` and `initcfg`. A new engine starts from those
+pieces, not from copying an existing engine's `Run` — copied blocks drift, and every drift
+becomes a divergence the engines disagree on. Before writing engine code, reuse by default:
+
+- Staging: `runstage.Stage` builds the passthrough environment, the init config, the managed
+  settings write, and the seed files, and creates the transcript directory 0700 (it holds agent
+  sessions). Call it; do not re-stage.
+- Environment: `initcfg.AgentEnv` (HOME, USER, LOGNAME, SHELL, PATH) and `runstage.PassthroughEnv`
+  via `Stage`. Never read the invoking environment outside the engine's injectable hook.
+- Home layout: `initcfg.PrepareHome` with a `HomeFS`. The config's `Claude.TranscriptDir` means
+  "what `~/.claude/projects` resolves through" — set it at the call site to the writable dir
+  itself (container engines, via pinit's writable list) or the symlink target's parent (bwrap).
+- Secrets: `initcfg.ParseSecrets` is the one parser for the secrets.env format. Errors name the
+  line and key, never the value; `runstage.ExitCode` is the one wait-error-to-exit-code rule.
+- Mount rule: `runstage.CheckMountTargets` guards plan mounts against the engine's own guest
+  paths; add the engine's owned roots to its list rather than writing a second guard.
+
+Every guard the engine enforces gets a test that fails when the guard is deleted, and pins the
+observable behavior — where files land on disk, not what a symlink's target string is. Every
+trust rule applies to new code: secret values never reach errors, agent-written files are not
+world-readable, and nothing under `internal/runstage` is imported by paddock-init. Keep the
+child process's lifecycle owned: every goroutine joins before `Run` returns, and the child dies
+with the parent (watchdog or parent-death signal). Vet and build for every CI platform
+(`GOOS=darwin go vet ./...`) before pushing, and resolve both sides of any path comparison in
+tests — macOS resolves `/var` to `/private/var`.
+
 ## Notes
 
 - `SECURITY.md` holds the threat model and documented residual risks; update it with any change to them.

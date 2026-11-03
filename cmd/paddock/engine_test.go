@@ -1,7 +1,6 @@
 package main
 
 import (
-	"os"
 	"testing"
 
 	"github.com/sdougbrown/paddock/internal/config"
@@ -11,6 +10,10 @@ import (
 // TestNewEnginePodman checks the profile-to-engine wiring: the podman name
 // resolves, and PADDOCK_PODMAN_SUDO reaches Engine.Sudo.
 func TestNewEnginePodman(t *testing.T) {
+	// Hermetic against the operator's shell: the container-test workflow
+	// exports PADDOCK_PODMAN_SUDO=1, and the negative assertion below must
+	// not see it.
+	t.Setenv("PADDOCK_PODMAN_SUDO", "")
 	t.Setenv("PADDOCK_DEBUG", "1")
 	e, err := newEngine(config.EnginePodman)
 	if err != nil {
@@ -26,7 +29,6 @@ func TestNewEnginePodman(t *testing.T) {
 	if pe.Sudo {
 		t.Error("Sudo set without PADDOCK_PODMAN_SUDO")
 	}
-	os.Unsetenv("PADDOCK_DEBUG")
 	t.Setenv("PADDOCK_PODMAN_SUDO", "1")
 	e, err = newEngine(config.EnginePodman)
 	if err != nil {
@@ -38,5 +40,4 @@ func TestNewEnginePodman(t *testing.T) {
 	if _, err := newEngine("nope"); err == nil {
 		t.Error("newEngine(nope) succeeded; want an unsupported-engine error")
 	}
-	_ = os.Unsetenv("PADDOCK_PODMAN_SUDO")
 }

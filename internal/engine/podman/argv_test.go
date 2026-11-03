@@ -1,6 +1,8 @@
 package podman
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -69,7 +71,22 @@ func TestStopArgsAndTimeout(t *testing.T) {
 			t.Errorf("stopArgs[%d] = %q, want %q", i, got[i], want[i])
 		}
 	}
-	if d := stopTimeout(2); d != cliTimeout+2*time.Second {
-		t.Errorf("stopTimeout(2) = %s, want %s", d, cliTimeout+2*time.Second)
+}
+
+// TestStopContainerBoundedByTimeout pins the stop's observable behavior: a
+// podman stop that never completes errors when the stop timeout expires —
+// stopTimeout(grace), cliTimeout plus the grace — rather than hanging.
+func TestStopContainerBoundedByTimeout(t *testing.T) {
+	bin, _ := fakePodman(t, "slow-stop")
+	if err := os.WriteFile(filepath.Join(filepath.Dir(bin), "slow-stop"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	e := &Engine{Bin: bin}
+	start := time.Now()
+	if err := e.stopContainer("paddock-x", 2); err == nil {
+		t.Fatal("a podman stop that never completes must error at the timeout")
+	}
+	if d := time.Since(start); d < stopTimeout(2)-time.Second {
+		t.Errorf("stopContainer returned after %s; want ~%s", d, stopTimeout(2))
 	}
 }

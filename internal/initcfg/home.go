@@ -228,7 +228,7 @@ func WriteFileAtomic(path string, data []byte, mode os.FileMode) error {
 	if err := tmp.Close(); err != nil {
 		return err
 	}
-	if err := os.Rename(tmp.Name(), path); err == nil {
+	if err := rename(tmp.Name(), path); err == nil {
 		return nil
 	} else if !errors.Is(err, syscall.EBUSY) {
 		return err
@@ -241,6 +241,9 @@ func WriteFileAtomic(path string, data []byte, mode os.FileMode) error {
 // as podman's /etc/hosts does: rename can never replace that inode. In the
 // guest the caller is root before the privilege drop; on the host (bwrap's
 // PrepareHome) the caller owns the file.
+// rename is os.Rename; a variable so tests can force the EBUSY fallback.
+var rename = os.Rename
+
 func writeFileInPlace(path string, data []byte, mode os.FileMode) error {
 	f, err := os.OpenFile(path, os.O_WRONLY|os.O_TRUNC, 0)
 	if err != nil {

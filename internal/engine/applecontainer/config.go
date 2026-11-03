@@ -2,7 +2,7 @@ package applecontainer
 
 import (
 	"context"
-	"fmt"
+	"github.com/sdougbrown/paddock/internal/engine"
 	"io"
 	"os"
 	"os/exec"
@@ -52,7 +52,7 @@ func (e *Engine) bin() string {
 
 func (e *Engine) debugf(format string, a ...any) {
 	if e.Debug {
-		fmt.Fprintf(e.Stderr, "paddock: "+format+"\n", a...)
+		engine.Debugf(e.Stderr, format, a...)
 	}
 }
 

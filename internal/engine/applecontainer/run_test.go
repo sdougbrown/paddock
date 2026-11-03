@@ -3,6 +3,8 @@ package applecontainer
 import (
 	"os"
 	"testing"
+
+	"github.com/sdougbrown/paddock/internal/runstage"
 )
 
 func TestIsTTY(t *testing.T) {
@@ -18,14 +20,14 @@ func TestIsTTY(t *testing.T) {
 	}
 	defer null.Close()
 
-	if isTTY(r) {
+	if runstage.IsTTY(r) {
 		t.Error("pipe reported as a terminal")
 	}
-	if isTTY(null) {
+	if runstage.IsTTY(null) {
 		t.Error("/dev/null reported as a terminal")
 	}
 	t.Run("terminal", func(t *testing.T) {
-		if !isTTY(openTerminal(t)) {
+		if !runstage.IsTTY(openTerminal(t)) {
 			t.Error("pseudo-terminal not reported as a terminal")
 		}
 	})

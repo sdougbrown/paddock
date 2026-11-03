@@ -1,4 +1,4 @@
-package applecontainer
+package runstage
 
 import (
 	"crypto/rand"
@@ -15,13 +15,13 @@ import (
 	"github.com/sdougbrown/paddock/internal/resolve"
 )
 
-// runDirs are the per-run host directories under <state root>/runs/<name>.
+// RunDirs are the per-run host directories under <state root>/runs/<name>.
 // State, Secrets, and Settings are removed when the run ends; Log is kept.
-type runDirs struct {
+type RunDirs struct {
 	Root, State, Secrets, Log, Settings string
 }
 
-func newRunName() (string, error) {
+func NewRunName() (string, error) {
 	var b [8]byte
 	if _, err := rand.Read(b[:]); err != nil {
 		return "", err
@@ -29,9 +29,9 @@ func newRunName() (string, error) {
 	return "paddock-" + hex.EncodeToString(b[:]), nil
 }
 
-func createRunDirs(stateRoot, name string) (runDirs, error) {
+func CreateRunDirs(stateRoot, name string) (RunDirs, error) {
 	root := filepath.Join(stateRoot, "runs", name)
-	d := runDirs{
+	d := RunDirs{
 		Root:    root,
 		State:   filepath.Join(root, "state"),
 		Secrets: filepath.Join(root, "secrets"),
@@ -41,39 +41,39 @@ func createRunDirs(stateRoot, name string) (runDirs, error) {
 		Settings: filepath.Join(root, "settings"),
 	}
 	if err := os.MkdirAll(filepath.Dir(root), 0o700); err != nil {
-		return runDirs{}, err
+		return RunDirs{}, err
 	}
 	// Mkdir fails if the run directory exists, so two runs never share one.
 	if err := os.Mkdir(root, 0o700); err != nil {
-		return runDirs{}, err
+		return RunDirs{}, err
 	}
 	for _, dir := range []string{filepath.Dir(root), root, d.State, d.Secrets, d.Log, d.Settings} {
 		if err := os.MkdirAll(dir, 0o700); err != nil {
-			return runDirs{}, err
+			return RunDirs{}, err
 		}
 		if err := os.Chmod(dir, 0o700); err != nil {
-			return runDirs{}, err
+			return RunDirs{}, err
 		}
 	}
 	return d, nil
 }
 
-// removable lists the directories that hold per-run secrets and config.
-func (d runDirs) removable() []string {
+// Removable lists the directories that hold per-run secrets and config.
+func (d RunDirs) Removable() []string {
 	return []string{d.State, d.Secrets, d.Settings}
 }
 
-// remove deletes the removable directories.
-func (d runDirs) remove() {
-	for _, dir := range d.removable() {
+// Remove deletes the removable directories.
+func (d RunDirs) Remove() {
+	for _, dir := range d.Removable() {
 		os.RemoveAll(dir)
 	}
 }
 
-// copySeedFiles copies the plan's seed files into <state>/seed. Resolve
+// CopySeedFiles copies the plan's seed files into <state>/seed. Resolve
 // already rejects seed files that share a base name; the check here keeps a
 // plan from another source from overwriting one seed file with another.
-func copySeedFiles(state string, files []string) error {
+func CopySeedFiles(state string, files []string) error {
 	if len(files) == 0 {
 		return nil
 	}
@@ -99,12 +99,12 @@ func copySeedFiles(state string, files []string) error {
 	return nil
 }
 
-// resolveSecrets reads every non-literal env value. The result is KEY=VALUE
+// ResolveSecrets reads every non-literal env value. The result is KEY=VALUE
 // lines for secrets.env, or nil when the plan has no such values. Errors never
 // include a value.
-func resolveSecrets(env []plan.EnvVar, lookup func(string) (string, bool)) ([]byte, error) {
+func ResolveSecrets(env []plan.EnvVar, lookup func(string) (string, bool)) ([]byte, error) {
 	var b strings.Builder
-	_, refs := splitEnv(env)
+	_, refs := SplitEnv(env)
 	for _, e := range refs {
 		v, err := resolve.ResolveValue(e, lookup)
 		if err != nil {
@@ -118,16 +118,16 @@ func resolveSecrets(env []plan.EnvVar, lookup func(string) (string, bool)) ([]by
 	return []byte(b.String()), nil
 }
 
-var secretsFile = filepath.Base(initcfg.SecretsPath)
+var SecretsFile = filepath.Base(initcfg.SecretsPath)
 
-func writeSecrets(dir string, data []byte) error {
-	return os.WriteFile(filepath.Join(dir, secretsFile), data, 0o600)
+func WriteSecrets(dir string, data []byte) error {
+	return os.WriteFile(filepath.Join(dir, SecretsFile), data, 0o600)
 }
 
-// stageInitBinary copies the paddock-init binary at src into
+// StageInitBinary copies the paddock-init binary at src into
 // <cache>/bin/<sha256>/paddock-init, so the guest mount exposes only that
 // file, and returns the directory.
-func stageInitBinary(cacheRoot, src string) (string, error) {
+func StageInitBinary(cacheRoot, src string) (string, error) {
 	f, err := os.Open(src)
 	if err != nil {
 		return "", fmt.Errorf("paddock-init binary: %w", err)
@@ -166,8 +166,8 @@ func stageInitBinary(cacheRoot, src string) (string, error) {
 	return dir, os.Rename(tmp.Name(), dst)
 }
 
-// locateInitBinary returns $PADDOCK_INIT, else paddock-init beside the running executable.
-func locateInitBinary(getenv func(string) string, executable func() (string, error)) (string, error) {
+// LocateInitBinary returns $PADDOCK_INIT, else paddock-init beside the running executable.
+func LocateInitBinary(getenv func(string) string, executable func() (string, error)) (string, error) {
 	if p := getenv("PADDOCK_INIT"); p != "" {
 		return p, nil
 	}

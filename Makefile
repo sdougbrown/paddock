@@ -12,9 +12,14 @@ test:
 	go test -race ./...
 
 # Starts Apple container VMs and builds images; needs Apple silicon with the
-# container service running.
+# container service running. On a Linux host with rootful podman it also runs
+# the podman engine's real-container tests; set PADDOCK_PODMAN_SUDO=1 there
+# when podman is reached through sudo.
 container-test:
 	PADDOCK_CONTAINER_TESTS=1 PADDOCK_BUILD_TESTS=1 go test -race -count=1 ./internal/engine/applecontainer
+	@if command -v podman >/dev/null 2>&1; then \
+		PADDOCK_PODMAN_TESTS=1 PADDOCK_BUILD_TESTS=1 go test -race -count=1 ./internal/engine/podman; \
+	else echo "podman not found; skipping the podman container tests"; fi
 
 vet:
 	go vet ./...

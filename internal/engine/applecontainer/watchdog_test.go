@@ -11,6 +11,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/sdougbrown/paddock/internal/runstage"
 )
 
 // startTestWatchdog re-executes the test binary as the watchdog for a
@@ -47,7 +49,7 @@ func startTestWatchdog(t *testing.T, bin, dir string) (*os.File, chan error) {
 	readyW.Close()
 	readyR.SetReadDeadline(time.Now().Add(5 * time.Second))
 	var b [1]byte
-	if n, _ := readyR.Read(b[:]); n != 1 || b[0] != watchdogReady {
+	if n, _ := readyR.Read(b[:]); n != 1 || b[0] != runstage.WatchdogReady {
 		t.Fatal("watchdog did not become ready")
 	}
 	return w, exited
@@ -62,7 +64,7 @@ func TestWatchdogDoneByteSkipsCleanup(t *testing.T) {
 		t.Fatal(err)
 	}
 	w, exited := startTestWatchdog(t, bin, dir)
-	if _, err := w.Write([]byte{watchdogDone}); err != nil {
+	if _, err := w.Write([]byte{runstage.WatchdogDone}); err != nil {
 		t.Fatal(err)
 	}
 	w.Close()
@@ -142,7 +144,7 @@ func TestWatchdogBoundsHungCLICalls(t *testing.T) {
 
 // TestStartWatchdogFailsWhenNotReady points the watchdog at a program that
 // never writes the ready byte. startWatchdog must fail after
-// watchdogReadyTimeout, name the entry arguments, and reap the child.
+// runstage.WatchdogReadyTimeout, name the entry arguments, and reap the child.
 func TestStartWatchdogFailsWhenNotReady(t *testing.T) {
 	dir := t.TempDir()
 	exe := filepath.Join(dir, "not-paddock")
@@ -154,9 +156,9 @@ func TestStartWatchdogFailsWhenNotReady(t *testing.T) {
 	if err := exec.Command(exe, "warm").Run(); err != nil {
 		t.Fatal(err)
 	}
-	defer func(d time.Duration) { watchdogReadyTimeout = d }(watchdogReadyTimeout)
-	watchdogReadyTimeout = 2 * time.Second
-	dirs, err := createRunDirs(t.TempDir(), "paddock-test")
+	defer func(d time.Duration) { runstage.WatchdogReadyTimeout = d }(runstage.WatchdogReadyTimeout)
+	runstage.WatchdogReadyTimeout = 2 * time.Second
+	dirs, err := runstage.CreateRunDirs(t.TempDir(), "paddock-test")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -164,15 +166,15 @@ func TestStartWatchdogFailsWhenNotReady(t *testing.T) {
 	start := time.Now()
 	wd, err := e.startWatchdog("paddock-test", dirs)
 	if err == nil {
-		wd.finish()
+		wd.Finish()
 		t.Fatal("startWatchdog succeeded; want a not-ready error")
 	}
 	// The wait must be the configured timeout: not cut short, and not much
 	// longer than it, with room for oversleeping under -race load.
-	if d, lo, hi := time.Since(start), watchdogReadyTimeout*9/10, watchdogReadyTimeout+3*time.Second; d < lo || d > hi {
+	if d, lo, hi := time.Since(start), runstage.WatchdogReadyTimeout*9/10, runstage.WatchdogReadyTimeout+3*time.Second; d < lo || d > hi {
 		t.Errorf("startWatchdog returned after %s; want between %s and %s", d, lo, hi)
 	}
-	if want := `the program must dispatch the arguments ["custom-watchdog"] to applecontainer.RunWatchdog`; !strings.Contains(err.Error(), "did not become ready") || !strings.Contains(err.Error(), want) {
+	if want := `the program must dispatch the arguments ["custom-watchdog"] to the engine's RunWatchdog`; !strings.Contains(err.Error(), "did not become ready") || !strings.Contains(err.Error(), want) {
 		t.Errorf("error %q does not name the readiness failure and the missing dispatch %q", err, want)
 	}
 	args, err := os.ReadFile(filepath.Join(dir, "args"))

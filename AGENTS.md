@@ -1,7 +1,7 @@
 # paddock
 
-paddock runs one command in a sandbox (Apple `container` VM in v1) with a resolved set of mounts,
-limits, and network policy.
+paddock runs one command in a sandbox (an Apple `container` VM or a rootful podman container) with a
+resolved set of mounts, limits, and network policy.
 
 ## Layering rule
 
@@ -28,8 +28,9 @@ Agent-specific behavior (what to run, which prompt, which skills) belongs to the
 ## Package layout
 
 - `cmd/paddock`: thin CLI. It also has two re-exec roles: the guest `paddock-init` when argv[0] is
-  `paddock-init`, and the host watchdog, which `main` hands to `applecontainer.Dispatch` before any
-  other argument handling. Without that call Run cannot start its watchdog, so every run fails.
+  `paddock-init`, and the host watchdog, which `main` hands to `applecontainer.Dispatch` and
+  `podman.Dispatch` before any other argument handling. Without those calls Run cannot start its
+  watchdog, so every run fails.
 - `internal/config`: strict TOML types and loaders for profiles and specs, config root
 - `internal/resolve`: extends chain, trust rules, value sources, spec selection, mounts
 - `internal/plan`: the Plan struct produced by resolve and consumed by engines, and the mount rule
@@ -40,6 +41,11 @@ Agent-specific behavior (what to run, which prompt, which skills) belongs to the
 - `internal/engine`: the Engine interface between a plan and the runtime that runs it
 - `internal/engine/applecontainer`: the Apple `container` engine: image chain, mounts, run argv,
   init config, per-run directories
+- `internal/engine/podman`: the rootful podman engine; the same shape over the `podman` CLI, with
+  `--security-opt label=disable` for SELinux hosts and `Sudo` for rootful access
+- `internal/runstage`: the run staging both engines share: run directories, mounts, secrets, the
+  init config, transcript paths, and the signal queue
+- `internal/imgtag`: the content-addressed image tag hash for the spec chain
 - `images`: the embedded base image Dockerfile and the Claude Code version it installs
 - `internal/guest/...`: in-guest enforcement (netpolicy, sniproxy)
 - `internal/guest/pinit`: paddock-init, the guest entrypoint (`Main`): the agent and proxy
@@ -67,3 +73,7 @@ Agent-specific behavior (what to run, which prompt, which skills) belongs to the
   macOS runners have no nested virtualization. A change to `internal/engine/applecontainer`, the run
   loop, or `internal/guest/pinit` needs a passing `make container-test` on Apple silicon before
   merge.
+- `make container-test` also covers the podman engine when run on a Linux host with rootful podman
+  (`TestPodmanRealInit`, gated on `PADDOCK_PODMAN_TESTS=1`; set `PADDOCK_PODMAN_SUDO=1` when podman
+  is reached through sudo). The same change classes need a passing run there before merging a
+  podman-side change.

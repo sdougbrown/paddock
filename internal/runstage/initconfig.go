@@ -1,4 +1,4 @@
-package applecontainer
+package runstage
 
 import (
 	"encoding/json"
@@ -18,30 +18,30 @@ const (
 	proxyPort = 15443
 )
 
-// initInput carries the host-derived values the init config needs.
-type initInput struct {
+// InitInput carries the host-derived values the init config needs.
+type InitInput struct {
 	User          initcfg.User
 	Verify        bool
 	TranscriptDir string
-	// Mounts is the full guest mount list, as passed to `container run`.
-	Mounts []guestMount
-	// Passthrough lists the invoking environment's passthroughEnv variables
+	// Mounts is the full guest mount list, as the runtime receives it.
+	Mounts []GuestMount
+	// Passthrough lists the invoking environment's PassthroughEnv variables
 	// as NAME=VALUE.
 	Passthrough []string
 }
 
-// userSettingsFile is the name of the merged settings file in the run's settings dir.
-const userSettingsFile = "user-settings.json"
+// UserSettingsFile is the name of the merged settings file in the run's settings dir.
+const UserSettingsFile = "user-settings.json"
 
-// userSettingsPath is where the merged settings file is mounted read-only in
+// UserSettingsPath is where the merged settings file is mounted read-only in
 // the guest: Claude Code's user scope, which merges with project and local
 // scopes and is not shadowed by server-managed settings.
-func userSettingsPath(home string) string { return path.Join(home, ".claude", "settings.json") }
+func UserSettingsPath(home string) string { return path.Join(home, ".claude", "settings.json") }
 
-// splitEnv separates plan env into literals, which go into the init config,
+// SplitEnv separates plan env into literals, which go into the init config,
 // and secret refs (file or env sources), whose values are resolved on the host
 // and delivered only through secrets.env.
-func splitEnv(env []plan.EnvVar) (literals, secretRefs []plan.EnvVar) {
+func SplitEnv(env []plan.EnvVar) (literals, secretRefs []plan.EnvVar) {
 	for _, e := range env {
 		if e.Source == plan.SourceLiteral {
 			literals = append(literals, e)
@@ -52,12 +52,12 @@ func splitEnv(env []plan.EnvVar) (literals, secretRefs []plan.EnvVar) {
 	return literals, secretRefs
 }
 
-// buildInitConfig assembles the init config for p. Literal env values go into
+// BuildInitConfig assembles the init config for p. Literal env values go into
 // Env, with the passthrough variables added only where the plan does not set
 // the same name; any file or env source makes Secrets point at secrets.env.
 // An empty Plan.Workdir is an error, and so is a seed file named like the
 // read-only user settings file when the plan has managed settings.
-func buildInitConfig(p *plan.Plan, in initInput) (*initcfg.Config, error) {
+func BuildInitConfig(p *plan.Plan, in InitInput) (*initcfg.Config, error) {
 	if p.Workdir == "" {
 		return nil, errors.New("plan has no workdir")
 	}
@@ -77,7 +77,7 @@ func buildInitConfig(p *plan.Plan, in initInput) (*initcfg.Config, error) {
 			ErrorLog:  initcfg.LogDir + "/" + initcfg.ErrorLogName,
 		},
 	}
-	literals, secretRefs := splitEnv(p.Env)
+	literals, secretRefs := SplitEnv(p.Env)
 	if len(secretRefs) > 0 {
 		cfg.Secrets = initcfg.SecretsPath
 	}
@@ -111,7 +111,7 @@ func buildInitConfig(p *plan.Plan, in initInput) (*initcfg.Config, error) {
 	}
 	for _, f := range p.Claude.SeedFiles {
 		base := filepath.Base(f)
-		if len(p.Claude.ManagedSettings) > 0 && base == path.Base(userSettingsPath(in.User.Home)) {
+		if len(p.Claude.ManagedSettings) > 0 && base == path.Base(UserSettingsPath(in.User.Home)) {
 			return nil, fmt.Errorf("claude.seed_files: %s would replace the read-only settings file that holds the managed settings", f)
 		}
 		cfg.Claude.SeedFiles = append(cfg.Claude.SeedFiles, base)

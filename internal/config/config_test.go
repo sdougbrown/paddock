@@ -118,6 +118,11 @@ memory = "6G"
 		{"unknown nested key", ok + "[network.extra]\nx = 1\n", "network.extra", nil},
 		{"hooks table", ok + "[hooks]\npre = \"x\"\n", "host hooks are not supported", nil},
 		{"empty hooks table", ok + "[hooks]\n", "host hooks are not supported", nil},
+		{"podman engine", strings.Replace(ok, "apple-container", "podman", 1), "", func(t *testing.T, p *Profile) {
+			if p.Engine != "podman" {
+				t.Errorf("engine = %q; want podman", p.Engine)
+			}
+		}},
 		{"bad engine", strings.Replace(ok, "apple-container", "docker", 1), "engine", nil},
 		{"bad mode", strings.Replace(ok, `"rw"`, `"wx"`, 1), "workspace.mode", nil},
 		{"bad policy", strings.Replace(ok, "allowlist", "open", 1), "network.policy", nil},

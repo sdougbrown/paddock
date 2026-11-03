@@ -16,6 +16,7 @@ import (
 
 	"github.com/sdougbrown/paddock/internal/engine"
 	"github.com/sdougbrown/paddock/internal/plan"
+	"github.com/sdougbrown/paddock/internal/runstage"
 )
 
 // The container tests other than TestContainerRealInit run alpine with a
@@ -237,7 +238,7 @@ func TestContainerSignalsReachGuest(t *testing.T) {
 		{syscall.SIGINT, 130},
 		{syscall.SIGHUP, 129},
 	} {
-		t.Run(signalNames[tc.sig], func(t *testing.T) {
+		t.Run(mustSignalName(tc.sig), func(t *testing.T) {
 			h := startHelper(t, "exec sleep 300")
 			waitRunning(t, h)
 			if err := h.cmd.Process.Signal(tc.sig); err != nil {
@@ -271,7 +272,7 @@ func TestContainerCancelBeforeStartNeverStarts(t *testing.T) {
 	h := startHelper(t, "exec sleep 300", "HELPER_START_DELAY=20s")
 	// secrets.env is the last file Run writes before the start delay.
 	eventually(t, 30*time.Second, "secrets.env to be written", func() bool {
-		_, err := os.Stat(filepath.Join(h.runDir(), "secrets", secretsFile))
+		_, err := os.Stat(filepath.Join(h.runDir(), "secrets", runstage.SecretsFile))
 		return h.name() != "" && err == nil
 	})
 	name := h.name()
@@ -407,4 +408,14 @@ func TestContainerBuildImages(t *testing.T) {
 	if err != nil || again != tag {
 		t.Fatalf("second call: %q, %v", again, err)
 	}
+}
+
+// mustSignalName returns the CLI signal name for sig, panicking on a signal
+// the supervisor never forwards; the table above only lists those.
+func mustSignalName(sig os.Signal) string {
+	n, ok := runstage.SignalName(sig)
+	if !ok {
+		panic("unforwardable signal in test table")
+	}
+	return n
 }

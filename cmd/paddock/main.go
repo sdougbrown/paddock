@@ -16,6 +16,7 @@ import (
 	"github.com/sdougbrown/paddock/internal/config"
 	"github.com/sdougbrown/paddock/internal/engine"
 	"github.com/sdougbrown/paddock/internal/engine/applecontainer"
+	"github.com/sdougbrown/paddock/internal/engine/podman"
 	"github.com/sdougbrown/paddock/internal/guest/pinit"
 	"github.com/sdougbrown/paddock/internal/plan"
 	"github.com/sdougbrown/paddock/internal/resolve"
@@ -29,6 +30,9 @@ func main() {
 		os.Exit(pinit.Main(os.Args[1:]))
 	}
 	if code, handled := applecontainer.Dispatch(os.Args[1:]); handled {
+		os.Exit(code)
+	}
+	if code, handled := podman.Dispatch(os.Args[1:]); handled {
 		os.Exit(code)
 	}
 	os.Exit(clicontract.Run(app(), paddockAdapter{}, os.Args[1:], os.Stdout, os.Stderr))

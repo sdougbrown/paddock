@@ -2,6 +2,7 @@ package applecontainer
 
 import (
 	"context"
+	"github.com/sdougbrown/paddock/internal/runstage"
 	"io"
 	"os"
 	"time"
@@ -24,17 +25,10 @@ func Dispatch(args []string) (code int, handled bool) {
 	return RunWatchdog(args[1:]), true
 }
 
-// watchdogDone is the byte the parent writes to tell the watchdog the run
-// ended normally and nothing needs cleaning up.
-const watchdogDone = 'x'
-
-// watchdogReady is the byte the watchdog writes on fd 4 once it holds the pipe on fd 3.
-const watchdogReady = 'r'
-
 // watchdogCLITimeout bounds each `container` call the watchdog makes, so a
 // hung container service cannot keep it from removing the run's directories.
 // It is the stop timeout for orphanStopGrace.
-var watchdogCLITimeout = stopTimeout(orphanStopGrace)
+var watchdogCLITimeout = stopTimeout(runstage.OrphanStopGrace)
 
 // watchdogStopTries is how many times the watchdog tries `container stop`
 // before it deletes the container anyway.
@@ -44,7 +38,7 @@ const watchdogStopTries = 10
 var watchdogRetry = time.Second
 
 // RunWatchdog is the watchdog process body. args are the container binary,
-// the container name, then the directories to remove (runDirs.removable). It
+// the container name, then the directories to remove (runstage.RunDirs.Removable). It
 // reports ready on fd 4, then blocks on fd 3, the read end of a pipe whose
 // write end only the parent holds. On EOF without the done byte the parent
 // died, so it stops the container and removes the directories. It exits 2
@@ -64,15 +58,15 @@ func RunWatchdog(args []string) int {
 		return 2
 	}
 	if ready := os.NewFile(4, "watchdog-ready"); ready != nil {
-		ready.Write([]byte{watchdogReady})
+		ready.Write([]byte{runstage.WatchdogReady})
 		ready.Close()
 	}
 	data, _ := io.ReadAll(pipe)
-	if len(data) > 0 && data[0] == watchdogDone {
+	if len(data) > 0 && data[0] == runstage.WatchdogDone {
 		return 0
 	}
 	for range watchdogStopTries {
-		if _, err := e.cliRun(context.Background(), watchdogCLITimeout, stopArgs(name, orphanStopGrace)...); err == nil {
+		if _, err := e.cliRun(context.Background(), watchdogCLITimeout, stopArgs(name, runstage.OrphanStopGrace)...); err == nil {
 			break
 		}
 		time.Sleep(watchdogRetry)

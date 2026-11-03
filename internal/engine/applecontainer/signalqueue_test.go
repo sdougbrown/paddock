@@ -2,83 +2,14 @@ package applecontainer
 
 import (
 	"context"
+	"github.com/sdougbrown/paddock/internal/runstage"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"syscall"
 	"testing"
 	"time"
 )
-
-// TestSignalQueueDeliversInOrder queues INT then TERM (twice) while the
-// container is booting. They go out as INT then TERM, once each, and a
-// failed send leaves the rest queued for the next retry.
-func TestSignalQueueDeliversInOrder(t *testing.T) {
-	var q signalQueue
-	var sent []os.Signal
-	booting := func(os.Signal) bool { return false }
-	running := func(s os.Signal) bool { sent = append(sent, s); return true }
-
-	for _, s := range []os.Signal{syscall.SIGINT, syscall.SIGTERM, syscall.SIGTERM} {
-		q.push(s)
-		q.deliver(booting)
-	}
-	if want := []os.Signal{syscall.SIGINT, syscall.SIGTERM}; !slices.Equal(q, want) {
-		t.Fatalf("queue = %v, want %v", q, want)
-	}
-
-	first := true
-	q.deliver(func(s os.Signal) bool {
-		if !first {
-			return false
-		}
-		first = false
-		return running(s)
-	})
-	if want := []os.Signal{syscall.SIGTERM}; !slices.Equal(q, want) {
-		t.Fatalf("after one delivery, queue = %v, want %v", q, want)
-	}
-	q.deliver(running)
-	if len(q) != 0 {
-		t.Errorf("queue = %v after delivery, want empty", q)
-	}
-	if want := []os.Signal{syscall.SIGINT, syscall.SIGTERM}; !slices.Equal(sent, want) {
-		t.Errorf("sent %v, want %v", sent, want)
-	}
-
-	q.push(syscall.SIGHUP)
-	q.deliver(running)
-	q.push(syscall.SIGHUP)
-	q.deliver(running)
-	if want := []os.Signal{syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP, syscall.SIGHUP}; !slices.Equal(sent, want) {
-		t.Errorf("a repeated signal after delivery was dropped: sent %v, want %v", sent, want)
-	}
-}
-
-// TestSignalQueueKeepsLaterSignalsBehindAFailure queues INT, TERM, INT. The
-// second INT is not a consecutive duplicate, so it stays. When TERM cannot be
-// delivered, delivery stops there and keeps TERM and the second INT queued.
-func TestSignalQueueKeepsLaterSignalsBehindAFailure(t *testing.T) {
-	var q signalQueue
-	for _, s := range []os.Signal{syscall.SIGINT, syscall.SIGTERM, syscall.SIGINT} {
-		q.push(s)
-	}
-	if want := []os.Signal{syscall.SIGINT, syscall.SIGTERM, syscall.SIGINT}; !slices.Equal(q, want) {
-		t.Fatalf("queue = %v, want %v", q, want)
-	}
-	var tried []os.Signal
-	q.deliver(func(s os.Signal) bool {
-		tried = append(tried, s)
-		return s != syscall.SIGTERM
-	})
-	if want := []os.Signal{syscall.SIGINT, syscall.SIGTERM}; !slices.Equal(tried, want) {
-		t.Errorf("tried %v, want %v", tried, want)
-	}
-	if want := []os.Signal{syscall.SIGTERM, syscall.SIGINT}; !slices.Equal(q, want) {
-		t.Errorf("queue = %v, want %v", q, want)
-	}
-}
 
 // TestForwardSignalsDeliversQueuedSignalsInOrder runs forwardSignals against
 // a fake CLI whose container is booting, then running. Signals and the
@@ -117,7 +48,7 @@ func TestForwardSignalsDeliversQueuedSignalsInOrder(t *testing.T) {
 			done := make(chan struct{})
 			returned := make(chan struct{})
 			go func() {
-				e.forwardSignals(ctx, "paddock-test", sigs, done)
+				e.supervisor().ForwardSignals(ctx, "paddock-test", sigs, done)
 				close(returned)
 			}()
 			defer func() {
@@ -154,7 +85,7 @@ func TestForwardSignalsDeliversQueuedSignalsInOrder(t *testing.T) {
 				got = strings.Join(strings.Fields(string(b)), " ")
 				return got == tt.want
 			})
-			time.Sleep(3 * pendingRetry)
+			time.Sleep(3 * runstage.PendingRetry)
 			b, _ := os.ReadFile(kills)
 			if got := strings.Join(strings.Fields(string(b)), " "); got != tt.want {
 				t.Errorf("delivered %q, want %q", got, tt.want)

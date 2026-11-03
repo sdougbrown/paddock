@@ -1,4 +1,4 @@
-package applecontainer
+package runstage
 
 import (
 	"path/filepath"
@@ -10,9 +10,9 @@ import (
 // Code truncates a project directory name and appends a hash.
 const maxProjectDirName = 200
 
-// transcriptDir returns the directory Claude Code keeps session transcripts
+// TranscriptDir returns the directory Claude Code keeps session transcripts
 // for workdir in: <home>/.claude/projects/<projectDirName(workdir)>.
-func transcriptDir(home, workdir string) string {
+func TranscriptDir(home, workdir string) string {
 	return filepath.Join(home, ".claude", "projects", projectDirName(workdir))
 }
 

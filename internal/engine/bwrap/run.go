@@ -15,7 +15,6 @@ import (
 
 	"github.com/sdougbrown/paddock/internal/config"
 	"github.com/sdougbrown/paddock/internal/engine"
-	"github.com/sdougbrown/paddock/internal/envname"
 	"github.com/sdougbrown/paddock/internal/initcfg"
 	"github.com/sdougbrown/paddock/internal/plan"
 	"github.com/sdougbrown/paddock/internal/runstage"
@@ -249,27 +248,14 @@ func planMountTargets(p *plan.Plan, tdir string) error {
 	return nil
 }
 
-// secretsLines splits the resolved secrets file content into KEY=VALUE
-// entries for the child environment. A line without a separator, or with a
-// name that is not a valid environment name, is an error that names only
-// the line and the name: a value may contain anything, and it must never
-// reach an error message.
+// secretsLines parses the resolved secrets file through the shared
+// initcfg parser, so the container engines and bwrap agree on what a
+// valid secrets file is.
 func secretsLines(secrets []byte) ([]string, error) {
 	if secrets == nil {
 		return nil, nil
 	}
-	var out []string
-	for i, line := range strings.Split(strings.TrimRight(string(secrets), "\n"), "\n") {
-		name, _, ok := strings.Cut(line, "=")
-		if !ok {
-			return nil, fmt.Errorf("secrets file line %d has no NAME=VALUE separator", i+1)
-		}
-		if !envname.Valid(name) {
-			return nil, fmt.Errorf("secrets file line %d: %q is not a valid environment name", i+1, name)
-		}
-		out = append(out, line)
-	}
-	return out, nil
+	return initcfg.ParseSecrets(secrets)
 }
 
 // planMounts validates and copies the plan's mounts.

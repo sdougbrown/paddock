@@ -1,14 +1,14 @@
 package pinit
 
 import (
+	"github.com/sdougbrown/paddock/internal/initcfg"
+
 	"errors"
 	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
-
-	"github.com/sdougbrown/paddock/internal/envname"
 )
 
 // takeSecrets reads the secrets file at path and unlinks it. An empty path
@@ -28,30 +28,9 @@ func takeSecrets(path string) ([]string, error) {
 	return parseSecrets(data)
 }
 
-// parseSecrets parses KEY=VALUE lines. Blank lines are skipped. Errors name
-// the line number and, when it is valid, the key; never the value.
+// parseSecrets parses the shared secrets.env format; initcfg owns it.
 func parseSecrets(data []byte) ([]string, error) {
-	var out []string
-	seen := map[string]bool{}
-	for i, line := range strings.Split(string(data), "\n") {
-		line = strings.TrimSuffix(line, "\r")
-		if line == "" {
-			continue
-		}
-		name, value, ok := strings.Cut(line, "=")
-		if !ok || !envname.Valid(name) {
-			return nil, fmt.Errorf("secrets line %d: not NAME=VALUE", i+1)
-		}
-		if strings.ContainsRune(value, 0) {
-			return nil, fmt.Errorf("secrets line %d: %s: value contains a NUL byte", i+1, name)
-		}
-		if seen[name] {
-			return nil, fmt.Errorf("secrets line %d: %s is set twice", i+1, name)
-		}
-		seen[name] = true
-		out = append(out, name+"="+value)
-	}
-	return out, nil
+	return initcfg.ParseSecrets(data)
 }
 
 // lookPath finds file on the colon-separated list dirs: a name containing a

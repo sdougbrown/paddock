@@ -502,3 +502,18 @@ func TestEnsureImagesPrunesSupersededTags(t *testing.T) {
 		t.Errorf("no removal attempted: %q", calls())
 	}
 }
+
+// TestArgvLeadsWithBinary pins the ContainerRun contract: Argv's first
+// element is the runtime binary, because the shared run sequence execs
+// argv[0] directly. Without the leading binary a run fails with
+// `exec: "run": executable file not found in $PATH`.
+func TestArgvLeadsWithBinary(t *testing.T) {
+	e := &Engine{Bin: "container", Home: t.TempDir()}
+	bin, argv := e.bin(), e.containerOps().Argv(runstage.ContainerArgv{Name: "n"})
+	if argv[0] != bin {
+		t.Errorf("Argv[0] = %q, want the runtime binary %q", argv[0], bin)
+	}
+	if argv[1] != "run" {
+		t.Errorf("Argv[1] = %q, want the runtime subcommand", argv[1])
+	}
+}

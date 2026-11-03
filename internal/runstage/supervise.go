@@ -25,8 +25,6 @@ const PendingRetry = 200 * time.Millisecond
 // the cancellation escalation, and the secrets cleanup — is shared.
 type Supervisor struct {
 	ops SupervisorConfig
-
-	queued func(os.Signal)
 }
 
 // SupervisorConfig carries the engine-specific operations and the knobs the
@@ -48,10 +46,6 @@ type SupervisorConfig struct {
 func NewSupervisor(cfg SupervisorConfig) *Supervisor {
 	return &Supervisor{ops: cfg}
 }
-
-// SignalQueued registers a callback fired after a signal is queued and one
-// delivery attempt has been made. Tests use it to observe the queue.
-func (s *Supervisor) SignalQueued(f func(os.Signal)) { s.queued = f }
 
 func (s *Supervisor) debugf(format string, a ...any) {
 	if s.ops.Debugf != nil {

@@ -30,15 +30,13 @@ func Dispatch(args []string) (code int, handled bool) {
 
 // watchdogDone is the byte the parent writes to tell the watchdog the run
 // ended normally and nothing needs cleaning up.
-const watchdogDone = 'x'
 
 // watchdogReady is the byte the watchdog writes on fd 4 once it holds the pipe on fd 3.
-const watchdogReady = 'r'
 
 // watchdogCLITimeout bounds each `podman` call the watchdog makes, so a hung
 // podman cannot keep it from removing the run's directories. It is the stop
 // timeout for orphanStopGrace.
-var watchdogCLITimeout = stopTimeout(orphanStopGrace)
+var watchdogCLITimeout = stopTimeout(runstage.OrphanStopGrace)
 
 // watchdogStopTries is how many times the watchdog tries `podman stop`
 // before it deletes the container anyway.
@@ -79,7 +77,7 @@ func RunWatchdog(args []string) int {
 		return 0
 	}
 	for range watchdogStopTries {
-		if _, err := e.cliRun(context.Background(), watchdogCLITimeout, stopArgs(name, orphanStopGrace)...); err == nil {
+		if _, err := e.cliRun(context.Background(), watchdogCLITimeout, stopArgs(name, runstage.OrphanStopGrace)...); err == nil {
 			break
 		}
 		time.Sleep(watchdogRetry)

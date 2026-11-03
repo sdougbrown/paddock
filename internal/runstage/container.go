@@ -41,7 +41,6 @@ type ContainerOps struct {
 	Lookup           func(string) (string, bool)
 	Home             string
 	StateRoot        string
-	CacheRoot        string
 	Stdin            *os.File
 	Stdout           io.Writer
 	Stderr           io.Writer
@@ -83,9 +82,11 @@ type ContainerArgv struct {
 	Args       []string
 }
 
-// orphanStopGrace is the stop grace, in seconds, for a container whose
-// paddock side died without waiting on it.
-const orphanStopGrace = 2
+// OrphanStopGrace is the stop grace, in seconds, for a container whose
+// paddock side died without waiting on it: the in-process stop here and the
+// engines' crash watchdogs share one number, so a tuned grace applies
+// everywhere.
+const OrphanStopGrace = 2
 
 // ContainerRun runs a container-engine plan to completion: staging, image
 // chain, watchdog, supervision, and exit-code propagation. The runtime's
@@ -238,7 +239,7 @@ func ContainerRun(ctx context.Context, p *plan.Plan, verify bool, ops ContainerO
 		if ws, wsOK := exitErr.Sys().(syscall.WaitStatus); wsOK && ws.Signaled() {
 			// The client died without the container's own exit; stop it
 			// promptly: nothing is left to wait on the guest.
-			ops.StopContainer(name, orphanStopGrace)
+			ops.StopContainer(name, OrphanStopGrace)
 		}
 	}
 	return code, nil

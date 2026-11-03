@@ -76,7 +76,10 @@ func (e *Engine) Run(ctx context.Context, p *plan.Plan, o engine.Options) (int, 
 	home := filepath.Join(dirs.Root, "home")
 	// The transcript directory binds at its host path, so it must exist
 	// before bwrap starts; the home's projects symlink points at it.
-	if err := os.MkdirAll(tdir, 0o755); err != nil {
+	// 0700: on a shared host the transcript dir holds agent sessions, and
+	// MkdirAll's mode applies to the ~/.claude and ~/.claude/projects it
+	// creates on the way down.
+	if err := os.MkdirAll(tdir, 0o700); err != nil {
 		return 1, fmt.Errorf("transcript dir: %w", err)
 	}
 

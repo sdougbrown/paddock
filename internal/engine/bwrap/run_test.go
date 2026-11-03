@@ -301,8 +301,8 @@ func TestRunCancelBeforeStartNeverStarts(t *testing.T) {
 		t.Errorf("exit code = %d; want 1", code)
 	}
 	// bwrap never ran: the fake's argv log is empty.
-	if b, _ := os.ReadFile(filepath.Join(dir, "argv")); len(b) != 0 {
-		t.Errorf("bwrap started despite the cancellation: %q", b)
+	if logs := argvLogs(t, dir); len(logs) != 0 {
+		t.Errorf("bwrap started despite the cancellation: %q", logs)
 	}
 }
 

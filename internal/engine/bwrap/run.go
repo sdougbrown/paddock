@@ -228,17 +228,9 @@ func (e *Engine) Run(ctx context.Context, p *plan.Plan, o engine.Options) (int, 
 	// accumulate on disk.
 	os.RemoveAll(home)
 
-	code := 0
-	var exitErr *exec.ExitError
-	switch {
-	case waitErr == nil:
-	case errors.As(waitErr, &exitErr):
-		code = exitErr.ExitCode()
-		if ws, ok := exitErr.Sys().(syscall.WaitStatus); ok && ws.Signaled() {
-			code = 128 + int(ws.Signal())
-		}
-	default:
-		return 1, waitErr
+	code, err := runstage.ExitCode(waitErr)
+	if err != nil {
+		return 1, err
 	}
 	return code, nil
 }

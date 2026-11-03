@@ -1,9 +1,12 @@
 package runstage
 
 import (
+	"errors"
 	"os"
+	"os/exec"
 	"os/user"
 	"strconv"
+	"syscall"
 
 	"github.com/sdougbrown/paddock/internal/initcfg"
 )
@@ -56,4 +59,24 @@ func (q *SignalQueue) Deliver(send func(os.Signal) bool) {
 	for len(*q) > 0 && send((*q)[0]) {
 		*q = (*q)[1:]
 	}
+}
+
+// ExitCode turns a child's wait error into the exit code the CLI reports:
+// the child's own code, 128+signal when it died to a signal, or 1 with the
+// wait error when the wait itself failed. The engines share it so signal
+// deaths report identically everywhere.
+func ExitCode(waitErr error) (int, error) {
+	code := 0
+	var exitErr *exec.ExitError
+	switch {
+	case waitErr == nil:
+	case errors.As(waitErr, &exitErr):
+		code = exitErr.ExitCode()
+		if ws, ok := exitErr.Sys().(syscall.WaitStatus); ok && ws.Signaled() {
+			code = 128 + int(ws.Signal())
+		}
+	default:
+		return 1, waitErr
+	}
+	return code, nil
 }

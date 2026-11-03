@@ -244,20 +244,16 @@ func ContainerRun(ctx context.Context, p *plan.Plan, verify bool, ops ContainerO
 	close(done)
 	wg.Wait()
 
-	code := 0
-	var exitErr *exec.ExitError
-	switch {
-	case waitErr == nil:
-	case errors.As(waitErr, &exitErr):
-		code = exitErr.ExitCode()
-		if ws, ok := exitErr.Sys().(syscall.WaitStatus); ok && ws.Signaled() {
-			code = 128 + int(ws.Signal())
+	code, err := ExitCode(waitErr)
+	if err != nil {
+		return 1, err
+	}
+	if exitErr, ok := waitErr.(*exec.ExitError); ok {
+		if ws, wsOK := exitErr.Sys().(syscall.WaitStatus); wsOK && ws.Signaled() {
 			// The client died without the container's own exit; stop it
 			// promptly: nothing is left to wait on the guest.
 			ops.StopContainer(name, orphanStopGrace)
 		}
-	default:
-		return 1, waitErr
 	}
 	return code, nil
 }

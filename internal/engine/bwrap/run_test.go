@@ -347,7 +347,6 @@ func TestSecretsLinesNeverQuotesValues(t *testing.T) {
 // TestRunFailsClosedAsRoot pins the tier-0 privilege guard: an invoking
 // root must fail before any bwrap invocation, and the error must say why.
 func TestRunFailsClosedAsRoot(t *testing.T) {
-	dir := t.TempDir()
 	fake, dir := fakeBwrap(t)
 	e := &Engine{Bin: fake, Home: dir, StateRoot: dir}
 	root := initcfg.User{Name: "root", UID: 0, GID: 0, Home: "/root"}

@@ -75,51 +75,24 @@ func (e *Engine) Run(ctx context.Context, p *plan.Plan, o engine.Options) (int, 
 	home := filepath.Join(dirs.Root, "home")
 	// The transcript directory binds at its host path, so it must exist
 	// before bwrap starts; the home's projects symlink points at it.
-	// 0700: on a shared host the transcript dir holds agent sessions, and
-	// MkdirAll's mode applies to the ~/.claude and ~/.claude/projects it
-	// creates on the way down.
-	if err := os.MkdirAll(tdir, 0o700); err != nil {
-		return 1, fmt.Errorf("transcript dir: %w", err)
-	}
-
-	var pass []string
-	for _, k := range runstage.PassthroughEnv {
-		if v := e.getenv(k); v != "" {
-			pass = append(pass, k+"="+v)
-		}
-	}
-	cfg, err := runstage.BuildInitConfig(p, runstage.InitInput{
-		User: u,
-		// ~/.claude/projects must hold the per-project dir: point the
-		// symlink at its parent, so <enc> under it is the bound transcript
-		// dir and Claude's files land at the canonical TranscriptDir path.
-		TranscriptDir: filepath.Dir(tdir),
-		Passthrough:   pass,
-	})
+	st, err := runstage.Stage(p, u, e.getenv, e.Home, dirs, nil, false)
 	if err != nil {
 		return 1, err
 	}
 	u.Home = home
-	cfg.User = u
+	st.Cfg.User = u
 	// The shared seeding writes managed settings at the guest's managed
 	// path, which the read-only host rootfs must not receive: the engine
-	// pins user-scope settings with the read-only bind instead, and stages
-	// the seed files into the run's state directory for the seeding to copy.
-	managed := cfg.Claude.ManagedSettings
-	cfg.Claude.ManagedSettings = nil
-	if err := runstage.CopySeedFiles(dirs.State, p.Claude.SeedFiles); err != nil {
-		return 1, err
-	}
-	fs := initcfg.NewHomeFS("/", cfg)
+	// pins user-scope settings with the read-only bind instead.
+	st.Cfg.Claude.ManagedSettings = nil
+	// ~/.claude/projects must hold the per-project dir: point the symlink
+	// at its parent, so <enc> under it is the bound transcript dir and
+	// Claude's files land at the canonical TranscriptDir path.
+	st.Cfg.Claude.TranscriptDir = filepath.Dir(st.TDir)
+	fs := initcfg.NewHomeFS("/", st.Cfg)
 	fs.SeedDir = filepath.Join(dirs.State, filepath.Base(initcfg.SeedDir))
-	var settings string
-	if len(managed) > 0 {
-		settings = filepath.Join(dirs.Settings, runstage.UserSettingsFile)
-		if err := os.WriteFile(settings, managed, 0o644); err != nil {
-			return 1, err
-		}
-	}
-	if err := initcfg.PrepareHome(fs, cfg); err != nil {
+	settings := st.Settings
+	if err := initcfg.PrepareHome(fs, st.Cfg); err != nil {
 		return 1, err
 	}
 	mounts, err := planMounts(p)
@@ -135,7 +108,7 @@ func (e *Engine) Run(ctx context.Context, p *plan.Plan, o engine.Options) (int, 
 	// read-only; where they do not, the current run's policy is loaded at
 	// startup and cannot be changed mid-run. Residual risk 13 covers what
 	// remains.
-	if len(managed) > 0 {
+	if settings != "" {
 		for _, name := range []string{"settings.json", "settings.local.json"} {
 			project := filepath.Join(p.Workdir, ".claude", name)
 			if _, err := os.Stat(project); err == nil {
@@ -175,7 +148,7 @@ func (e *Engine) Run(ctx context.Context, p *plan.Plan, o engine.Options) (int, 
 	if err != nil {
 		return 1, err
 	}
-	env, err := initcfg.AgentEnv(inherited, u, cfg.Env, lines)
+	env, err := initcfg.AgentEnv(inherited, u, st.Cfg.Env, lines)
 	if err != nil {
 		return 1, err
 	}

@@ -85,7 +85,7 @@ func (e *Engine) Run(ctx context.Context, p *plan.Plan, o engine.Options) (int, 
 	// pins user-scope settings with the read-only bind instead.
 	st.Cfg.Claude.ManagedSettings = nil
 	fs := initcfg.NewHomeFS("/", st.Cfg)
-	fs.SeedDir = filepath.Join(dirs.State, filepath.Base(initcfg.SeedDir))
+	fs.SeedDir = runstage.StagedSeedDir(dirs)
 	settings := st.Settings
 	if err := initcfg.PrepareHome(fs, st.Cfg); err != nil {
 		return 1, err

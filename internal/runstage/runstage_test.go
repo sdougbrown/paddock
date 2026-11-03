@@ -169,7 +169,7 @@ func TestStageInitBinary(t *testing.T) {
 func TestCopySeedFilesRejectsCollisions(t *testing.T) {
 	a := writeTree(t, map[string]string{"s.json": "1"})
 	b := writeTree(t, map[string]string{"s.json": "2"})
-	err := CopySeedFiles(t.TempDir(), []string{filepath.Join(a, "s.json"), filepath.Join(b, "s.json")})
+	err := CopySeedFiles(RunDirs{State: t.TempDir()}, []string{filepath.Join(a, "s.json"), filepath.Join(b, "s.json")})
 	if err == nil {
 		t.Fatal("want collision error")
 	}
@@ -317,11 +317,11 @@ func TestBuildInitConfigRejectsSeedOverManagedSettings(t *testing.T) {
 
 func TestCopySeedFiles(t *testing.T) {
 	src := writeTree(t, map[string]string{"remote-settings.json": `{"a":1}`})
-	state := t.TempDir()
+	state := RunDirs{State: t.TempDir()}
 	if err := CopySeedFiles(state, []string{filepath.Join(src, "remote-settings.json")}); err != nil {
 		t.Fatal(err)
 	}
-	dst := filepath.Join(state, filepath.Base(initcfg.SeedDir), "remote-settings.json")
+	dst := filepath.Join(state.State, filepath.Base(initcfg.SeedDir), "remote-settings.json")
 	st, err := os.Stat(dst)
 	if err != nil || st.Mode().Perm() != 0o600 {
 		t.Fatalf("seed file: %v, %v", st, err)

@@ -23,6 +23,11 @@ func StagedSettings(dirs RunDirs) string {
 	return filepath.Join(dirs.Settings, UserSettingsFile)
 }
 
+// StagedSeedDir is the host path of a run's staged seed files.
+func StagedSeedDir(dirs RunDirs) string {
+	return filepath.Join(dirs.State, filepath.Base(initcfg.SeedDir))
+}
+
 // Stage performs the staging both engines share: it creates the run's
 // transcript directory (0700 — it holds agent sessions), builds the
 // passthrough environment from getenv, writes the managed settings beside
@@ -58,7 +63,7 @@ func Stage(p *plan.Plan, u initcfg.User, getenv func(string) string, home, cfgTr
 			return Staged{}, err
 		}
 	}
-	if err := CopySeedFiles(dirs.State, p.Claude.SeedFiles); err != nil {
+	if err := CopySeedFiles(dirs, p.Claude.SeedFiles); err != nil {
 		return Staged{}, err
 	}
 	return Staged{Cfg: cfg, Settings: settings, Pass: pass}, nil

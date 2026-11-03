@@ -161,7 +161,7 @@ func TestRunFailsClosedAndCleansUp(t *testing.T) {
 	p3 := testPlan(home, ws)
 	tdir := runstage.TranscriptDir(home, ws)
 	p3.Mounts = append(p3.Mounts, plan.Mount{Host: tdir, Guest: tdir})
-	if _, err := e.Run(t.Context(), p3, engine.Options{}); err == nil || !strings.Contains(err.Error(), "transcript") {
+	if _, err := e.Run(t.Context(), p3, engine.Options{}); err == nil || !strings.Contains(err.Error(), "paddock-managed") {
 		t.Errorf("transcript mount: err = %v; want a collision error", err)
 	}
 }

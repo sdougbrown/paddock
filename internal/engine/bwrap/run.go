@@ -45,7 +45,7 @@ func (e *Engine) Run(ctx context.Context, p *plan.Plan, o engine.Options) (int, 
 		return 1, errors.New("verify is not supported by the bwrap engine: there is no paddock-init to run the guest checks")
 	}
 	tdir := runstage.TranscriptDir(e.Home, p.Workdir)
-	if err := planMountTargets(p, tdir); err != nil {
+	if err := runstage.CheckMountTargets(p, []string{tdir}); err != nil {
 		return 1, err
 	}
 	hostUser := e.hostUser
@@ -95,9 +95,9 @@ func (e *Engine) Run(ctx context.Context, p *plan.Plan, o engine.Options) (int, 
 	if err := initcfg.PrepareHome(fs, st.Cfg); err != nil {
 		return 1, err
 	}
-	mounts, err := planMounts(p)
-	if err != nil {
-		return 1, err
+	var mounts []runstage.GuestMount
+	for _, m := range p.Mounts {
+		mounts = append(mounts, runstage.GuestMount{Host: m.Host, Guest: m.Guest, ReadOnly: m.ReadOnly})
 	}
 	// The transcript dir binds read-write at its host path, so writes through
 	// the home's projects symlink reach the caller's path.
@@ -210,17 +210,6 @@ func (e *Engine) Run(ctx context.Context, p *plan.Plan, o engine.Options) (int, 
 	return code, nil
 }
 
-// planMountTargets rejects plan mounts that would collide with the
-// transcript directory the engine mounts itself.
-func planMountTargets(p *plan.Plan, tdir string) error {
-	for _, m := range p.Mounts {
-		if runstage.AtOrUnder(m.Guest, tdir) {
-			return fmt.Errorf("plan mount %s targets the transcript directory the engine mounts itself", m.Host)
-		}
-	}
-	return nil
-}
-
 // secretsLines parses the resolved secrets file through the shared
 // initcfg parser, so the container engines and bwrap agree on what a
 // valid secrets file is.
@@ -229,16 +218,4 @@ func secretsLines(secrets []byte) ([]string, error) {
 		return nil, nil
 	}
 	return initcfg.ParseSecrets(secrets)
-}
-
-// planMounts validates and copies the plan's mounts.
-func planMounts(p *plan.Plan) ([]runstage.GuestMount, error) {
-	var ms []runstage.GuestMount
-	for _, m := range p.Mounts {
-		if err := m.Check(); err != nil {
-			return nil, fmt.Errorf("plan mount %s: %w", m.Host, err)
-		}
-		ms = append(ms, runstage.GuestMount{Host: m.Host, Guest: m.Guest, ReadOnly: m.ReadOnly})
-	}
-	return ms, nil
 }

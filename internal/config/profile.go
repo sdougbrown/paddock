@@ -53,10 +53,11 @@ type ProfileClaude struct {
 const (
 	EngineAppleContainer = "apple-container"
 	EnginePodman         = "podman"
+	EngineBwrap          = "bwrap"
 )
 
 // engines lists every supported engine name.
-var engines = []string{EngineAppleContainer, EnginePodman}
+var engines = []string{EngineAppleContainer, EnginePodman, EngineBwrap}
 
 var memoryRe = regexp.MustCompile(`^[0-9]+[KkMmGg]$`)
 
@@ -66,6 +67,9 @@ func (p *Profile) validate() error {
 	}
 	if !slices.Contains(engines, p.Engine) {
 		return fmt.Errorf("engine: %q is not supported (want one of %q)", p.Engine, engines)
+	}
+	if err := CheckEngineCapabilities(p.Engine, p.Network.Policy, p.Limits); err != nil {
+		return err
 	}
 	switch p.Workspace.Mode {
 	case "", "ro", "rw":
@@ -113,6 +117,24 @@ func validateSetNames(key string, names []string) error {
 		if !nameRe.MatchString(n) {
 			return fmt.Errorf("%s: invalid egress set name %q", key, n)
 		}
+	}
+	return nil
+}
+
+// CheckEngineCapabilities rejects the plan-level knobs an engine cannot
+// enforce: the bwrap engine has tier-0 isolation (namespaces only, no
+// CAP_NET_ADMIN and no cgroup enforcement), so it fails closed on an egress
+// allowlist and on limits. The config layer and the engine's own Run both
+// call it, covering plans built outside resolve.
+func CheckEngineCapabilities(engine, policy string, limits Limits) error {
+	if engine != EngineBwrap {
+		return nil
+	}
+	if policy == initcfg.PolicyAllowlist {
+		return fmt.Errorf("the bwrap engine cannot enforce an egress allowlist; use \"host\" or \"none\"")
+	}
+	if limits.CPUs != 0 || limits.Memory != "" {
+		return fmt.Errorf("the bwrap engine cannot enforce cpu or memory limits; remove them or use a container engine")
 	}
 	return nil
 }

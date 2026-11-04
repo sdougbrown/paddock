@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/sdougbrown/paddock/internal/egresshost"
+	"github.com/sdougbrown/paddock/internal/initcfg"
 )
 
 // hostsPath is the guest's hosts file.
@@ -67,7 +68,7 @@ func writeHosts(path string, hosts []string, addr netip.Addr) error {
 	for _, n := range names {
 		fmt.Fprintf(&b, "%s\t%s\n", addr, n)
 	}
-	if err := writeFileAtomic(path, []byte(b.String()), 0o644); err != nil {
+	if err := initcfg.WriteFileAtomic(path, []byte(b.String()), 0o644); err != nil {
 		return fmt.Errorf("hosts: %w", err)
 	}
 	return nil

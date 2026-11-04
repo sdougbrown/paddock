@@ -141,38 +141,23 @@ func ContainerRun(ctx context.Context, p *plan.Plan, verify bool, ops ContainerO
 	}
 
 	tdir := TranscriptDir(ops.Home, p.Workdir)
-	if err := os.MkdirAll(tdir, 0o755); err != nil {
-		return 1, err
-	}
-	var pass []string
-	for _, k := range PassthroughEnv {
-		if v := ops.Getenv(k); v != "" {
-			pass = append(pass, k+"="+v)
-		}
-	}
 	layout := MountLayout{Dirs: dirs, BinDir: binDir, TranscriptDir: tdir}
 	if len(p.Claude.ManagedSettings) > 0 {
-		layout.UserSettings = filepath.Join(dirs.Settings, UserSettingsFile)
+		layout.UserSettings = StagedSettings(dirs)
 		layout.UserSettingsAt = UserSettingsPath(u.Home)
 	}
 	mounts, err := GuestMounts(p, layout)
 	if err != nil {
 		return 1, err
 	}
-	cfg, err := BuildInitConfig(p, InitInput{User: u, Verify: verify, TranscriptDir: tdir, Mounts: mounts, Passthrough: pass})
+	// pinit marks the config's transcript dir writable for the agent.
+	st, err := Stage(p, u, ops.Getenv, ops.Home, tdir, dirs, mounts, verify)
 	if err != nil {
 		return 1, err
 	}
+	cfg := st.Cfg
 	if err := initcfg.Write(filepath.Join(dirs.State, filepath.Base(initcfg.ConfigPath)), cfg); err != nil {
 		return 1, err
-	}
-	if err := CopySeedFiles(dirs.State, p.Claude.SeedFiles); err != nil {
-		return 1, err
-	}
-	if layout.UserSettings != "" {
-		if err := os.WriteFile(layout.UserSettings, p.Claude.ManagedSettings, 0o644); err != nil {
-			return 1, err
-		}
 	}
 	if secrets != nil {
 		if err := WriteSecrets(dirs.Secrets, secrets); err != nil {
@@ -187,7 +172,7 @@ func ContainerRun(ctx context.Context, p *plan.Plan, verify bool, ops ContainerO
 		Memory:     p.Limits.Memory,
 		Mounts:     mounts,
 		Workdir:    p.Workdir,
-		Env:        pass,
+		Env:        st.Pass,
 		Entrypoint: entry,
 		Image:      image,
 		Args:       ops.TestArgs,
@@ -245,20 +230,16 @@ func ContainerRun(ctx context.Context, p *plan.Plan, verify bool, ops ContainerO
 	close(done)
 	wg.Wait()
 
-	code := 0
-	var exitErr *exec.ExitError
-	switch {
-	case waitErr == nil:
-	case errors.As(waitErr, &exitErr):
-		code = exitErr.ExitCode()
-		if ws, ok := exitErr.Sys().(syscall.WaitStatus); ok && ws.Signaled() {
-			code = 128 + int(ws.Signal())
+	code, err := ExitCode(waitErr)
+	if err != nil {
+		return 1, err
+	}
+	if exitErr, ok := waitErr.(*exec.ExitError); ok {
+		if ws, wsOK := exitErr.Sys().(syscall.WaitStatus); wsOK && ws.Signaled() {
 			// The client died without the container's own exit; stop it
 			// promptly: nothing is left to wait on the guest.
 			ops.StopContainer(name, OrphanStopGrace)
 		}
-	default:
-		return 1, waitErr
 	}
 	return code, nil
 }

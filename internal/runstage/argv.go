@@ -3,7 +3,6 @@ package runstage
 import (
 	"fmt"
 	"path"
-	"slices"
 	"strings"
 
 	"github.com/sdougbrown/paddock/internal/initcfg"
@@ -36,14 +35,11 @@ func GuestMounts(p *plan.Plan, l MountLayout) ([]GuestMount, error) {
 	if l.UserSettings != "" {
 		engineOwned = append(engineOwned, l.UserSettingsAt)
 	}
+	if err := CheckMountTargets(p, engineOwned); err != nil {
+		return nil, err
+	}
 	var ms []GuestMount
 	for _, m := range p.Mounts {
-		if err := m.Check(); err != nil {
-			return nil, fmt.Errorf("plan mount %s: %w", m.Host, err)
-		}
-		if slices.ContainsFunc(engineOwned, func(d string) bool { return AtOrUnder(m.Guest, d) }) {
-			return nil, fmt.Errorf("plan mount %q targets paddock-managed guest path %s", m.Host, m.Guest)
-		}
 		ms = append(ms, GuestMount{m.Host, m.Guest, m.ReadOnly})
 	}
 	managed := []GuestMount{
@@ -68,13 +64,27 @@ func GuestMounts(p *plan.Plan, l MountLayout) ([]GuestMount, error) {
 	return append(ms, managed...), nil
 }
 
-// AtOrUnder reports whether guest path p is dir or lies under it.
-func AtOrUnder(p, dir string) bool {
-	if dir == "" {
-		return false
+// AtOrUnder reports whether guest path p is one of dirs or lies under one
+// of them.
+func AtOrUnder(p string, dirs ...string) bool {
+	p, dirs = path.Clean(p), cleanDirs(dirs)
+	for _, dir := range dirs {
+		if dir == "" {
+			continue
+		}
+		if p == dir || strings.HasPrefix(p, dir+"/") {
+			return true
+		}
 	}
-	p, dir = path.Clean(p), path.Clean(dir)
-	return p == dir || strings.HasPrefix(p, dir+"/")
+	return false
+}
+
+func cleanDirs(dirs []string) []string {
+	out := make([]string, 0, len(dirs))
+	for _, d := range dirs {
+		out = append(out, path.Clean(d))
+	}
+	return out
 }
 
 func Volume(host, guest string, ro bool) string {

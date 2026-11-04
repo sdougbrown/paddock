@@ -73,11 +73,11 @@ func (d RunDirs) Remove() {
 // CopySeedFiles copies the plan's seed files into <state>/seed. Resolve
 // already rejects seed files that share a base name; the check here keeps a
 // plan from another source from overwriting one seed file with another.
-func CopySeedFiles(state string, files []string) error {
+func CopySeedFiles(dirs RunDirs, files []string) error {
 	if len(files) == 0 {
 		return nil
 	}
-	dir := filepath.Join(state, filepath.Base(initcfg.SeedDir))
+	dir := StagedSeedDir(dirs)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}

@@ -3,7 +3,7 @@ package podman
 
 import (
 	"context"
-	"fmt"
+	"github.com/sdougbrown/paddock/internal/engine"
 	"io"
 	"os"
 	"os/exec"
@@ -55,30 +55,15 @@ type Engine struct {
 }
 
 func (e *Engine) getenv(k string) string {
-	if e.Getenv != nil {
-		return e.Getenv(k)
-	}
-	return os.Getenv(k)
+	return engine.Env(e.Getenv, k)
 }
 
 func (e *Engine) lookup(k string) (string, bool) {
-	if e.Getenv != nil {
-		v := e.Getenv(k)
-		return v, v != ""
-	}
-	return os.LookupEnv(k)
+	return engine.LookupEnv(e.Getenv, k)
 }
 
 func (e *Engine) defaults() error {
-	if e.Stdin == nil {
-		e.Stdin = os.Stdin
-	}
-	if e.Stdout == nil {
-		e.Stdout = os.Stdout
-	}
-	if e.Stderr == nil {
-		e.Stderr = os.Stderr
-	}
+	engine.DefaultStreams(&e.Stdin, &e.Stdout, &e.Stderr)
 	if e.Home == "" {
 		h, err := os.UserHomeDir()
 		if err != nil {
@@ -125,7 +110,7 @@ func (e *Engine) invocation() []string {
 
 func (e *Engine) debugf(format string, a ...any) {
 	if e.Debug {
-		fmt.Fprintf(e.Stderr, "paddock: "+format+"\n", a...)
+		engine.Debugf(e.Stderr, format, a...)
 	}
 }
 

@@ -25,8 +25,6 @@ const PendingRetry = 200 * time.Millisecond
 // the cancellation escalation, and the secrets cleanup — is shared.
 type Supervisor struct {
 	ops SupervisorConfig
-
-	queued func(os.Signal)
 }
 
 // SupervisorConfig carries the engine-specific operations and the knobs the

@@ -78,6 +78,17 @@ runs the allowlist proxy as a separate uid, and installs a firewall the agent ca
    bind mount, the hosts file is rewritten by truncation instead of an atomic rename, so a crash
    mid-write can leave a partial hosts file until the next run rewrites it. The file is root-owned
    and rewritten before the privilege drop; the agent cannot exploit the window.
+12. **The bwrap engine has tier-0 isolation.** A bwrap run shares the host kernel and user: no VM,
+   no uid change, and no resource limits. The egress policy is limited to host and none, since the
+   allowlist needs capabilities namespaces never grant. The agent can read anything the invoking
+   user can, and its writes to the host are bounded only by the mount rules. Use it for trusted
+   toolchains on concurrency-critical bot fleets, and a container engine wherever the workload is
+   untrusted. Signals the run forwards (TERM, INT, HUP) go to the bwrap process, whose default
+   action terminates it and kills the agent through --die-with-parent: Ctrl-C can never be
+   handled by the agent under this profile, unlike a container run where the runtime delivers
+   trappable signals.
+
+13. **The bwrap engine's settings enforcement is scope-bounded.** The container engines write managed settings at the system scope (`/etc/claude-code/managed-settings.json`), which Claude Code puts above every project-scope file. The bwrap engine cannot write there (the host rootfs is read-only and the engine runs unprivileged), so it pins the managed settings read-only over the user-scope path and over any project-scope settings files that exist in the workspace at staging time. An agent that *creates* a project-scope settings file mid-run cannot change the current run's policy (settings load at startup), but the created file can influence a later run in the same workspace. Remove the created file, or run untrusted workspaces on a container engine.
 
 ## Notes on the network policy
 

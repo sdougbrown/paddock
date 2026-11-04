@@ -57,6 +57,38 @@ Agent-specific behavior (what to run, which prompt, which skills) belongs to the
   environment and secrets, `/etc/hosts`, the network commit, and the privilege drop and exec of
   the agent; also the proxy child and the verify role
 
+## Add an engine
+
+The engines share their machinery in `runstage` and `initcfg`. Start a new engine from those
+pieces; do not copy an existing engine's `Run`. Copied blocks drift, and every drift becomes a
+divergence the engines disagree on. Reuse by default:
+
+- Staging: `runstage.Stage` builds the passthrough environment, the init config, the managed
+  settings write, and the seed files. It also creates the transcript directory 0700 — it holds
+  agent sessions. Call it; do not re-stage.
+- Environment: `initcfg.AgentEnv` sets HOME, USER, LOGNAME, SHELL, and PATH, then merges the
+  config's env and secrets; `Stage` builds the passthrough lines it merges. Never read the
+  invoking environment outside the engine's injectable hook.
+- Home layout: `initcfg.PrepareHome` with a `HomeFS` materializes the agent HOME. The config's
+  `Claude.TranscriptDir` decides what `~/.claude/projects` resolves through. Set it at the call
+  site. Container engines set the writable transcript dir itself; pinit adds it to the guest's
+  writable list. Bwrap sets the symlink target's parent, so the per-project dir under it is the
+  bound transcript dir.
+- Secrets: `initcfg.ParseSecrets` is the one parser for the secrets.env format. Its errors name
+  the line and key, never the value. `runstage.ExitCode` is the one wait-error-to-exit-code rule.
+- Mount rule: `runstage.CheckMountTargets` guards plan mounts against the engine's own guest
+  paths. Add the engine's owned roots to its list rather than writing a second guard.
+
+Every guard the engine enforces gets a test that fails when the guard is deleted. Pin observable
+behavior: where files land on disk, not what a symlink's target string is. Every trust rule
+applies to new code: secret values never reach errors, agent-written files are not world-readable,
+and the paddock-init binary never imports `internal/runstage` (its test files may, to build init
+configs). Own the child process's
+lifecycle: every goroutine joins before `Run` returns, and the child dies with the parent
+(watchdog or parent-death signal). Vet and build for every CI platform
+(`GOOS=darwin go vet ./...`) before pushing. In tests, resolve both sides of any path
+comparison — macOS resolves `/var` to `/private/var`.
+
 ## Notes
 
 - `SECURITY.md` holds the threat model and documented residual risks; update it with any change to them.

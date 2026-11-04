@@ -82,7 +82,8 @@ divergence the engines disagree on. Reuse by default:
 Every guard the engine enforces gets a test that fails when the guard is deleted. Pin observable
 behavior: where files land on disk, not what a symlink's target string is. Every trust rule
 applies to new code: secret values never reach errors, agent-written files are not world-readable,
-and nothing under `internal/runstage` is imported by paddock-init. Own the child process's
+and the paddock-init binary never imports `internal/runstage` (its test files may, to build init
+configs). Own the child process's
 lifecycle: every goroutine joins before `Run` returns, and the child dies with the parent
 (watchdog or parent-death signal). Vet and build for every CI platform
 (`GOOS=darwin go vet ./...`) before pushing. In tests, resolve both sides of any path

@@ -20,6 +20,7 @@ jobs:
       - run: make vet
       - run: make fmtcheck
       - run: make test
+      - run: make check
       # The privilege drop test needs root; it skips under `make test`.
       - if: runner.os == 'Linux'
         run: |

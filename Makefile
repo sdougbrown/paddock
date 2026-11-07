@@ -1,12 +1,19 @@
 GO_LDFLAGS ?= -X main.version=dev
 
-.PHONY: build build-init test container-test vet fmtcheck lint verify
+.PHONY: build build-init check test container-test vet fmtcheck lint verify
 
 build:
 	go build -ldflags '$(GO_LDFLAGS)' -o ./bin/paddock ./cmd/paddock
 
 build-init:
 	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -ldflags '$(GO_LDFLAGS)' -o ./bin/paddock-init ./cmd/paddock
+
+# check runs the cli-contract black-box checker against the built binary: help,
+# unknown flags, unknown commands, and missing positionals, as a consumer drives
+# them. It reads the surface `paddock schema` prints, so the declaration and the
+# behavior the checker asserts cannot drift apart.
+check: build
+	go run github.com/sdougbrown/cli-contract/cmd/cli-contract check ./bin/paddock
 
 test:
 	go test -race ./...
@@ -29,4 +36,4 @@ fmtcheck:
 
 lint: vet fmtcheck
 
-verify: fmtcheck vet test build build-init
+verify: fmtcheck vet test build build-init check

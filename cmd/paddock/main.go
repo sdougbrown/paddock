@@ -50,7 +50,7 @@ func planFlagDecls(cmd *clicontract.Command) {
 // app assembles the declared CLI. Dispatch errors carry the app-name prefix:
 // "paddock plan: unknown flag".
 func app() *clicontract.App {
-	return &clicontract.App{
+	declared := &clicontract.App{
 		Name:        "paddock",
 		ErrorPrefix: "paddock",
 		BareHelp:    true,
@@ -66,6 +66,10 @@ Operational failures exit 1; usage errors exit 2.`,
 			newVersionCmd(),
 		},
 	}
+	// The schema command documents the surface it is declared in, so it takes
+	// the app being assembled rather than rebuilding one.
+	declared.Commands = append(declared.Commands, newSchemaCmd(declared))
+	return declared
 }
 
 // paddockAdapter implements the result vocabulary: handlers print their own
@@ -278,6 +282,21 @@ func newVersionCmd() *clicontract.Command {
 		Short: "print the version and exit",
 		Handle: func(ctx context.Context, inv clicontract.Invocation, stderr io.Writer) (any, error) {
 			return versionResult{version: version}, nil
+		},
+	}
+}
+
+// newSchemaCmd prints the declared command surface as one schema document, so a
+// consumer can read paddock's contract as data rather than parsing help text.
+func newSchemaCmd(declared *clicontract.App) *clicontract.Command {
+	return &clicontract.Command{
+		Name:   "schema",
+		Short:  "print the declared command surface as one schema document",
+		Output: clicontract.Output{Mode: clicontract.OutputRaw},
+		Raw: func(ctx context.Context, inv clicontract.Invocation, stdout io.Writer) error {
+			enc := json.NewEncoder(stdout)
+			enc.SetIndent("", "  ")
+			return enc.Encode(declared.SchemaDocument())
 		},
 	}
 }

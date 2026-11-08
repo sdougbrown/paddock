@@ -1,2 +1,4 @@
 bin/
 dist/
+# Agent scratch: run logs, handoff notes, draft text. Never published.
+.cache/

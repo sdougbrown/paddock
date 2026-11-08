@@ -33,6 +33,7 @@ The binaries are not notarized. `gh` and `curl` downloads carry no quarantine at
 - `paddock run [flags] -- command ...` starts the command. `--verify` runs isolation checks instead and takes no command.
 - `paddock setup [flags]` runs the spec's setup command; it takes no command argument and needs a writable workspace.
 - `paddock version` prints the version.
+- `paddock schema` prints paddock's command surface as one JSON document, in the [`cli-contract`](https://github.com/sdougbrown/cli-contract) v1 schema-document shape, so a consumer can read the surface as data instead of parsing help text.
 
 `paddock --help` (or `-h`, or bare `paddock`) lists the commands; `paddock <command> --help` lists a command's flags. `plan` does not start a VM; `run` and `setup` do.
 

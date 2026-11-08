@@ -103,7 +103,9 @@ comparison — macOS resolves `/var` to `/private/var`.
   the guest allowlist all call it, so paddock-init fails closed on a bad host in an init config.
   `/etc/hosts` cannot express wildcards, and they would let the agent make the proxy look up names
   of its choosing. List each host exactly.
-- `make verify` runs fmtcheck, vet, test, build, and build-init.
+- `make verify` runs fmtcheck, vet, test, build, build-init, and check. `make check` runs
+  `cli-contract check` against the built binary, reading the surface `paddock schema`
+  prints; CI runs it on both platforms.
 - `make container-test` runs the engine tests that start real Apple `container` VMs and build
   images; `TestContainerRealInit` boots paddock-init in the base image. CI cannot run them: GitHub's
   macOS runners have no nested virtualization. A change to `internal/engine/applecontainer`, the run

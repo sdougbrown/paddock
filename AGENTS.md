@@ -119,3 +119,4 @@ comparison — macOS resolves `/var` to `/private/var`.
   `PADDOCK_BWRAP_TESTS=1 go test ./internal/engine/bwrap -run TestBwrapReal`. A change to the bwrap
   engine or the agent-state staging (`runstage`, `paddock-init` home layout) needs a passing run
   before merging.
+- Stage paths explicitly; never `git add -A`: a bare `add -A` sweeps agent scratch (run logs, handoff notes, draft text under `.cache/`) into commits and publishes it in PRs. Agent scratch lives in gitignored `.cache/` and never reaches a commit.
